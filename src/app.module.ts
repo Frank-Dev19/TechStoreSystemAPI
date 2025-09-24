@@ -7,6 +7,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SuppliersModule } from './suppliers/suppliers.module';
 // Ejemplo de otros módulos (desactívalos si aún no existen)
 // import { SalesModule } from './sales/sales.module';
+import { CustomersModule } from './customers/customers.module';
+import { DocumentTypesModule } from './catalogs/document-types/document-types.module';
 
 @Module({
   imports: [
@@ -51,7 +53,11 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     }),
 
     // Tus módulos
-    SuppliersModule
+    SuppliersModule,
+
+    CustomersModule,
+
+    DocumentTypesModule
     // SalesModule,
   ],
 })

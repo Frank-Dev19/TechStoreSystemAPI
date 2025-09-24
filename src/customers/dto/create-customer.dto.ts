@@ -1,24 +1,19 @@
 import {
     IsBoolean,
-    IsEmail,
     IsInt,
     IsNumberString,
     IsOptional,
     IsString,
+    IsEmail,
     Length,
     MaxLength,
   } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class CreateSupplierDto {
+export class CreateCustomerDto {
   @IsString()
   @MaxLength(150)
-  businessName: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(150)
-  tradeName?: string;
+  name: string;
 
   @Type(() => Number)
   @IsInt()
@@ -37,21 +32,6 @@ export class CreateSupplierDto {
   @IsString()
   @MaxLength(20)
   phone?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  address?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(150)
-  city?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(150)
-  country?: string;
 
   @IsOptional()
   @IsBoolean()
