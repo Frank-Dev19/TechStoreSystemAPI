@@ -7,7 +7,16 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SuppliersModule } from './suppliers/suppliers.module';
 // Ejemplo de otros módulos (desactívalos si aún no existen)
 // import { SalesModule } from './sales/sales.module';
+import { AuthModule } from './auth/auth.module';
+import { AuditModule } from './audit/audit.module';
+import { KeysModule } from './keys/keys.module';
+import { UsersModule } from './users/users.module';
+import { RolesModule } from './roles/roles.module';
+import { RbacModule } from './rbac/rbac.module';
+import { SessionsModule } from './sessions/sessions.module';
 
+import { BootstrapModule } from './bootstrap/bootstrap.module';
+import { UserPermissionsModule } from './users/user-permissions.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -18,7 +27,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
         const isProd = config.get<string>('NODE_ENV') === 'production';
         const common = {
           type: 'mysql' as const,
-          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          entities: [__dirname + '/**/*.entity.{ts,js}'],
           autoLoadEntities: true,
           logging: config.get<string>('DB_LOGGING') === 'true',
           // Opcional pero recomendable:
@@ -51,8 +60,16 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     }),
 
     // Tus módulos
-    SuppliersModule
-    // SalesModule,
+    SuppliersModule,
+    AuthModule,
+    AuditModule,
+    KeysModule,
+    UsersModule,
+    RolesModule,
+    RbacModule,
+    SessionsModule,
+    BootstrapModule,
+    UserPermissionsModule
   ],
 })
 export class AppModule { }

@@ -2,10 +2,17 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
+//import * as cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
+
+  app.use(helmet());
+  app.use(cookieParser());
 
   const origins = (config.get<string>('CORS_ORIGINS') ?? '')
     .split(',')
@@ -19,7 +26,13 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'X-Op-Key',        // para llaves de operación
+      'X-CSRF-Token',    // si luego implementas CSRF
+    ],
   });
 
   app.useGlobalPipes(new ValidationPipe({
