@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm'
-import { Supplier, DocumentType} from './entities/supplier.entity'
+import { Supplier } from './entities/supplier.entity'
+import { DocumentType } from '../catalogs/document-types/entities/document-type.entity';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 
@@ -21,20 +22,24 @@ type FindAllQuery = {
 export class SuppliersService {
   constructor(
     @InjectRepository(Supplier)
-    private readonly supplierRepository: Repository<Supplier>
+    private readonly supplierRepository: Repository<Supplier>,
+    @InjectRepository(DocumentType)
+    private readonly documentTypeRepository: Repository<DocumentType>,
   ) {}
 
-  private validateDocumentLength(documentType: DocumentType, documentNumber: string) {
-    if (documentType === DocumentType.RUC && documentNumber.length !== 11) {
+  private validateDocumentLength(documentTypeName: string, documentNumber: string) {
+    if (documentTypeName === 'RUC' && documentNumber.length !== 11) {
       throw new BadRequestException('RUC must be 11 digits');
     }
-    if (documentType === DocumentType.DNI && documentNumber.length !== 8) {
+    if (documentTypeName === 'DNI' && documentNumber.length !== 8) {
       throw new BadRequestException('DNI must be 8 digits');
     }
   }
 
   async create(createSupplierDto: CreateSupplierDto) {
-    this.validateDocumentLength(createSupplierDto.documentType, createSupplierDto.documentNumber);
+    const dt = await this.documentTypeRepository.findOne({ where: { id: Number(createSupplierDto.documentTypeId) } });
+    if (!dt) throw new BadRequestException('Invalid document type');
+    this.validateDocumentLength(dt.name, createSupplierDto.documentNumber);
     
     const exists = await this.supplierRepository.findOne({
       where: { documentNumber: createSupplierDto.documentNumber },
@@ -73,14 +78,14 @@ export class SuppliersService {
     const isActive =
       query.isActive === 'true' ? true : query.isActive === 'false' ? false : undefined;
 
-      const filtered = isActive === undefined ? data : data.filter((d) => d.isActive === isActive);
+    const filtered = isActive === undefined ? data : data.filter((d) => d.isActive === isActive);
 
-      return {
-        data: filtered,
-        total: isActive === undefined ? total : filtered.length,
-        page,
-        limit,
-      };
+    return {
+      data: filtered,
+      total: isActive === undefined ? total : filtered.length,
+      page,
+      limit,
+    };
   }
 
   async findOne(id: number) {
@@ -92,10 +97,15 @@ export class SuppliersService {
   async update(id: number, updateSupplierDto: UpdateSupplierDto) {
     const s = await this.findOne(id);
 
-    if (updateSupplierDto.documentType || updateSupplierDto.documentNumber) {
-      const documentType = updateSupplierDto.documentType ?? s.documentType;
+    if (updateSupplierDto.documentTypeId || updateSupplierDto.documentNumber) {
+      const documentTypeId = updateSupplierDto.documentTypeId
+        ? Number(updateSupplierDto.documentTypeId)
+        : s.documentTypeId;
+      const dt = await this.documentTypeRepository.findOne({ where: { id: documentTypeId } });
+      if (!dt) throw new BadRequestException('Invalid document type');
+
       const documentNumber = updateSupplierDto.documentNumber ?? s.documentNumber;
-      this.validateDocumentLength(documentType, documentNumber);
+      this.validateDocumentLength(dt.name, documentNumber);
 
       if (updateSupplierDto.documentNumber && updateSupplierDto.documentNumber !== s.documentNumber) {
         const exists = await this.supplierRepository.findOne({

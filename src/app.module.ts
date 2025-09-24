@@ -4,7 +4,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 // Importa tus módulos reales
-import { SuppliersModule } from './suppliers/suppliers.module';
 // Ejemplo de otros módulos (desactívalos si aún no existen)
 // import { SalesModule } from './sales/sales.module';
 import { AuthModule } from './auth/auth.module';
@@ -14,6 +13,9 @@ import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
 import { RbacModule } from './rbac/rbac.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { DocumentTypesModule } from './catalogs/document-types/document-types.module';
+import { CustomersModule } from './customers/customers.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
 
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { UserPermissionsModule } from './users/user-permissions.module';
@@ -69,7 +71,10 @@ import { UserPermissionsModule } from './users/user-permissions.module';
     RbacModule,
     SessionsModule,
     BootstrapModule,
-    UserPermissionsModule
+    UserPermissionsModule,
+    CustomersModule,
+    DocumentTypesModule,
+    // SalesModule,
   ],
 })
 export class AppModule { }
