@@ -5,7 +5,13 @@ import { SessionsService } from '../sessions/sessions.service';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from './dtos/login.dto';
 import type { Response, Request } from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes, createHash } from 'crypto';
+import { MailerService } from 'src/mailer/mailer.service';
+import { PasswordResetToken } from './entities/password-reset-token.entity';
+import { ForgotPasswordDto } from './dtos/forgot-password.dto';
+import { ResetPasswordDto } from './dtos/reset-password.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, MoreThan, IsNull } from 'typeorm';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +22,8 @@ export class AuthService {
         private jwt: JwtService,
         private sessions: SessionsService,
         private cfg: ConfigService,
+        @InjectRepository(PasswordResetToken) private prRepo: Repository<PasswordResetToken>,
+        private mailer: MailerService,
     ) {
         this.cookieName = this.cfg.get<string>('COOKIE_NAME') || 'rt';
     }
@@ -25,7 +33,8 @@ export class AuthService {
             sub: user.id,
             email: user.email,
             roles: user.roles?.map((r: any) => ({
-                id: r.id, name: r.name,
+                id: r.id,
+                name: r.name,
                 permissions: (r.permissions ?? []).map((p: any) => ({ code: p.code })),
             })) ?? [],
         };
@@ -45,12 +54,15 @@ export class AuthService {
     private setRefreshCookie(res: Response, token: string) {
         res.cookie(this.cookieName, token, {
             httpOnly: true,
-            secure: false,                 // en dev con http puede fallar; si es así, pon false SOLO en local
+            secure: false,
             sameSite: (this.cfg.get<string>('COOKIE_SAMESITE') as any) || 'lax',
             path: '/auth/refresh',
-            maxAge: 1000 * 60 * 60 * 24 * 30, // 30 días
+            maxAge: 1000 * 60 * 60 * 24 * 30,
         });
+        // Nota: en producción 'secure: true' y SameSite='strict' o 'lax' según tu front.
     }
+
+    // ============ LOGIN / REFRESH / LOGOUT ============
 
     async login(dto: LoginDto, req: Request, res: Response) {
         const user = await this.users.validateCredentials(dto.email, dto.password);
@@ -58,28 +70,18 @@ export class AuthService {
 
         const accessToken = this.signAccess(user);
 
-
-        // 1) crea shell para obtener id (uuid) -> será el jti del token
         const shell = await this.sessions.createShell(
             user,
             { ua: req.headers['user-agent'] as string, ip: (req.headers['x-forwarded-for'] as string) || req.ip },
             null,
         );
 
-        //const jti = randomUUID();
         const refreshToken = this.signRefresh(user.id, shell.id);
         const expSec = this.jwt.decode(refreshToken) as any;
         const expiresAt = new Date(expSec?.exp ? expSec.exp * 1000 : Date.now() + 30 * 86400000);
 
         await this.sessions.attachToken(shell.id, refreshToken, expiresAt);
-        // await this.sessions.create(user, refreshToken, expiresAt, {
-        //     ua: req.headers['user-agent'] as string,
-        //     ip: (req.headers['x-forwarded-for'] as string) || req.ip,
-        // });
-
         this.setRefreshCookie(res, refreshToken);
-        //const DEV = this.cfg.get<string>('NODE_ENV') !== 'production';
-        //return DEV ? { accessToken, refreshToken } : { accessToken };
         return { accessToken };
     }
 
@@ -104,30 +106,18 @@ export class AuthService {
             throw new ForbiddenException('Detección de reuse, sesión revocada');
         }
 
-        // Rotación
         await this.sessions.markRotated(session.id);
 
-        // 1) nueva shell encadenada (rotatedFrom = sesión anterior)
         const shell = await this.sessions.createShell(
             session.user,
             { ua: req.headers['user-agent'] as string, ip: (req.headers['x-forwarded-for'] as string) || req.ip },
             session.id,
         );
 
-        //const newJti = randomUUID();
         const newRefresh = this.signRefresh(session.user.id, shell.id);
         const dec: any = this.jwt.decode(newRefresh);
         const newExpiresAt = new Date(dec?.exp ? dec.exp * 1000 : Date.now() + 30 * 86400000);
 
-        // await this.sessions.create(
-        //     session.user,
-        //     newRefresh,
-        //     newExpiresAt,
-        //     { ua: req.headers['user-agent'] as string, ip: (req.headers['x-forwarded-for'] as string) || req.ip },
-        //     session.id,
-        // );
-
-        // 3) adjuntar token a la shell
         await this.sessions.attachToken(shell.id, newRefresh, newExpiresAt);
 
         const accessToken = this.signAccess(session.user);
@@ -145,5 +135,98 @@ export class AuthService {
         }
         res.clearCookie(this.cookieName, { path: '/auth/refresh' });
         return { ok: true };
+    }
+
+    // ============ FORGOT / RESET PASSWORD ============
+
+    async forgotPassword(dto: ForgotPasswordDto, req: Request) {
+        // Respuesta neutra SIEMPRE
+        const neutral = { message: 'Si el correo existe, se enviarán instrucciones.' };
+
+        const user = await this.users.findByEmail(dto.email);
+        if (!user || !user.isActive) return neutral;
+
+        // Generar token y guardar SOLO el hash
+        const token = randomBytes(32).toString('base64url');
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+
+        const expiresAt = new Date(Date.now() + 20 * 60 * 1000); // 20 min
+        const pr = this.prRepo.create({
+            user: { id: user.id } as any,
+            tokenHash,
+            expiresAt,
+            usedAt: null,
+            ip: (req.headers['x-forwarded-for'] as string) || req.ip,
+            userAgent: req.headers['user-agent'] as string,
+        });
+        await this.prRepo.save(pr);
+
+        const appUrl = this.cfg.get<string>('APP_PUBLIC_URL') || 'http://localhost:4200';
+        const link = `${appUrl}/reset-password?token=${encodeURIComponent(token)}&uid=${user.id}`;
+
+        await this.mailer.sendPasswordReset(user.email, link, user.name);
+
+        return neutral;
+    }
+
+    async resetPassword(dto: ResetPasswordDto): Promise<{ ok: boolean }> {
+        const tokenHash = createHash('sha256').update(dto.token).digest('hex');
+
+        const record = await this.prRepo.findOne({
+            where: {
+                user: { id: dto.uid },     // ⬅️ relación
+                tokenHash,
+                usedAt: IsNull(),
+                expiresAt: MoreThan(new Date()),
+            },
+            order: { createdAt: 'DESC' },
+        });
+
+        if (!record) throw new BadRequestException('Token inválido o expirado');
+
+        await this.users.setPassword(dto.uid, dto.newPassword);
+        record.usedAt = new Date();
+        await this.prRepo.save(record);
+
+        return { ok: true };
+    }
+
+
+
+
+
+
+    /** ✅ Verificación que usarás desde GET /auth/password/verify */
+    async verifyReset(uid: number, token: string): Promise<{ ok: boolean }> {
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+
+        const rec = await this.prRepo.findOne({
+            where: {
+                user: { id: uid },     // relación, no userId
+                tokenHash,
+                usedAt: IsNull(),      // ⬅️ en vez de null
+                expiresAt: MoreThan(new Date()),
+            },
+            order: { createdAt: 'DESC' },
+        });
+
+        return { ok: !!rec };
+    }
+
+    /** Busca un token válido (no usado y no expirado) para ese user+token */
+    private async findValidReset(userId: number, rawToken: string) {
+        const tokenHash = this.hashToken(rawToken);
+        const record = await this.prRepo.findOne({
+            where: { userId, tokenHash },
+            order: { createdAt: 'DESC' },
+        });
+        if (!record) return null;
+        if (record.usedAt) return null;
+        if (record.expiresAt < new Date()) return null;
+        return record;
+    }
+
+    private hashToken(raw: string) {
+        return createHash('sha256').update(raw).digest('hex');
     }
 }

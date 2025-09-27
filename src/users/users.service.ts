@@ -54,7 +54,6 @@ export class UsersService {
         return { ok: true };
     }
 
-    // usado por AuthService
     async findByEmail(email: string) {
         return this.usersRepo.findOne({ where: { email } });
     }
@@ -64,5 +63,13 @@ export class UsersService {
         if (!user || !user.isActive) return null;
         const ok = await bcrypt.compare(password, user.passwordHash);
         return ok ? user : null;
+    }
+
+    // ===== NUEVO: actualizar contraseña directamente por userId =====
+    async setPassword(userId: number, plain: string) {
+        const u = await this.findOne(userId);
+        u.passwordHash = await bcrypt.hash(plain, 10);
+        await this.usersRepo.save(u);
+        return { ok: true };
     }
 }

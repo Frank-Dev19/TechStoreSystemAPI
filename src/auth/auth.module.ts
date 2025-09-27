@@ -7,13 +7,17 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
-
+import { MailerModule } from 'src/mailer/mailer.module';
+import { PasswordResetToken } from './entities/password-reset-token.entity';
+import { TypeOrmModule } from '@nestjs/typeorm';
 @Module({
   imports: [
     UsersModule,
     SessionsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    JwtModule.register({})
+    JwtModule.register({}),
+    TypeOrmModule.forFeature([PasswordResetToken]),
+    MailerModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy],

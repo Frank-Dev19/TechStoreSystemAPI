@@ -17,6 +17,7 @@ import { SessionsModule } from './sessions/sessions.module';
 
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { UserPermissionsModule } from './users/user-permissions.module';
+import { MailerModule } from './mailer/mailer.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -69,7 +70,8 @@ import { UserPermissionsModule } from './users/user-permissions.module';
     RbacModule,
     SessionsModule,
     BootstrapModule,
-    UserPermissionsModule
+    UserPermissionsModule,
+    MailerModule
   ],
 })
 export class AppModule { }
