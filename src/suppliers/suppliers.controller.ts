@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestjs/common';
 import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
@@ -18,27 +18,27 @@ export class SuppliersController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.suppliersService.findOne(id);
+  findOne(@Param('id') id: string) {
+    return this.suppliersService.findOne(+id);
   }
 
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() updateSupplierDto: UpdateSupplierDto) {
-    return this.suppliersService.update(id, updateSupplierDto);
+  update(@Param('id') id: string, @Body() updateSupplierDto: UpdateSupplierDto) {
+    return this.suppliersService.update(+id, updateSupplierDto);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.suppliersService.remove(id);
+  remove(@Param('id') id: string) {
+    return this.suppliersService.remove(+id);
   }
 
   @Patch(':id/restore')
-  restore(@Param('id', ParseIntPipe) id: number) {
-    return this.suppliersService.restore(id);
+  restore(@Param('id') id: string) {
+    return this.suppliersService.restore(+id);
   }
 
   @Delete(':id/hard-remove')
-  hardRemove(@Param('id', ParseIntPipe) id: number) {
-    return this.suppliersService.hardRemove(id);
-  }
+  hardRemove(@Param('id') id: string) {
+    return this.suppliersService.hardRemove(+id);
+  } 
 }
