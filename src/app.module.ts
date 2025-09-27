@@ -73,7 +73,7 @@ import { MailerModule } from './mailer/mailer.module';
     SessionsModule,
     BootstrapModule,
     UserPermissionsModule,
-    MailerModule
+    MailerModule,
     UserPermissionsModule,
     CustomersModule,
     DocumentTypesModule,

@@ -127,7 +127,10 @@ export class CustomersService {
     const c = await this.customerRepository.findOne({ where: { id }, withDeleted: true });
     if (!c) throw new NotFoundException(`Customer with id ${id} not found`);
     if (!c.deletedAt) return { ok: true};
-    await this.customerRepository.restore(id);
+    
+    c.deletedAt = null;
+    await this.customerRepository.save(c);
+    
     return { ok: true};
   }
 

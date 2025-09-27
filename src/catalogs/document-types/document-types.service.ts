@@ -95,9 +95,12 @@ export class DocumentTypesService {
   async restore(id: number) {
     const dt = await this.documentTypeRepository.findOne({ where: { id }, withDeleted: true });
     if (!dt) throw new NotFoundException(`Document type with id ${id} not found`);
-    if (!dt.deletedAt) return { ok: true};
-    await this.documentTypeRepository.restore(dt);
-    return { ok: true};
+    if (!dt.deletedAt) return { ok: true };
+    
+    dt.deletedAt = null;
+    await this.documentTypeRepository.save(dt);
+    
+    return { ok: true };
   }
 
   async hardRemove(id: number) {

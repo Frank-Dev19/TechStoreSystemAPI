@@ -130,7 +130,9 @@ export class SuppliersService {
     const s = await this.supplierRepository.findOne({ where: { id }, withDeleted: true });
     if (!s) throw new NotFoundException(`Supplier with id ${id} not found`);
     if (!s.deletedAt) return { ok: true};
-    await this.supplierRepository.restore(id);
+    
+    s.deletedAt = null;
+    await this.supplierRepository.save(s);
     return { ok: true};
   }
 

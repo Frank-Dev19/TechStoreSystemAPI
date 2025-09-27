@@ -7,5 +7,5 @@ export class CreateDocumentTypeDto {
 
     @IsBoolean()
     @IsOptional()
-    isActive?: boolean;
+    isActive?: boolean = true;
 }
