@@ -55,5 +55,5 @@ export class CreateSupplierDto {
 
   @IsOptional()
   @IsBoolean()
-  isActive?: boolean;
+  isActive?: boolean = true;
 }

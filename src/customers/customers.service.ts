@@ -1,11 +1,11 @@
-import {  
+import { 
   ConflictException, 
   Injectable, 
   NotFoundException, 
-  BadRequestException 
+  BadRequestException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository, ILike, In } from 'typeorm';
 import { Customer } from './entities/customer.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 import { CreateCustomerDto } from './dto/create-customer.dto';
@@ -120,21 +120,49 @@ export class CustomersService {
   async remove(id: number) {
     await this.findOne(id);
     await this.customerRepository.softDelete(id);
-    return { ok: true};
+    return { ok: true, message: `Customer with id: ${id} deleted successfully`};
+  }
+
+  async bulkSoftDelete(ids: number[]) {
+    if (!ids?.length) throw new BadRequestException('No ids provided');
+
+    const count = await this.customerRepository.count({ where: { id: In(ids) } });
+    if (!count) throw new NotFoundException(`Customers with ids ${ids.join(', ')} not found`);
+    await this.customerRepository.softDelete(ids);
+    return { ok: true, message: `${count} customers deleted successfully` };
   }
 
   async restore(id: number) {
     const c = await this.customerRepository.findOne({ where: { id }, withDeleted: true });
     if (!c) throw new NotFoundException(`Customer with id ${id} not found`);
-    if (!c.deletedAt) return { ok: true};
-    await this.customerRepository.restore(id);
-    return { ok: true};
+    if (!c.deletedAt) return { ok: true, message: "Customer was already restored"};
+    
+    c.deletedAt = null;
+    await this.customerRepository.save(c);
+    
+    return { ok: true, message: `Customer with id: ${id} restored successfully`};
+  }
+
+  async bulkRestore(ids: number[]) {
+    if (!ids?.length) throw new BadRequestException('No ids provided');
+
+    const count = await this.customerRepository.count({ where: { id: In(ids) }, withDeleted: true });
+    if (!count) throw new NotFoundException(`Customers with ids ${ids.join(', ')} not found`);
+    for (const id of ids) {
+      const c = await this.customerRepository.findOne({ where: { id }, withDeleted: true });
+      if (!c) throw new NotFoundException(`Customer with id ${id} not found`);
+      if (!c.deletedAt) return { ok: true, message: "Customer was already restored"};
+      
+      c.deletedAt = null;
+      await this.customerRepository.save(c);
+    }
+    return { ok: true, message: `${count} customers restored successfully` };
   }
 
   async hardRemove(id: number) {
     const c = await this.customerRepository.findOne({ where: { id }, withDeleted: true });
     if (!c) throw new NotFoundException(`Customer with id ${id} not found`);
     await this.customerRepository.remove(c);
-    return { ok: true};
+    return { ok: true, message: `Customer with id: ${id} deleted successfully`};
   }
 }
