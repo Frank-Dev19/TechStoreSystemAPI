@@ -1,3 +1,4 @@
+import * as bcrypt from 'bcrypt';
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
@@ -12,6 +13,7 @@ import { ForgotPasswordDto } from './dtos/forgot-password.dto';
 import { ResetPasswordDto } from './dtos/reset-password.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan, IsNull } from 'typeorm';
+import { ChangePasswordDto } from './dtos/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -28,6 +30,32 @@ export class AuthService {
         this.cookieName = this.cfg.get<string>('COOKIE_NAME') || 'rt';
     }
 
+
+
+    private presentUser(u: any) {
+        return {
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            phone: u.phone ?? null,
+            documentType: u.documentType
+                ? { id: u.documentType.id, name: u.documentType.name }
+                : null,
+            documentNumber: u.documentNumber ?? null,
+            isActive: !!u.isActive,
+            roles: (u.roles ?? []).map((r: any) => ({
+                id: r.id,
+                name: r.name,
+                permissions: (r.permissions ?? []).map((p: any) => p.code),
+            })),
+            createdAt: u.createdAt,
+            updatedAt: u.updatedAt,
+        };
+    }
+
+
+
+
     private signAccess(user: any) {
         const payload = {
             sub: user.id,
@@ -40,7 +68,7 @@ export class AuthService {
         };
         return this.jwt.sign(payload, {
             secret: this.cfg.get<string>('JWT_ACCESS_SECRET'),
-            expiresIn: this.cfg.get<string>('JWT_ACCESS_TTL') || '10m',
+            expiresIn: this.cfg.get<string>('JWT_ACCESS_TTL') || '59m',
         });
     }
 
@@ -62,6 +90,8 @@ export class AuthService {
         // Nota: en producción 'secure: true' y SameSite='strict' o 'lax' según tu front.
     }
 
+
+
     // ============ LOGIN / REFRESH / LOGOUT ============
 
     async login(dto: LoginDto, req: Request, res: Response) {
@@ -82,8 +112,11 @@ export class AuthService {
 
         await this.sessions.attachToken(shell.id, refreshToken, expiresAt);
         this.setRefreshCookie(res, refreshToken);
-        return { accessToken };
+
+        // ⬅️ ahora devolvemos también el usuario
+        return { accessToken, user: this.presentUser(user) };
     }
+
 
     async refresh(req: Request, res: Response) {
         const presented = req.cookies?.[this.cookieName];
@@ -121,8 +154,12 @@ export class AuthService {
         await this.sessions.attachToken(shell.id, newRefresh, newExpiresAt);
 
         const accessToken = this.signAccess(session.user);
+
+        // ⚠️ por si la sesión no trae relaciones completas, recargamos el user:
+        const fullUser = await this.users.findOne(session.user.id);
+
         this.setRefreshCookie(res, newRefresh);
-        return { accessToken };
+        return { accessToken, user: this.presentUser(fullUser) }; // también devolvemos el user
     }
 
     async logout(req: Request, res: Response) {
@@ -229,4 +266,54 @@ export class AuthService {
     private hashToken(raw: string) {
         return createHash('sha256').update(raw).digest('hex');
     }
+
+
+
+    //Cambiar Contraseña
+    async changePassword(userId: number, dto: ChangePasswordDto): Promise<{ ok: true }> {
+        const user = await this.users.findOne(userId);
+
+        // 1) validar contraseña actual
+        const valid = await bcrypt.compare(dto.oldPassword, user.passwordHash);
+        if (!valid) {
+            throw new BadRequestException('Contraseña actual incorrecta');
+        }
+
+        // 2) impedir reutilizar la misma contraseña
+        const sameAsCurrent = await bcrypt.compare(dto.newPassword, user.passwordHash);
+        if (sameAsCurrent) {
+            throw new BadRequestException('La nueva contraseña no puede ser igual a la actual');
+        }
+
+        // 3) setear nueva contraseña (reusa tu helper)
+        await this.users.setPassword(userId, dto.newPassword);
+
+        // 4) (opcional recomendable) revocar sesiones/refresh de ese usuario
+        try {
+            await (this.sessions as any).revokeAllForUser?.(userId);
+        } catch { /* si no existe el método, no rompe */ }
+
+        return { ok: true };
+    }
+
+
+
+
+    // === Perfil propio ===
+    async me(userId: number) {
+        const u = await this.users.findOne(userId);
+        return this.presentUser(u);
+    }
+
+    async updateMe(userId: number, patch: { name?: string; phone?: string }) {
+        const updated = await this.users.update(userId, {
+            name: patch.name,
+            phone: patch.phone ?? null,
+        });
+        return this.presentUser(updated);
+    }
+
+
+
+
 }

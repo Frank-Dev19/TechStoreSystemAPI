@@ -4,9 +4,10 @@ import { UsersService } from './users.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { RolesModule } from 'src/roles/roles.module';
+import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, DocumentType]),
     forwardRef(() => RolesModule),
     RolesModule
   ],

@@ -1,7 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+// src/users/users.controller.ts
+import {
+    Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ParseIntPipe
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dtos/create-user.dto';
 import { UpdateUserDto } from './dtos/update-user.dto';
+import { BulkIdsDto } from './dtos/bulk-ids.dto';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard';
 import { RolesGuard } from '../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
@@ -13,6 +17,30 @@ import { Permissions } from '../rbac/decorators/permissions.decorator';
 @Controller('users')
 export class UsersController {
     constructor(private usersService: UsersService) { }
+
+
+    // ====== SOFT DELETE (varios o uno) por body ======
+    @Permissions('user.delete')
+    @Patch('soft-delete')
+    softDeleteMany(@Body() dto: BulkIdsDto) {
+        return this.usersService.softRemoveMany(dto.ids);
+    }
+
+    // ====== RESTORE (varios o uno) por body ======
+    @Permissions('user.update')
+    @Patch('restore')
+    restoreMany(@Body() dto: BulkIdsDto) {
+        return this.usersService.restoreMany(dto.ids);
+    }
+
+    // ====== HARD DELETE (varios o uno) por body ======
+    // Usamos POST para evitar problemas con proxies que ignoran body en DELETE
+    @Permissions('user.delete')
+    @Post('hard-delete')
+    hardRemoveMany(@Body() dto: BulkIdsDto) {
+        return this.usersService.hardRemoveMany(dto.ids);
+    }
+
 
     @Permissions('user.create')
     @Post()
@@ -28,19 +56,15 @@ export class UsersController {
 
     @Permissions('user.read')
     @Get(':id')
-    findOne(@Param('id') id: string) {
-        return this.usersService.findOne(+id);
+    findOne(@Param('id', ParseIntPipe) id: number) {
+        return this.usersService.findOne(id);
     }
 
     @Permissions('user.update')
     @Patch(':id')
-    update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-        return this.usersService.update(+id, dto);
+    update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+        return this.usersService.update(id, dto);
     }
 
-    @Permissions('user.delete')
-    @Delete(':id')
-    remove(@Param('id') id: string) {
-        return this.usersService.remove(+id);
-    }
+
 }

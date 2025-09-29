@@ -7,6 +7,9 @@ import { User } from 'src/users/entities/user.entity';
 import { Role } from 'src/roles/entities/role.entity';
 //import { Permission } from 'src/rbac/entities/permission.entity';
 import { Permission } from 'src/roles/entities/permission.entity';
+// imports NUEVO
+import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+
 
 
 @Injectable()
@@ -17,9 +20,19 @@ export class BootstrapService implements OnModuleInit {
         @InjectRepository(User) private readonly usersRepo: Repository<User>,
         @InjectRepository(Role) private readonly rolesRepo: Repository<Role>,
         @InjectRepository(Permission) private readonly permsRepo: Repository<Permission>,
+        @InjectRepository(DocumentType) private readonly docTypesRepo: Repository<DocumentType>,
     ) { }
 
     async onModuleInit() {
+
+        // ===== DocumentType por defecto =====
+        let defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
+        if (!defaultDt) {
+            // si no hay, crea uno rapidito (mínimo)
+            defaultDt = this.docTypesRepo.create({ name: 'DNI', isActive: true });
+            defaultDt = await this.docTypesRepo.save(defaultDt);
+        }
+
         // Si ya hay usuarios, asumimos que el sistema está inicializado
         const usersCount = await this.usersRepo.count();
         if (usersCount > 0) {
@@ -95,6 +108,9 @@ export class BootstrapService implements OnModuleInit {
                 passwordHash,
                 roles: [adminRole],
                 isActive: true,
+                documentType: defaultDt,
+                documentNumber: '00000000', // opcional
+                phone: '999999999',          // opcional
             });
         } else {
             // asegurar rol
@@ -108,6 +124,7 @@ export class BootstrapService implements OnModuleInit {
                 adminUser.name = 'Administrador';
             }
             if (adminUser.isActive == null) adminUser.isActive = true;
+            if (!adminUser.documentType) adminUser.documentType = defaultDt;
         }
 
         await this.usersRepo.save(adminUser);
