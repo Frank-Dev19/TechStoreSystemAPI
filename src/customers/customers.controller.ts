@@ -7,6 +7,7 @@ import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { BulkOperationsDto } from './dto/bulk-operations.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin')
@@ -32,10 +33,22 @@ export class CustomersController {
     return this.customersService.findOne(+id);
   }
 
+  @Permissions('customer.bulk-restore')
+  @Patch('bulk-restore')
+  bulkRestore(@Body() bulkOperationsDto: BulkOperationsDto) {
+    return this.customersService.bulkRestore(bulkOperationsDto.ids);
+  }
+
   @Permissions('customer.update')
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateCustomerDto: UpdateCustomerDto) {
     return this.customersService.update(+id, updateCustomerDto);
+  }
+
+  @Permissions('customer.bulk-soft-delete')
+  @Delete('bulk-soft-delete')
+  bulkSoftDelete(@Body() bulkOperationsDto: BulkOperationsDto) {
+    return this.customersService.bulkSoftDelete(bulkOperationsDto.ids);
   }
 
   @Permissions('customer.delete')
@@ -50,8 +63,8 @@ export class CustomersController {
     return this.customersService.restore(+id);
   }
 
-  @Permissions('customer.hard-remove')
-  @Delete(':id/hard-remove')
+  @Permissions('customer.hard-delete')
+  @Delete(':id/hard-delete')
   hardRemove(@Param('id') id: string) {
     return this.customersService.hardRemove(+id);
   }
