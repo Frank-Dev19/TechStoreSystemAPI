@@ -29,7 +29,7 @@ export class BootstrapService implements OnModuleInit {
         let defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
         if (!defaultDt) {
             // si no hay, crea uno rapidito (mínimo)
-            defaultDt = this.docTypesRepo.create({ name: 'DNI', isActive: true });
+            defaultDt = this.docTypesRepo.create({ name: 'DNI', digits: 8, description: 'Documento Nacional de Identidad' });
             defaultDt = await this.docTypesRepo.save(defaultDt);
         }
 

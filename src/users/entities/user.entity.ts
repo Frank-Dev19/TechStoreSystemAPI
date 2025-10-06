@@ -20,7 +20,7 @@ export class User {
     phone: string | null;
 
     // === NUEVO: relación con document_types ===
-    @ManyToOne(() => DocumentType, { eager: true, nullable: false })
+    @ManyToOne(() => DocumentType, { eager: true })
     @JoinColumn({ name: 'document_type_id' })
     documentType: DocumentType;
 

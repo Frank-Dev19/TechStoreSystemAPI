@@ -17,8 +17,11 @@ export class DocumentType {
     @Column({ name: 'name', length: 50})
     name: string;
 
-    @Column({ name: 'is_active', type: 'boolean'})
-    isActive: boolean;
+    @Column({ name: 'digits', type: 'int'})
+    digits: number;
+    
+    @Column({ name:'description', length: 255})
+    description: string;
 
     @CreateDateColumn({ name: 'created_at'})
     createdAt: Date;

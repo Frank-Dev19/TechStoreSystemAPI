@@ -1,11 +1,15 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateDocumentTypeDto {
     @IsString()
     @MaxLength(50)
     name: string;
 
-    @IsBoolean()
+    @IsNumber()
     @IsOptional()
-    isActive?: boolean = true;
+    digits: number;
+
+    @IsString()
+    @MaxLength(255)
+    description: string;
 }

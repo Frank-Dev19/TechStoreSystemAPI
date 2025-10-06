@@ -14,12 +14,11 @@ import { RolesModule } from './roles/roles.module';
 import { RbacModule } from './rbac/rbac.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { DocumentTypesModule } from './catalogs/document-types/document-types.module';
-import { CustomersModule } from './customers/customers.module';
-import { SuppliersModule } from './suppliers/suppliers.module';
 
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
+import { BusinessPartnerModule } from './business-partner/business-partner.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -63,7 +62,6 @@ import { MailerModule } from './mailer/mailer.module';
     }),
 
     // Tus módulos
-    SuppliersModule,
     AuthModule,
     AuditModule,
     KeysModule,
@@ -75,8 +73,8 @@ import { MailerModule } from './mailer/mailer.module';
     UserPermissionsModule,
     MailerModule,
     UserPermissionsModule,
-    CustomersModule,
     DocumentTypesModule,
+    BusinessPartnerModule,
     // SalesModule,
   ],
 })

@@ -1,10 +1,11 @@
 import { 
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository, ILike, In } from 'typeorm';
 import { DocumentType } from './entities/document-type.entity';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
@@ -13,7 +14,6 @@ type FindAllQuery = {
   page?: number;
   limit?: number;
   search?: string;
-  isActive?: string;
 }
 
 @Injectable()
@@ -52,14 +52,9 @@ export class DocumentTypesService {
       take: limit,
     })
 
-    const isActive =
-      query.isActive === 'true' ? true : query.isActive === 'false' ? false : undefined;
-
-    const filtered = isActive === undefined ? data : data.filter((d) => d.isActive === isActive);
-
     return {
-      data: filtered,
-      total: isActive === undefined ? total : filtered.length,
+      data,
+      total,
       page,
       limit,
     };
@@ -86,27 +81,45 @@ export class DocumentTypesService {
     return this.documentTypeRepository.save(dt);
   }
 
-  async remove(id: number) {
+  async softDelete(id: number) {
     await this.findOne(id);
     await this.documentTypeRepository.softDelete(id);
-    return { ok: true};
+    return { ok: true, message: `Document type with id: ${id} deleted successfully`};
+  }
+
+  async bulkSoftDelete(ids: number[]) {
+    if (!ids?.length) throw new BadRequestException('No ids provided');
+
+    const count = await this.documentTypeRepository.count({ where: { id: In(ids) } });
+    if (!count) throw new NotFoundException(`Document types with ids ${ids.join(', ')} not found`);
+    await this.documentTypeRepository.softDelete(ids);
+    return { ok: true, message: `${count} document types deleted successfully` };
   }
 
   async restore(id: number) {
     const dt = await this.documentTypeRepository.findOne({ where: { id }, withDeleted: true });
     if (!dt) throw new NotFoundException(`Document type with id ${id} not found`);
-    if (!dt.deletedAt) return { ok: true };
+    if (!dt.deletedAt) return { ok: true, message: "Document type was already restored" };
     
     dt.deletedAt = null;
     await this.documentTypeRepository.save(dt);
     
-    return { ok: true };
+    return { ok: true, message: `Document type with id: ${id} restored successfully` };
   }
 
-  async hardRemove(id: number) {
-    const dt = await this.documentTypeRepository.findOne({ where: { id }, withDeleted: true });
-    if (!dt) throw new NotFoundException(`Document type with id ${id} not found`);
-    await this.documentTypeRepository.remove(dt);
-    return { ok: true};
+  async bulkRestore(ids: number[]) {
+    if (!ids?.length) throw new BadRequestException('No ids provided');
+
+    const count = await this.documentTypeRepository.count({ where: { id: In(ids) }, withDeleted: true });
+    if (!count) throw new NotFoundException(`Document types with ids ${ids.join(', ')} not found`);
+    for (const id of ids) {
+      const dt = await this.documentTypeRepository.findOne({ where: { id }, withDeleted: true });
+      if (!dt) throw new NotFoundException(`Document type with id ${id} not found`);
+      if (!dt.deletedAt) return { ok: true, message: "Document type was already restored" };
+      
+      dt.deletedAt = null;
+      await this.documentTypeRepository.save(dt);
+    }
+    return { ok: true, message: `${count} document types restored successfully` };
   }
 }
