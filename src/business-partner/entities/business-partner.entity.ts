@@ -6,11 +6,13 @@ import {
     JoinColumn, 
     CreateDateColumn, 
     UpdateDateColumn, 
-    DeleteDateColumn 
+    DeleteDateColumn,
+    Index 
 } from "typeorm";
 import { DocumentType } from "../../catalogs/document-types/entities/document-type.entity";
 
 @Entity({ name: 'business_partners' })
+@Index(['companyId', 'documentTypeId', 'documentNumber'], { unique: true })
 export class BusinessPartner {
     @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
     id: number;
@@ -18,7 +20,7 @@ export class BusinessPartner {
     @Column({ name: 'company_id', type: 'bigint', unsigned: true })
     companyId: number;
 
-    // @ManyToOne(() => Company, { eager: false, nullable: false, onDelete: 'CASCADE' })
+    // @ManyToOne(() => Company, { eager: false, nullable: false, onDelete: 'RESTRICT' })
     // @JoinColumn({ name: 'company_id' })
     // company: Company;
 
@@ -31,7 +33,7 @@ export class BusinessPartner {
     @Column({ name: 'document_type_id', type: 'bigint', unsigned: true })
     documentTypeId: number;
 
-    @ManyToOne(() => DocumentType, { eager: false, nullable: false, onDelete: 'CASCADE' })
+    @ManyToOne(() => DocumentType, { eager: false, nullable: false, onDelete: 'RESTRICT' })
     @JoinColumn({ name: 'document_type_id' })
     documentType: DocumentType;
 

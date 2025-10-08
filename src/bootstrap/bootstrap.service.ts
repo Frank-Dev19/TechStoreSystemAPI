@@ -78,10 +78,10 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'business-partner', actionKey: 'create', description: 'Crear socios', sortOrder: 10 },
       { moduleKey: 'business-partner', actionKey: 'read', description: 'Ver socios', sortOrder: 20 },
       { moduleKey: 'business-partner', actionKey: 'update', description: 'Actualizar socios', sortOrder: 30 },
-      { moduleKey: 'business-partner', actionKey: 'bulk-restore', description: 'Restaurar varios socios', sortOrder: 40 },
-      { moduleKey: 'business-partner', actionKey: 'bulk-delete', description: 'Eliminar varios socios', sortOrder: 50 },
-      { moduleKey: 'business-partner', actionKey: 'soft-delete', description: 'Eliminar un socio', sortOrder: 60 },
+      { moduleKey: 'business-partner', actionKey: 'delete', description: 'Eliminar un socio', sortOrder: 60 },
       { moduleKey: 'business-partner', actionKey: 'restore', description: 'Restaurar un socios', sortOrder: 70 },
+      { moduleKey: 'business-partner', actionKey: 'bulk-delete', description: 'Eliminar varios socios', sortOrder: 50 },
+      { moduleKey: 'business-partner', actionKey: 'bulk-restore', description: 'Restaurar varios socios', sortOrder: 40 },
     ];
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE

@@ -2,10 +2,12 @@ import {
   ConflictException, 
   Injectable, 
   NotFoundException, 
-  BadRequestException 
+  BadRequestException,
+  HttpException,
+  HttpStatus
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, In, FindOptionsWhere } from 'typeorm';
+import { Repository, ILike, In, FindOptionsWhere, Not } from 'typeorm';
 import { BusinessPartner } from './entities/business-partner.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
@@ -37,15 +39,42 @@ export class BusinessPartnerService {
   }
 
   async create(createBusinessPartnerDto: CreateBusinessPartnerDto) {
+    const companyId = Number(createBusinessPartnerDto.companyId);
+    if (!companyId || Number.isNaN(companyId)) {
+      throw new BadRequestException('companyId is required to create a business partner');
+    }
+
     await this.validateDocumentLength(createBusinessPartnerDto.documentTypeId, createBusinessPartnerDto.documentNumber);
     
     const exists = await this.businessPartnerRepository.findOne({
-      where: { documentNumber: createBusinessPartnerDto.documentNumber },
-      select: ['id'],
+      where: {
+        companyId,
+        documentTypeId: createBusinessPartnerDto.documentTypeId,
+        documentNumber: createBusinessPartnerDto.documentNumber,
+      },
+      withDeleted: true,
+      select: ['id', 'deletedAt', 'name'],
     });
-    if (exists) throw new ConflictException('Document number already exists');
+    if (exists) {
+      if (exists.deletedAt) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.CONFLICT,
+            message: 'Business partner exists but is deleted',
+            error: 'Conflict',
+            deleted: true,
+            data: exists,
+          },
+          HttpStatus.CONFLICT,
+        );
+      }
+      throw new ConflictException('Business partner already exists');
+    }
     
-    const entity = this.businessPartnerRepository.create(createBusinessPartnerDto);
+    const entity = this.businessPartnerRepository.create({
+      ...createBusinessPartnerDto,
+      companyId,
+    });
     return this.businessPartnerRepository.save(entity);
   }
 
@@ -107,14 +136,33 @@ export class BusinessPartnerService {
       if (!dt) throw new BadRequestException('Invalid document type');
 
       const documentNumber = updateBusinessPartnerDto.documentNumber ?? bp.documentNumber;
-      this.validateDocumentLength(dt.id, documentNumber);
+      await this.validateDocumentLength(dt.id, documentNumber);
       
-      if (updateBusinessPartnerDto.documentNumber && updateBusinessPartnerDto.documentNumber !== bp.documentNumber) {
-        const exists = await this.businessPartnerRepository.findOne({
-          where: { documentNumber: updateBusinessPartnerDto.documentNumber },
-          select: ['id'],
-        });
-        if (exists) throw new ConflictException('Document number already exists');
+      const duplicate = await this.businessPartnerRepository.findOne({
+        where: {
+          companyId: bp.companyId,
+          documentTypeId,
+          documentNumber,
+          id: Not(bp.id),
+        },
+        withDeleted: true,
+        select: ['id', 'deletedAt', 'name'],
+      });
+
+      if (duplicate) {
+        if (duplicate.deletedAt) {
+          throw new HttpException(
+            {
+              statusCode: HttpStatus.CONFLICT,
+              message: 'Business partner exists but is deleted',
+              error: 'Conflict',
+              deleted: true,
+              data: duplicate,
+            },
+            HttpStatus.CONFLICT,
+          );
+        }
+        throw new ConflictException('Business partner already exists');
       }
     }
     Object.assign(bp, updateBusinessPartnerDto);

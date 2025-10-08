@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  NotFoundException
+  NotFoundException,
+  HttpException,
+  HttpStatus
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, In } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { DocumentType } from './entities/document-type.entity';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
@@ -14,6 +16,7 @@ type FindAllQuery = {
   page?: number;
   limit?: number;
   search?: string;
+  status?: string;
 }
 
 @Injectable()
@@ -24,33 +27,51 @@ export class DocumentTypesService {
   ) {}
 
   async create(createDocumentTypeDto: CreateDocumentTypeDto) {
-    const exists = await this.documentTypeRepository.findOne({
+    const existing = await this.documentTypeRepository.findOne({
       where: { name: createDocumentTypeDto.name },
-      select: ['id'],
+      withDeleted: true,
     });
-    if (exists) throw new ConflictException('Document type already exists');
+    if (existing) {
+      if (existing.deletedAt) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.CONFLICT,
+            message: 'Document type exists but is deleted',
+            error: 'Conflict',
+            deleted: true,
+            data: existing,
+          },
+          HttpStatus.CONFLICT,
+        );
+      }
+      throw new ConflictException('Document type already exists');
+    }
     const entity = this.documentTypeRepository.create(createDocumentTypeDto);
     return this.documentTypeRepository.save(entity);
   }
 
   async findAll(query: FindAllQuery) {
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1,Number(query.limit) || 10));
-    const where: any[] = [];
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const normalizedStatus = (query.status ?? 'active').toString().toLowerCase();
+    const showDeleted = normalizedStatus === 'deleted' || normalizedStatus === 'eliminados';
+    const qb = this.documentTypeRepository
+      .createQueryBuilder('documentType')
+      .orderBy('documentType.name', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit);
 
-    if (query.search) {
-      const q = query.search.trim();
-      where.push(
-        { name: ILike(`%${q}%`) },
-      );
+    if (showDeleted) {
+      qb.withDeleted().where('documentType.deletedAt IS NOT NULL');
+    } else {
+      qb.where('documentType.deletedAt IS NULL');
     }
 
-    const [data, total] = await this.documentTypeRepository.findAndCount({
-      where: where.length ? where : undefined,
-      order: { name: 'ASC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    })
+    if (query.search?.trim()) {
+      qb.andWhere('documentType.name ILIKE :search', { search: `%${query.search.trim()}%` });
+    }
+
+    const [data, total] = await qb.getManyAndCount();
 
     return {
       data,
