@@ -27,7 +27,7 @@ async function bootstrap() {
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
-      'X-Skip-Auth',
+      'X-Skip-Auth', // para saltar el error del refresh token
       'Content-Type',
       'Authorization',
       'X-Requested-With',

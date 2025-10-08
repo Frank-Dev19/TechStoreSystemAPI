@@ -8,14 +8,18 @@ import { PermissionsController } from './permissions.controller';
 import { PermissionsService } from './permissions.service';
 //import { UsersModule } from '../users/users.module';
 //import { RbacModule } from 'src/rbac/rbac.module';
+import { PermissionModulesController } from './permission-modules.controller';
+import { PermissionModulesService } from './permission-modules.service';
+import { PermissionModule as PermissionModuleEntity } from './entities/permission-module.entity';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Role, Permission]),
+    TypeOrmModule.forFeature([Role, Permission, PermissionModuleEntity]),
     //UsersModule
     //RbacModule
   ],
-  providers: [RolesService, PermissionsService],
-  controllers: [RolesController, PermissionsController],
+  providers: [RolesService, PermissionsService, PermissionModulesService],
+  controllers: [RolesController, PermissionsController, PermissionModulesController],
   exports: [RolesService, TypeOrmModule, PermissionsService],
 })
 export class RolesModule { }

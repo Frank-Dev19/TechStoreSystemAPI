@@ -20,14 +20,14 @@ export class UsersController {
 
 
     // ====== SOFT DELETE (varios o uno) por body ======
-    @Permissions('user.delete')
+    @Permissions('users.delete')
     @Patch('soft-delete')
     softDeleteMany(@Body() dto: BulkIdsDto) {
         return this.usersService.softRemoveMany(dto.ids);
     }
 
     // ====== RESTORE (varios o uno) por body ======
-    @Permissions('user.update')
+    @Permissions('users.update')
     @Patch('restore')
     restoreMany(@Body() dto: BulkIdsDto) {
         return this.usersService.restoreMany(dto.ids);
@@ -35,32 +35,32 @@ export class UsersController {
 
     // ====== HARD DELETE (varios o uno) por body ======
     // Usamos POST para evitar problemas con proxies que ignoran body en DELETE
-    @Permissions('user.delete')
+    @Permissions('users.delete')
     @Post('hard-delete')
     hardRemoveMany(@Body() dto: BulkIdsDto) {
         return this.usersService.hardRemoveMany(dto.ids);
     }
 
 
-    @Permissions('user.create')
+    @Permissions('users.create')
     @Post()
     create(@Body() dto: CreateUserDto) {
         return this.usersService.create(dto);
     }
 
-    @Permissions('user.read')
+    @Permissions('users.read')
     @Get()
     findAll(@Query('search') search?: string) {
         return this.usersService.findAll(search);
     }
 
-    @Permissions('user.read')
+    @Permissions('users.read')
     @Get(':id')
     findOne(@Param('id', ParseIntPipe) id: number) {
         return this.usersService.findOne(id);
     }
 
-    @Permissions('user.update')
+    @Permissions('users.update')
     @Patch(':id')
     update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
         return this.usersService.update(id, dto);

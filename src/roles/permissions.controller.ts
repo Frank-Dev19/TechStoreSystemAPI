@@ -1,5 +1,5 @@
 import {
-    Body, Controller, Delete, Get, Param, Patch, Post, UseGuards,
+    Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards,
 } from '@nestjs/common';
 import { PermissionsService } from './permissions.service';
 import { CreatePermissionDto } from './dtos/create-permission.dto';
@@ -14,7 +14,6 @@ import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 export class PermissionsController {
     constructor(private readonly service: PermissionsService) { }
 
-
     @Post()
     create(@Body() dto: CreatePermissionDto) {
         return this.service.create(dto);
@@ -26,17 +25,22 @@ export class PermissionsController {
     }
 
     @Get(':id')
-    findOne(@Param('id') id: string) {
-        return this.service.findOne(+id);
+    findOne(@Param('id', ParseIntPipe) id: number) {
+        return this.service.findOne(id);
     }
 
     @Patch(':id')
-    update(@Param('id') id: string, @Body() dto: UpdatePermissionDto) {
-        return this.service.update(+id, dto);
+    update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePermissionDto) {
+        return this.service.update(id, dto);
     }
 
     @Delete(':id')
-    remove(@Param('id') id: string) {
-        return this.service.remove(+id);
+    remove(@Param('id', ParseIntPipe) id: number) {
+        return this.service.remove(id);
+    }
+
+    @Get('tree')
+    findTree() {
+        return this.service.findTree();
     }
 }
