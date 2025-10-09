@@ -51,7 +51,7 @@ export class BusinessPartnerController {
     return this.businessPartnerService.bulkSoftDelete(bulkSoftDeleteBusinessPartnerDto.ids);
   }
 
-  @Permissions('business-partner.soft-delete')
+  @Permissions('business-partner.delete')
   @Delete(':id')
   softDelete(@Param('id') id: string) {
     return this.businessPartnerService.softDelete(+id);
