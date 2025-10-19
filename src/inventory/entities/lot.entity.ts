@@ -1,0 +1,16 @@
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Product } from './product.entity';
+
+@Entity('lots')
+@Unique(['productId', 'lotCode'])
+export class Lot {
+    @PrimaryGeneratedColumn() id: number;
+    @ManyToOne(() => Product) product: Product;
+    @Column() productId: number;
+
+    @Column({ length: 64 }) lotCode: string;
+    @Column({ type: 'date', nullable: true }) expirationDate?: string | null;
+
+    // NOTA: el stock por lote NO se guarda aquí; vive en Stock.
+    @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' }) createdAt: Date;
+}

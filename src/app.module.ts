@@ -19,6 +19,7 @@ import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
 import { BusinessPartnerModule } from './business-partner/business-partner.module';
+import { InventoryModule } from './inventory/inventory.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -75,6 +76,7 @@ import { BusinessPartnerModule } from './business-partner/business-partner.modul
     UserPermissionsModule,
     DocumentTypesModule,
     BusinessPartnerModule,
+    InventoryModule,
     // SalesModule,
   ],
 })
