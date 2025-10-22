@@ -11,6 +11,7 @@ import { Stock } from './entities/stock.entity';
 import { Count } from './entities/count.entity';
 import { CountSnapshot } from './entities/count-snapshot.entity';
 import { CountEntry } from './entities/count-entry.entity';
+import { CountEntrySerial } from './entities/count-entry-serial.entity';
 
 import { CatalogsController } from './controllers/catalogs.controller';
 import { MovementsController } from './controllers/movements.controller';
@@ -36,7 +37,7 @@ import { SerialsController } from './controllers/serials.controller';
     imports: [
         TypeOrmModule.forFeature([
             Category, Unit, Product, Lot, Serial, Movement, Stock,
-            Count, CountSnapshot, CountEntry, MovementSerial,
+            Count, CountSnapshot, CountEntry, MovementSerial, CountEntrySerial,
         ]),
     ],
     controllers: [

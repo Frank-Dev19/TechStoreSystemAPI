@@ -23,4 +23,9 @@ export class MovementDto {
     @IsString() @IsOptional() notes?: string;
     @IsString() @IsOptional() source_doc_type?: string;
     @IsString() @IsOptional() source_doc_id?: string;
+
+    // <-- NUEVO
+    @IsString() @IsOptional()
+    user_created?: string;
+
 }

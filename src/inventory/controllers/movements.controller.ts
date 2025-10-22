@@ -1,12 +1,18 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { MovementsService } from '../services/movements.service';
 import { MovementDto } from '../dto/movement.dto';
+import { Req } from '@nestjs/common';
 
 @Controller('inventory/movements')
 export class MovementsController {
     constructor(private readonly svc: MovementsService) { }
 
-    @Post() create(@Body() dto: MovementDto) { return this.svc.createMovement(dto, 'Usuario Front'); }
+    @Post()
+    create(@Body() dto: MovementDto, @Req() req: any) {
+        const user =
+            req.user?.name || dto.user_created || req.headers['x-user-name'] || 'Usuario Front';
+        return this.svc.createMovement(dto, user);
+    }
 
     // También puedes usar este endpoint como "kardex" con filtros simples.
     @Get()

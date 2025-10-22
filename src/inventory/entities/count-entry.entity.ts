@@ -1,7 +1,8 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { Count } from './count.entity';
 import { Product } from './product.entity';
 import { Lot } from './lot.entity';
+import { CountEntrySerial } from './count-entry-serial.entity';
 
 @Entity('count_entries')
 @Unique(['countId', 'productId', 'lotId'])
@@ -21,4 +22,6 @@ export class CountEntry {
     @Column({ length: 64 }) countedBy: string;
     @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' }) countedAt: Date;
     @Column({ type: 'text', nullable: true }) notes?: string | null;
+
+    @OneToMany(() => CountEntrySerial, (ces) => ces.entry) serials: CountEntrySerial[];
 }

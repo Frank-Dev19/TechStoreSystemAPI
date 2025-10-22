@@ -34,11 +34,20 @@ export class CountsController {
     }
 
 
-    @Post(':id/entries') addEntry(@Param('id') id: number, @Body() b: any) {
+    // ...
+    @Post(':id/entries')
+    addEntry(@Param('id') id: number, @Body() b: any) {
+        // Acepta snake o camel desde el front
+        const serial_codes: string[] = b.serial_codes ?? b.serialCodes ?? [];
         return this.svc.addEntry(+id, {
-            product_id: b.product_id, lot_id: b.lot_id ?? null, qty_counted: Number(b.qty_counted), user: 'Usuario Front',
+            product_id: b.product_id ?? b.productId,
+            lot_id: (b.lot_id ?? b.lotId) ?? null,
+            qty_counted: Number(b.qty_counted ?? b.qtyCounted),
+            user: 'Usuario Front',
+            serial_codes, // <-- NUEVO
         });
     }
+
     @Put(':id/review') review(@Param('id') id: number) { return this.svc.review(+id); }
     @Put(':id/post') post(@Param('id') id: number) { return this.svc.post(+id, 'Usuario Front'); }
     @Put(':id/cancel') cancel(@Param('id') id: number) { return this.svc.cancel(+id); }
@@ -54,5 +63,18 @@ export class CountsController {
     getEntries(@Param('id') id: number) {
         return this.svc.listEntries(+id);
     }
+
+    @Get(':id/entries/:entryId/serials')
+    getEntrySerials(@Param('entryId') entryId: number) {
+        return this.svc.listEntrySerials(+entryId);
+    }
+
+
+    //devolver por cada producto y lote las seriales  faltantes, sobrantes, coincidentes
+    @Get(':id/serial-diffs')
+    getSerialDiffs(@Param('id') id: number) {
+        return this.svc.serialDiffs(+id);
+    }
+
 
 }
