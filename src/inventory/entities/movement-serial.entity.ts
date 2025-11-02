@@ -10,11 +10,15 @@ export class MovementSerial {
 
     @ManyToOne(() => Movement, { onDelete: 'CASCADE' })
     movement: Movement;
-    @Column() movementId: number;
+
+    @Column()
+    movementId: number;
 
     @ManyToOne(() => Serial, { eager: true, onDelete: 'CASCADE' })
     serial: Serial;
-    @Column() serialId: number;
+
+    @Column()
+    serialId: number;
 
     @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
     linkedAt: Date;

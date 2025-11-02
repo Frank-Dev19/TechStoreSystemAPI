@@ -11,13 +11,20 @@ export class CountsController {
 
 
     @Post()
-    create(@Body() dto: CreateCountDto) { return this.svc.create(dto, 'Usuario Front'); }
+    create(@Body() dto: CreateCountDto) {
+        const user = dto.createdBy || 'Usuario Front';
+        return this.svc.create(dto, user);
+    }
 
     @Get(':id')
-    get(@Param('id') id: number) { return this.svc.get(+id); }
+    get(@Param('id') id: number) {
+        return this.svc.get(+id);
+    }
 
     @Put(':id/freeze')
-    freeze(@Param('id') id: number) { return this.svc.freeze(+id); }
+    freeze(@Param('id') id: number) {
+        return this.svc.freeze(+id);
+    }
 
 
     @Put(':id/start')
@@ -43,14 +50,25 @@ export class CountsController {
             product_id: b.product_id ?? b.productId,
             lot_id: (b.lot_id ?? b.lotId) ?? null,
             qty_counted: Number(b.qty_counted ?? b.qtyCounted),
-            user: 'Usuario Front',
+            user: b.user,
             serial_codes, // <-- NUEVO
         });
     }
 
-    @Put(':id/review') review(@Param('id') id: number) { return this.svc.review(+id); }
-    @Put(':id/post') post(@Param('id') id: number) { return this.svc.post(+id, 'Usuario Front'); }
-    @Put(':id/cancel') cancel(@Param('id') id: number) { return this.svc.cancel(+id); }
+    @Put(':id/review')
+    review(@Param('id') id: number) {
+        return this.svc.review(+id, 'Usuario Front');
+    }
+
+    @Put(':id/post')
+    post(@Param('id') id: number) {
+        return this.svc.post(+id, 'Usuario Front');
+    }
+
+    @Put(':id/cancel')
+    cancel(@Param('id') id: number) {
+        return this.svc.cancel(+id);
+    }
 
 
     //los que faltaban
@@ -74,6 +92,18 @@ export class CountsController {
     @Get(':id/serial-diffs')
     getSerialDiffs(@Param('id') id: number) {
         return this.svc.serialDiffs(+id);
+    }
+
+
+    // ====== NUEVO: leer diferencias persistidas ======
+    @Get(':id/differences')
+    getDifferences(@Param('id') id: number) {
+        return this.svc.listDifferences(+id);
+    }
+
+    @Get(':id/differences/summary')
+    getDifferencesSummary(@Param('id') id: number) {
+        return this.svc.getDifferencesSummary(+id) ?? { surplusValue: 0, shortageValue: 0, netValue: 0 };
     }
 
 

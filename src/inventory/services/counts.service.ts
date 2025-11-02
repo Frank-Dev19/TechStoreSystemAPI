@@ -11,6 +11,8 @@ import { MovementsService } from './movements.service';
 import { Product } from '../entities/product.entity';
 import { Serial } from '../entities/serial.entity';
 import { MovementTypeEnum } from '../dto/movement.dto';
+import { CountDifference } from '../entities/count-difference.entity';
+import { CountDifferenceSummary } from '../entities/count-difference-summary.entity';
 
 @Injectable()
 export class CountsService {
@@ -24,10 +26,13 @@ export class CountsService {
         @InjectRepository(Serial) private serialRepo: Repository<Serial>,                     // NEW
         @InjectRepository(CountEntrySerial) private cesRepo: Repository<CountEntrySerial>,   // NEW
         @InjectRepository(Product) private prodRepo: Repository<Product>,                    // NEW
+        @InjectRepository(CountDifference) private diffRepo: Repository<CountDifference>,
+        @InjectRepository(CountDifferenceSummary) private diffSumRepo: Repository<CountDifferenceSummary>,
+
         private readonly movementsSvc: MovementsService,
     ) { }
 
-    create(dto: { code?: string; description?: string }, user = 'API') {
+    create(dto: { code?: string; description?: string }, user) {
         const code = dto.code ?? this.nextCode();
         const c = this.countRepo.create({ code, description: dto.description ?? null, status: 'DRAFT', createdBy: user });
         return this.countRepo.save(c);
@@ -80,29 +85,77 @@ export class CountsService {
         const product = await this.prodRepo.findOneBy({ id: entry.product_id });
         if (!product) throw new NotFoundException('Producto no encontrado');
 
-        const ce = this.entryRepo.create({
-            countId: id, productId: entry.product_id, lotId: entry.lot_id ?? null,
-            qtyCounted: entry.qty_counted, countedBy: entry.user ?? 'API',
-        });
-        const saved = await this.entryRepo.save(ce);
+        const lotId = entry.lot_id ?? null;
+        const qtyToAdd = Number(entry.qty_counted || 0);
 
+        // 1) buscar si ya existe la fila (countId, productId, lotId)
+
+        // construir el where respetando null
+        const where: any = {
+            countId: id,
+            productId: entry.product_id,
+            lotId: lotId == null ? IsNull() : lotId,
+        };
+
+        // 👇 ya no marca error
+        let saved = await this.entryRepo.findOne({ where });
+
+        //   let saved = await this.entryRepo.findOne({
+        //     where: { countId: id, productId: entry.product_id, lotId },
+        //   });
+
+        if (saved) {
+            // fusionar cantidades
+            saved.qtyCounted = Number(saved.qtyCounted || 0) + qtyToAdd;
+            saved.countedBy = entry.user ?? saved.countedBy ?? 'API';
+            saved = await this.entryRepo.save(saved);
+        } else {
+            // crear nueva
+            const ce = this.entryRepo.create({
+                countId: id,
+                productId: entry.product_id,
+                lotId,
+                qtyCounted: qtyToAdd,
+                countedBy: entry.user ?? 'API',
+            });
+            saved = await this.entryRepo.save(ce);
+        }
+
+        // 2) si es serializado, registrar seriales (evitando duplicados)
         if (product.isSerialized) {
-            const codes = (entry.serial_codes ?? []).map(c => String(c).trim()).filter(Boolean);
-            if (entry.qty_counted > 0 && codes.length !== Number(entry.qty_counted)) {
-                throw new BadRequestException(`Debe enviar ${entry.qty_counted} serial(es)`);
+            const codes = (entry.serial_codes ?? [])
+                .map(c => String(c).trim())
+                .filter(Boolean);
+
+            if (qtyToAdd > 0 && codes.length !== qtyToAdd) {
+                throw new BadRequestException(`Debe enviar ${qtyToAdd} serial(es)`);
             }
+
             if (codes.length) {
-                const rows = codes.map(code => this.cesRepo.create({
-                    entryId: saved.id,
-                    serialCode: code,
-                    lotId: entry.lot_id ?? null,
-                    productId: entry.product_id,
-                }));
-                await this.cesRepo.save(rows);
+                // cargar existentes para este entry
+                const existing = await this.cesRepo.find({
+                    where: { entryId: saved.id },
+                });
+                const already = new Set(existing.map(x => x.serialCode.trim()));
+
+                const rows = codes
+                    .filter(code => !already.has(code))
+                    .map(code =>
+                        this.cesRepo.create({
+                            entryId: saved.id,
+                            serialCode: code,
+                            lotId,
+                            productId: entry.product_id,
+                        })
+                    );
+
+                if (rows.length) await this.cesRepo.save(rows);
             }
         }
+
         return saved;
     }
+
 
     // counts.service.ts
     async addEntries(
@@ -134,14 +187,101 @@ export class CountsService {
 
 
 
+    // ====== NUEVO: recalcular y persistir diferencias ======
+    private async recomputeAndPersistDifferences(id: number, user = 'API') {
+        return this.ds.transaction(async (em) => {
+            const snaps = await em.getRepository(CountSnapshot).find({ where: { countId: id } });
+            const entries = await em.getRepository(CountEntry).find({ where: { countId: id } });
 
+            // Mapa (productId,lotId) -> qtyCounted
+            const key = (p: number, l: number | null) => `${p}:${l ?? 'null'}`;
+            const countedMap = new Map<string, number>();
+            for (const e of entries) countedMap.set(key(e.productId, e.lotId ?? null), Number(e.qtyCounted || 0));
 
+            // borrar anteriores
+            await em.getRepository(CountDifference).delete({ countId: id });
 
-    async review(id: number) {
+            const diffs: CountDifference[] = [];
+            let surplus = 0, shortage = 0;
+
+            for (const s of snaps) {
+                const counted = countedMap.get(key(s.productId, s.lotId ?? null)) ?? 0;
+                const qtySys = Number(s.qtySystem);
+                const diff = counted - qtySys;
+                if (diff === 0) continue;
+
+                const avg = Number(s.avgCostAtFreeze);
+                const val = diff * avg;
+
+                const row = em.getRepository(CountDifference).create({
+                    countId: id,
+                    productId: s.productId,
+                    lotId: s.lotId ?? null,
+                    qtySystem: qtySys,
+                    qtyCounted: counted,
+                    difference: diff,
+                    avgCostAtFreeze: avg,
+                    valueDifference: val,
+                    calculatedBy: user,
+                });
+                diffs.push(row);
+
+                if (val > 0) surplus += val;
+                else shortage += Math.abs(val);
+            }
+
+            if (diffs.length) await em.getRepository(CountDifference).save(diffs);
+
+            // Upsert del resumen
+            const existing = await em.getRepository(CountDifferenceSummary).findOne({ where: { countId: id } });
+            const summary = existing
+                ? Object.assign(existing, {
+                    surplusValue: surplus,
+                    shortageValue: shortage,
+                    netValue: surplus - shortage,
+                    calculatedBy: user,
+                })
+                : em.getRepository(CountDifferenceSummary).create({
+                    countId: id,
+                    surplusValue: surplus,
+                    shortageValue: shortage,
+                    netValue: surplus - shortage,
+                    calculatedBy: user,
+                });
+            await em.getRepository(CountDifferenceSummary).save(summary);
+        });
+    }
+
+    // ====== NUEVO: exponer diferencias/summary ======
+    async listDifferences(id: number) {
+        const count = await this.get(id);
+        if (!count) throw new NotFoundException('Conteo no encontrado');
+        // Permitimos leer en REVIEW (y COUNTING si quisieras mostrar “live”)
+        if (count.status !== 'REVIEW' && count.status !== 'COUNTING') {
+            throw new BadRequestException('Disponible en COUNTING o REVIEW');
+        }
+        return this.diffRepo.find({
+            where: { countId: id },
+            order: { productId: 'ASC', lotId: 'ASC' as any },
+        });
+    }
+
+    async getDifferencesSummary(id: number) {
+        return this.diffSumRepo.findOne({ where: { countId: id } });
+    }
+
+    async review(id: number, user = 'API') {
         const count = await this.get(id);
         if (!count || count.status !== 'COUNTING') throw new BadRequestException('Debe estar en COUNTING');
+
+        // 1) Cambiar estado
         count.status = 'REVIEW';
-        return this.countRepo.save(count);
+        await this.countRepo.save(count);
+
+        // 2) Calcular y persistir diferencias (detalle + resumen)
+        await this.recomputeAndPersistDifferences(id, user);
+
+        return this.get(id);
     }
 
     async post(id: number, user = 'API') {

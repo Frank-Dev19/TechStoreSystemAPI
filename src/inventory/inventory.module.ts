@@ -31,13 +31,15 @@ import { LotsController } from './controllers/lots.controller';
 import { MovementSerial } from './entities/movement-serial.entity';
 import { SerialsService } from './services/serials.service';
 import { SerialsController } from './controllers/serials.controller';
-
+import { CountDifference } from './entities/count-difference.entity';
+import { CountDifferenceSummary } from './entities/count-difference-summary.entity';
 @Module({
 
     imports: [
         TypeOrmModule.forFeature([
             Category, Unit, Product, Lot, Serial, Movement, Stock,
-            Count, CountSnapshot, CountEntry, MovementSerial, CountEntrySerial,
+            Count, CountSnapshot, CountEntry, MovementSerial, CountEntrySerial, CountDifference,
+            CountDifferenceSummary,
         ]),
     ],
     controllers: [

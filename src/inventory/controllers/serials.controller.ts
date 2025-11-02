@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Param, BadRequestException } from '@nestjs/common';
 import { SerialsService } from '../services/serials.service';
 
 @Controller('serials')
@@ -19,4 +19,20 @@ export class SerialsController {
     byMovement(@Param('movement_id') movement_id: string) {
         return this.svc.byMovement(+movement_id);
     }
+
+    //     @Post('resolve')
+    // async resolveSerials(@Body() body: { serial_codes: string[] }) {
+    //   return this.svc.resolveSerials(body.serial_codes);
+    // }
+
+    // ✅ NUEVO: resolver seriales (existe / product / lot / lot_code)
+    @Post('resolve')
+    async resolveSerials(@Body() body: { serial_codes?: string[]; serialCodes?: string[] }) {
+        const raw = body?.serial_codes ?? body?.serialCodes ?? [];
+        if (!Array.isArray(raw)) throw new BadRequestException('serial_codes debe ser un arreglo');
+        const codes = raw.map(c => String(c).trim()).filter(Boolean);
+        if (!codes.length) return [];
+        return this.svc.resolveSerials(codes);
+    }
+
 }

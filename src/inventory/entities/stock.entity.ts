@@ -1,4 +1,4 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique, UpdateDateColumn } from 'typeorm';
 import { Product } from './product.entity';
 import { Lot } from './lot.entity';
 
@@ -17,5 +17,7 @@ export class Stock {
     @Column({ type: 'decimal', precision: 14, scale: 4, default: 0 }) avgUnitCost: number;
     @Column({ type: 'decimal', precision: 16, scale: 4, default: 0 }) totalCost: number;
 
-    @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' }) updatedAt: Date;
+    @UpdateDateColumn()
+    updatedAt: Date;
+
 }

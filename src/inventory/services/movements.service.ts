@@ -87,26 +87,58 @@ export class MovementsService {
                 });
             }
 
-            // --- NEW: Pre-procesamiento de seriales ---
+            // --- NEW: Pre-procesamiento de seriales (con reactivación) ---
             let serialsToLink: Serial[] = [];
 
             if (product.isSerialized) {
                 if (dto.type === 'IN' || (dto.type === 'ADJ' && dto.qty > 0)) {
                     const codes = (dto.serial_codes ?? []).map(c => c.trim()).filter(Boolean);
-                    // Verifica que los códigos no existan
-                    const existing = await em.getRepository(Serial).find({ where: { serialCode: In(codes) } });
-                    if (existing.length) {
-                        const dup = existing.map(s => s.serialCode).join(', ');
-                        throw new BadRequestException(`Serial(es) ya existentes: ${dup}`);
+                    if (!codes.length) {
+                        throw new BadRequestException(`Debe enviar serial_codes con cantidad exacta (${Math.abs(Number(dto.qty))})`);
                     }
-                    // Crear seriales en IN_STOCK (asociar a producto y lote si aplica)
-                    const toCreate = codes.map(code => em.getRepository(Serial).create({
+
+                    const serialRepo = em.getRepository(Serial);
+                    const existing = await serialRepo.find({ where: { serialCode: In(codes) } });
+
+                    // 1) No permitir seriales existentes de OTRO producto
+                    const existingOtherProduct = existing
+                        .filter(s => s.productId !== product.id)
+                        .map(s => s.serialCode);
+                    if (existingOtherProduct.length) {
+                        throw new BadRequestException(`Serial(es) pertenecen a otro producto: ${existingOtherProduct.join(', ')}`);
+                    }
+
+                    // 2) No permitir duplicados ya en stock
+                    const existingInStock = existing
+                        .filter(s => s.productId === product.id && s.status === 'IN_STOCK')
+                        .map(s => s.serialCode);
+                    if (existingInStock.length) {
+                        throw new BadRequestException(`Serial(es) ya en stock: ${existingInStock.join(', ')}`);
+                    }
+
+                    // 3) Reactivar los que existan con estado ISSUED (vuelven a IN_STOCK)
+                    const toReactivate = existing.filter(s => s.productId === product.id && s.status === 'ISSUED');
+
+                    for (const s of toReactivate) {
+                        s.status = 'IN_STOCK';
+                        // si te mandan un lote para el ajuste/entrada, úsalo; si no, conserva el anterior
+                        s.lotId = (dto.lot_id ?? null) ?? s.lotId ?? null;
+                    }
+                    const reactivated = toReactivate.length ? await serialRepo.save(toReactivate) : [];
+
+                    // 4) Crear los que NO existan todavía
+                    const existingCodes = new Set(existing.map(s => s.serialCode));
+                    const newCodes = codes.filter(code => !existingCodes.has(code));
+
+                    const toCreate = newCodes.map(code => serialRepo.create({
                         productId: product.id,
                         serialCode: code,
-                        lotId: lotId ?? null,
+                        lotId: dto.lot_id ?? null,
                         status: 'IN_STOCK',
                     }));
-                    serialsToLink = await em.getRepository(Serial).save(toCreate);
+                    const created = toCreate.length ? await serialRepo.save(toCreate) : [];
+
+                    serialsToLink = [...reactivated, ...created];
 
                 } else if (dto.type === 'OUT' || (dto.type === 'ADJ' && dto.qty < 0)) {
                     const ids = dto.serial_ids ?? [];
@@ -114,7 +146,7 @@ export class MovementsService {
                     if (serialsToLink.length !== ids.length) {
                         throw new BadRequestException('Alguno(s) serial(es) no existen o no corresponden al producto');
                     }
-                    // Validar estado disponible
+                    // Deben estar disponibles para salir
                     const notAvail = serialsToLink.filter(s => s.status !== 'IN_STOCK');
                     if (notAvail.length) {
                         const codes = notAvail.map(s => s.serialCode).join(', ');
@@ -122,6 +154,7 @@ export class MovementsService {
                     }
                 }
             }
+
 
             // Efectos en stock
             const qty = qtyAbs;

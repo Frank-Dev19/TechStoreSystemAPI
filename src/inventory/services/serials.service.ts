@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, } from '@nestjs/typeorm';
+import { Repository, In } from 'typeorm';
 import { Serial } from '../entities/serial.entity';
 import { MovementSerial } from '../entities/movement-serial.entity';
 
@@ -38,4 +38,37 @@ export class SerialsService {
             throw new BadRequestException(`Serial(es) ya existentes: ${dup}`);
         }
     }
+
+    // Para resolver los sobrantes que no tienen lote
+    async resolveSerials(serial_codes: string[]) {
+        if (!serial_codes?.length) return [];
+
+        const serials = await this.serialRepo.find({
+            where: { serialCode: In(serial_codes) },
+            relations: ['lot', 'product'],
+        });
+
+        const map = new Map(serials.map(s => [s.serialCode, s]));
+
+        return serial_codes.map(code => {
+            const found = map.get(code);
+            return found
+                ? {
+                    serial_code: code,
+                    product_id: found.productId,
+                    lot_id: found.lotId,
+                    lot_code: found.lot?.lotCode ?? null,  // 👈 corregido
+                    exists: true,
+                }
+                : {
+                    serial_code: code,
+                    product_id: null,
+                    lot_id: null,
+                    lot_code: null,
+                    exists: false,
+                };
+        });
+    }
+
+
 }
