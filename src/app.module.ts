@@ -20,6 +20,9 @@ import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
 import { BusinessPartnerModule } from './business-partner/business-partner.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
+import { TicketModule } from './ticket/ticket.module';
+import { QuotesModule } from './ticket/quotes/quotes.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -77,7 +80,9 @@ import { InventoryModule } from './inventory/inventory.module';
     DocumentTypesModule,
     BusinessPartnerModule,
     InventoryModule,
-    // SalesModule,
+    ServiceCatalogModule,
+    TicketModule,
+    QuotesModule,
   ],
 })
 export class AppModule { }

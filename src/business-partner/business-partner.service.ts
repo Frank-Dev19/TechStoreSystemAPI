@@ -20,6 +20,7 @@ type FindAllQuery = {
   isActive?: string;
   status?: string;
   companyId?: number | string;
+  documentNumber?: string;
 }
 
 @Injectable()
@@ -105,13 +106,19 @@ export class BusinessPartnerService {
     });
 
     const searchTerm = query.search?.trim();
+    if (query.documentNumber !== undefined) {
+      const documentNumber = String(query.documentNumber).trim();
+      if (documentNumber) {
+        where.push(buildCondition({ documentNumber }));
+      }
+    }
+
     if (searchTerm) {
       const q = searchTerm;
       where.push(
         buildCondition({ name: ILike(`%${q}%`) }),
         buildCondition({ tradeName: ILike(`%${q}%`) }),
         buildCondition({ documentType: { name: ILike(`%${q}%`) } }),
-        buildCondition({ documentNumber: ILike(`%${q}%`) }),
         buildCondition({ email: ILike(`%${q}%`) }),
         buildCondition({ phone: ILike(`%${q}%`) }),
         buildCondition({ address: ILike(`%${q}%`) }),

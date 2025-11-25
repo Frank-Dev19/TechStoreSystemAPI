@@ -36,7 +36,13 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
       { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 30, icon: 'fas fa-truck' },
       { moduleKey: 'auditoria', label: 'Auditoría', sortOrder: 90, icon: 'fas fa-history' },
-      { moduleKey: 'business-partner', label: 'Socios de Comercio', sortOrder: 100, icon: 'fas fa-handshake' } // ejemplo futuro
+      { moduleKey: 'business-partner', label: 'Socios de Comercio', sortOrder: 100, icon: 'fas fa-handshake' }, // ejemplo futuro
+      { moduleKey: 'service-category', label: 'Categorías de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
+      { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
+      { moduleKey: 'ticket', label: 'Tickets', sortOrder: 115, icon: 'fas fa-ticket-alt' },
+      { moduleKey: 'ticket-item', label: 'Items de Ticket', sortOrder: 116, icon: 'fas fa-tools' },
+      { moduleKey: 'diagnostic', label: 'Diagnósticos de Items de Ticket', sortOrder: 117, icon: 'fas fa-ticket-alt' },
+      { moduleKey: 'quote', label: 'Cotizaciones', sortOrder: 118, icon: 'fas fa-ticket-alt' },
     ];
 
     // 2) Catálogo de permisos (fuente de verdad)
@@ -82,6 +88,50 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'business-partner', actionKey: 'restore', description: 'Restaurar un socios', sortOrder: 70 },
       { moduleKey: 'business-partner', actionKey: 'bulk-delete', description: 'Eliminar varios socios', sortOrder: 50 },
       { moduleKey: 'business-partner', actionKey: 'bulk-restore', description: 'Restaurar varios socios', sortOrder: 40 },
+
+      //Service Category (Categorías de servicios)
+      { moduleKey: 'service-category', actionKey: 'create', description: 'Crear categorías de servicios', sortOrder: 10 },
+      { moduleKey: 'service-category', actionKey: 'read', description: 'Ver categorías de servicios', sortOrder: 20 },
+      { moduleKey: 'service-category', actionKey: 'update', description: 'Actualizar categorías de servicios', sortOrder: 30 },
+      { moduleKey: 'service-category', actionKey: 'delete', description: 'Eliminar categorías de servicios', sortOrder: 60 },
+      { moduleKey: 'service-category', actionKey: 'restore', description: 'Restaurar categorías de servicios', sortOrder: 70 },
+
+      //Service (Servicios)
+      { moduleKey: 'service', actionKey: 'create', description: 'Crear servicios', sortOrder: 10 },
+      { moduleKey: 'service', actionKey: 'read', description: 'Ver servicios', sortOrder: 20 },
+      { moduleKey: 'service', actionKey: 'update', description: 'Actualizar servicios', sortOrder: 30 },
+      { moduleKey: 'service', actionKey: 'delete', description: 'Eliminar servicios', sortOrder: 60 },
+      { moduleKey: 'service', actionKey: 'restore', description: 'Restaurar servicios', sortOrder: 70 },
+
+      // Tickets
+      { moduleKey: 'ticket', actionKey: 'create', description: 'Crear tickets', sortOrder: 10 },
+      { moduleKey: 'ticket', actionKey: 'read', description: 'Ver tickets', sortOrder: 20 },
+      { moduleKey: 'ticket', actionKey: 'update', description: 'Actualizar tickets', sortOrder: 30 },
+      { moduleKey: 'ticket', actionKey: 'delete', description: 'Eliminar tickets', sortOrder: 60 },
+      { moduleKey: 'ticket', actionKey: 'restore', description: 'Restaurar tickets', sortOrder: 70 },
+
+      // Ticket items
+      { moduleKey: 'ticket-item', actionKey: 'create', description: 'Crear items de ticket', sortOrder: 10 },
+      { moduleKey: 'ticket-item', actionKey: 'read', description: 'Ver items de ticket', sortOrder: 20 },
+      { moduleKey: 'ticket-item', actionKey: 'update', description: 'Actualizar items de ticket', sortOrder: 30 },
+      { moduleKey: 'ticket-item', actionKey: 'delete', description: 'Eliminar items de ticket', sortOrder: 60 },
+      { moduleKey: 'ticket-item', actionKey: 'restore', description: 'Restaurar items de ticket', sortOrder: 70 },
+      { moduleKey: 'ticket-item', actionKey: 'assign', description: 'Reasignar items de ticket', sortOrder: 80 },
+      { moduleKey: 'ticket-item', actionKey: 'update-status', description: 'Cambiar estado de items de tickets', sortOrder: 90 },
+
+      // Diagnostics
+      { moduleKey: 'diagnostic', actionKey: 'create', description: 'Crear diagnósticos', sortOrder: 10 },
+      { moduleKey: 'diagnostic', actionKey: 'read', description: 'Ver diagnósticos', sortOrder: 20 },
+      { moduleKey: 'diagnostic', actionKey: 'update', description: 'Actualizar diagnósticos', sortOrder: 30 },
+      { moduleKey: 'diagnostic', actionKey: 'delete', description: 'Eliminar diagnósticos', sortOrder: 60 },
+      { moduleKey: 'diagnostic', actionKey: 'restore', description: 'Restaurar diagnósticos', sortOrder: 70 },
+
+      // Quotes
+      { moduleKey: 'quote', actionKey: 'create', description: 'Crear cotizaciones', sortOrder: 10 },
+      { moduleKey: 'quote', actionKey: 'read', description: 'Ver cotizaciones', sortOrder: 20 },
+      { moduleKey: 'quote', actionKey: 'update', description: 'Actualizar cotizaciones', sortOrder: 30 },
+      { moduleKey: 'quote', actionKey: 'delete', description: 'Eliminar cotizaciones', sortOrder: 60 },
+      { moduleKey: 'quote', actionKey: 'restore', description: 'Restaurar cotizaciones', sortOrder: 70 },
     ];
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE
