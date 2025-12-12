@@ -80,7 +80,16 @@ export class TicketService {
 
         this.ticketItemService.applyAggregates(ticket);
 
-        return await this.ticketRepository.save(ticket);
+        const savedTicket = await this.ticketRepository.save(ticket);
+
+        // Auto-transition STANDARD_SERVICE items to DIAGNOSED
+        for (const item of savedTicket.items ?? []) {
+          if (item.serviceType === 'STANDARD_SERVICE' && item.status === TicketItemStatus.ASSIGNED) {
+            await this.ticketItemService.changeStatus(item.id, TicketItemStatus.DIAGNOSED);
+          }
+        }
+
+        return savedTicket;
       } catch (error) {
         if (error instanceof ConflictException || error instanceof BadRequestException) {
           throw error;
@@ -122,7 +131,9 @@ export class TicketService {
         'ticket.items',
         'item',
         includeDeleted ? undefined : 'item.deletedAt IS NULL',
-      );
+      )
+      .leftJoinAndSelect('item.assignedTechnician', 'assignedTechnician')
+      .leftJoinAndSelect('item.assignedSupervisor', 'assignedSupervisor');
 
     if (includeDeleted) {
       qb.withDeleted();
@@ -190,7 +201,7 @@ export class TicketService {
   async findOne(id: number, withDeleted = false): Promise<Ticket> {
     const ticket = await this.ticketRepository.findOne({
       where: { id },
-      relations: ['items'],
+      relations: ['items', 'items.assignedTechnician', 'items.assignedSupervisor'],
       withDeleted,
     });
 
@@ -259,7 +270,20 @@ export class TicketService {
 
     this.ticketItemService.applyAggregates(ticket);
 
-    return this.ticketRepository.save(ticket);
+    const savedTicket = await this.ticketRepository.save(ticket);
+
+    // Auto-transition STANDARD_SERVICE items to DIAGNOSED
+    if (dto.items?.length) {
+      const newItemsStartIndex = (ticket.items?.length ?? 0) - dto.items.length;
+      const newlyAddedItems = savedTicket.items?.slice(newItemsStartIndex) ?? [];
+      for (const item of newlyAddedItems) {
+        if (item.serviceType === 'STANDARD_SERVICE' && item.status === TicketItemStatus.ASSIGNED) {
+          await this.ticketItemService.changeStatus(item.id, TicketItemStatus.DIAGNOSED);
+        }
+      }
+    }
+
+    return savedTicket;
   }
 
   async softDelete(id: number) {

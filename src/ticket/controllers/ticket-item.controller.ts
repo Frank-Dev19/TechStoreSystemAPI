@@ -12,7 +12,8 @@ import {
 } from '@nestjs/common';
 import { TicketItemService } from '../services/ticket-item.service';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
-import { AssignTicketItemDto } from '../dto/assign-ticket-item.dto';
+import { AssignTechnicianDto } from '../dto/assign-technician.dto';
+import { AssignSupervisorDto } from '../dto/assign-supervisor.dto';
 import { TicketItemStatus } from '../enums';
 import { CurrentUser } from '../../rbac/decorators/current-user.decorator';
 import { JwtAccessGuard } from '../../auth/guards/jwt-access.guard';
@@ -20,9 +21,14 @@ import { RolesGuard } from '../../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../../rbac/guards/permissions.guard';
 import { Roles as RolesDec } from '../../rbac/decorators/roles.decorator';
 import { Permissions } from '../../rbac/decorators/permissions.decorator';
+import {
+  RECEPTIONIST_ROLE_NAMES,
+  SUPERVISOR_ROLE_NAMES,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
 @Controller('ticket/items')
 export class TicketItemController {
   constructor(private readonly ticketItemService: TicketItemService) {}
@@ -67,12 +73,21 @@ export class TicketItemController {
   }
 
   @Permissions('ticket-item.assign')
-  @Patch(':itemId/assign')
-  assign(
+  @Patch(':itemId/assign-technician')
+  assignTechnician(
     @Param('itemId', ParseIntPipe) itemId: number,
-    @Body() dto: AssignTicketItemDto,
+    @Body() dto: AssignTechnicianDto,
   ) {
     return this.ticketItemService.assignTechnician(itemId, dto.technicianId);
+  }
+
+  @Permissions('ticket-item.assign-supervisor')
+  @Patch(':itemId/assign-supervisor')
+  assignSupervisor(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: AssignSupervisorDto,
+  ) {
+    return this.ticketItemService.assignSupervisor(itemId, dto.supervisorId);
   }
 
   @Permissions('ticket-item.update-status')

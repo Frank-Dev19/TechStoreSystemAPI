@@ -19,9 +19,14 @@ import { CreateDiagnosisDto } from './dto/create-diagnosis.dto';
 import { UpdateDiagnosisDto } from './dto/update-diagnosis.dto';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
 import { Permissions } from '../../rbac/decorators/permissions.decorator';
+import {
+  RECEPTIONIST_ROLE_NAMES,
+  SUPERVISOR_ROLE_NAMES,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
 @Controller('diagnostics')
 export class DiagnosticsController {
   constructor(private readonly diagnosticsService: DiagnosticsService) {}

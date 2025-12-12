@@ -8,10 +8,11 @@ import { QuoteServiceItem } from './entities/quote-service-item.entity';
 import { TicketItem } from '../entities/ticket-item.entity';
 import { TicketItemDiagnosis } from '../diagnostics/entities/ticket-item-diagnosis.entity';
 import { TicketModule } from '../ticket.module';
+import { User } from '../../users/entities/user.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Quote, QuoteProduct, QuoteServiceItem, TicketItem, TicketItemDiagnosis]),
+    TypeOrmModule.forFeature([Quote, QuoteProduct, QuoteServiceItem, TicketItem, TicketItemDiagnosis, User]),
     TicketModule,
   ],
   controllers: [QuotesController],

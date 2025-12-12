@@ -118,6 +118,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'ticket-item', actionKey: 'delete', description: 'Eliminar items de ticket', sortOrder: 60 },
       { moduleKey: 'ticket-item', actionKey: 'restore', description: 'Restaurar items de ticket', sortOrder: 70 },
       { moduleKey: 'ticket-item', actionKey: 'assign', description: 'Reasignar items de ticket', sortOrder: 80 },
+      { moduleKey: 'ticket-item', actionKey: 'assign-supervisor', description: 'Asignar supervisores a items de ticket', sortOrder: 85 },
       { moduleKey: 'ticket-item', actionKey: 'update-status', description: 'Cambiar estado de items de tickets', sortOrder: 90 },
 
       // Diagnostics
@@ -133,6 +134,12 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'quote', actionKey: 'update', description: 'Actualizar cotizaciones', sortOrder: 30 },
       { moduleKey: 'quote', actionKey: 'delete', description: 'Eliminar cotizaciones', sortOrder: 60 },
       { moduleKey: 'quote', actionKey: 'restore', description: 'Restaurar cotizaciones', sortOrder: 70 },
+      { moduleKey: 'quote', actionKey: 'approve-supervisor', description: 'Aprobar cotizaciones como supervisor', sortOrder: 80 },
+      { moduleKey: 'quote', actionKey: 'reject-supervisor', description: 'Rechazar cotizaciones como supervisor', sortOrder: 90 },
+      { moduleKey: 'quote', actionKey: 'send-to-client', description: 'Enviar cotizaciones al cliente', sortOrder: 100 },
+      { moduleKey: 'quote', actionKey: 'approve-client', description: 'Marcar cotizaciones como aprobadas por cliente', sortOrder: 110 },
+      { moduleKey: 'quote', actionKey: 'reject-client', description: 'Marcar cotizaciones como rechazadas por cliente', sortOrder: 120 },
+      { moduleKey: 'quote', actionKey: 'resubmit', description: 'Reenviar cotizaciones con ajustes', sortOrder: 130 },
     ];
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE

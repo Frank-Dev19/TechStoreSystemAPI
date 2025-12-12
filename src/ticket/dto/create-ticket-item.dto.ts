@@ -10,7 +10,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { EquipmentType, ServiceLocation } from '../enums';
+import { EquipmentType, ServiceLocation, ServiceType } from '../enums';
 
 export class CreateTicketItemDto {
   @IsEnum(EquipmentType)
@@ -39,9 +39,9 @@ export class CreateTicketItemDto {
   @IsOptional()
   accessories?: string;
 
-  @IsBoolean()
+  @IsEnum(ServiceType)
   @IsOptional()
-  requiresDiagnosis?: boolean;
+  serviceType?: ServiceType;
 
   @IsEnum(ServiceLocation)
   @IsOptional()

@@ -21,9 +21,10 @@ import { RolesGuard } from '../../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../../rbac/guards/permissions.guard';
 import { Roles as RolesDec } from '../../rbac/decorators/roles.decorator';
 import { Permissions } from '../../rbac/decorators/permissions.decorator';
+import { RECEPTIONIST_ROLE_NAMES, SUPERVISOR_ROLE_NAMES } from '../../common/constants/role-names';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES)
 @Controller('ticket')
 export class TicketController {
   constructor(private readonly ticketService: TicketService) {}

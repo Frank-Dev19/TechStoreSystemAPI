@@ -1,4 +1,5 @@
 import {
+  AfterLoad,
   Column,
   CreateDateColumn,
   DeleteDateColumn,
@@ -16,6 +17,7 @@ import {
   ServiceLocation,
   ClientSLAPauseReason,
   EquipmentType,
+  ServiceType,
 } from '../enums';
 
 @Entity('ticket_items')
@@ -53,18 +55,18 @@ export class TicketItem {
   @Column({ name: 'accessories', type: 'text', nullable: true })
   accessories: string | null;
 
-  @Column({ name: 'requires_diagnosis', type: 'boolean', default: true })
-  requiresDiagnosis: boolean;
+  @Column({ name: 'service_type', type: 'enum', enum: ServiceType, default: ServiceType.DIAGNOSIS})
+  serviceType: ServiceType;
 
   // ==================== ESTADO ====================
   @Column({
     type: 'enum',
     enum: TicketItemStatus,
-    default: TicketItemStatus.RECEIVED,
+    default: TicketItemStatus.ASSIGNED,
   })
   status: TicketItemStatus;
 
-  // ==================== ASIGNACIÓN ====================
+  // ==================== ASIGNACIÓN DE TÉCNICO ====================
   @ManyToOne(() => User, { eager: false, nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'assigned_to_technician_id' })
   assignedTechnician: User | null;
@@ -74,6 +76,17 @@ export class TicketItem {
 
   @Column({ name: 'assigned_at', type: 'datetime', nullable: true })
   assignedAt: Date | null;
+
+  // ==================== ASIGNACIÓN DE SUPERVISOR ====================
+  @ManyToOne(() => User, { eager: false, nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'assigned_to_supervisor_id' })
+  assignedSupervisor: User | null;
+
+  @Column({ name: 'assigned_to_supervisor_id', type: 'int', nullable: true })
+  assignedToSupervisorId: number | null;
+
+  @Column({ name: 'assigned_supervisor_at', type: 'datetime', nullable: true })
+  assignedSupervisorAt: Date | null;
 
   // ==================== UBICACIÓN DEL SERVICIO ====================
   @Column({
@@ -225,6 +238,12 @@ export class TicketItem {
   @Column({ name: 'cancelled_at', type: 'datetime', nullable: true })
   cancelledAt: Date | null;
 
+  @Column({ name: 'supervisor_approved_at', type: 'datetime', nullable: true })
+  supervisorApprovedAt: Date | null;
+
+  @Column({ name: 'supervisor_rejected_at', type: 'datetime', nullable: true })
+  supervisorRejectedAt: Date | null;
+
   // ==================== INFORMACIÓN FINANCIERA ====================
   @Column({
     name: 'final_amount',
@@ -275,4 +294,14 @@ export class TicketItem {
 
   // @OneToMany(() => Quote, (quote) => quote.ticketItem)
   // quotes: Quote[];
+
+  // ==================== CAMPOS VIRTUALES ====================
+  assignedToTechnicianName?: string | null;
+  assignedToSupervisorName?: string | null;
+
+  @AfterLoad()
+  populateVirtualFields(): void {
+    this.assignedToTechnicianName = this.assignedTechnician?.name ?? null;
+    this.assignedToSupervisorName = this.assignedSupervisor?.name ?? null;
+  }
 }

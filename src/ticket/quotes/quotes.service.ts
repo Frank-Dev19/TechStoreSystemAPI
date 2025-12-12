@@ -18,6 +18,8 @@ import { QuoteProductItemDto } from './dto/quote-product-item.dto';
 import { QuoteServiceItemDto } from './dto/quote-service-item.dto';
 import { TicketItemStatus } from '../enums';
 import { TicketItemService } from '../services/ticket-item.service';
+import { User } from '../../users/entities/user.entity';
+import { hasRoleName, SUPERVISOR_ROLE_NAMES } from '../../common/constants/role-names';
 
 type FindQuotesQuery = {
   page?: number | string;
@@ -25,6 +27,8 @@ type FindQuotesQuery = {
   ticketItemId?: number | string;
   status?: string;
   withDeleted?: string;
+  supervisorId?: number | string;
+  assignedToMe?: string;
 };
 
 @Injectable()
@@ -36,10 +40,12 @@ export class QuotesService {
     private readonly ticketItemRepository: Repository<TicketItem>,
     @InjectRepository(TicketItemDiagnosis)
     private readonly diagnosisRepository: Repository<TicketItemDiagnosis>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly ticketItemService: TicketItemService,
   ) {}
 
-  async findAll(query: FindQuotesQuery) {
+  async findAll(query: FindQuotesQuery, currentUserId?: number) {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const statuses = this.parseEnumList<QuoteStatus>(query.status, QuoteStatus, 'status');
@@ -48,6 +54,7 @@ export class QuotesService {
       .createQueryBuilder('quote')
       .leftJoinAndSelect('quote.productItems', 'productItems')
       .leftJoinAndSelect('quote.serviceItems', 'serviceItems')
+      .leftJoin('quote.ticketItem', 'ticketItem')
       .orderBy('quote.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -67,6 +74,20 @@ export class QuotesService {
 
     if (statuses?.length) {
       qb.andWhere('quote.status IN (:...statuses)', { statuses });
+    }
+
+    let supervisorId: number | undefined;
+    if (query.assignedToMe === 'true') {
+      if (!currentUserId) {
+        throw new BadRequestException('No se puede filtrar por assignedToMe sin usuario autenticado');
+      }
+      supervisorId = currentUserId;
+    } else if (query.supervisorId !== undefined) {
+      supervisorId = this.parsePositiveNumber(query.supervisorId, undefined, 'supervisorId');
+    }
+
+    if (supervisorId !== undefined) {
+      qb.andWhere('ticketItem.assignedToSupervisorId = :supervisorId', { supervisorId });
     }
 
     const [data, total] = await qb.getManyAndCount();
@@ -116,11 +137,18 @@ export class QuotesService {
           .execute();
       }
 
+      // Determine initial status based on service type
+      // For DIAGNOSIS services, quote needs supervisor approval
+      // For STANDARD_SERVICE, quote is auto-approved (handled at TicketItem level)
+      const initialStatus = ticketItem?.serviceType === 'DIAGNOSIS'
+        ? QuoteStatus.PENDING_SUPERVISOR_APPROVAL
+        : QuoteStatus.CURRENT;
+
       const entity = repo.create({
         ticketItemId: owningTicketItemId,
         diagnosisId: diagnosis?.id ?? null,
         sequenceNumber: sequenceNumber ?? 1,
-        status: QuoteStatus.CURRENT,
+        status: initialStatus,
         totalAmount,
         currency: dto.currency ?? 'PEN',
         notes: dto.notes ?? null,
@@ -136,6 +164,17 @@ export class QuotesService {
     await this.transitionTicketItemStatus(owningTicketItemId, TicketItemStatus.QUOTED, [
       TicketItemStatus.DIAGNOSED,
     ]);
+
+    // For STANDARD_SERVICE, auto-approve quote by client (skip supervisor approval)
+    if (ticketItem?.serviceType === 'STANDARD_SERVICE') {
+      await this.transitionTicketItemStatus(owningTicketItemId, TicketItemStatus.CLIENT_APPROVED, [
+        TicketItemStatus.QUOTED,
+      ]);
+
+      // Mark quote as client approved
+      quote.clientApprovedAt = new Date();
+      await this.quoteRepository.save(quote);
+    }
 
     return quote;
   }
@@ -481,6 +520,404 @@ export class QuotesService {
     if (!ids?.length) {
       throw new BadRequestException('No ids provided');
     }
+  }
+
+  async approveBySupervisor(quoteId: number, supervisorId: number, notes?: string): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id: quoteId },
+      relations: ['productItems', 'serviceItems'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${quoteId} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException(`Cannot approve a deleted quote`);
+    }
+
+    if (quote.status === QuoteStatus.SUPERVISOR_APPROVED) {
+      throw new BadRequestException(`Quote ${quoteId} is already approved`);
+    }
+
+    if (quote.status === QuoteStatus.SUPERVISOR_REJECTED) {
+      throw new BadRequestException(`Quote ${quoteId} has been rejected. Create a new version instead.`);
+    }
+
+    await this.ensureSupervisor(supervisorId);
+
+    quote.approvedBySupervisorId = supervisorId;
+    quote.approvedBySupervisorAt = new Date();
+    quote.supervisorNotes = notes ?? null;
+    quote.status = QuoteStatus.SUPERVISOR_APPROVED;
+
+    // Clear rejection fields if previously rejected
+    quote.rejectedBySupervisorId = null;
+    quote.rejectedBySupervisorAt = null;
+
+    await this.quoteRepository.save(quote);
+
+    // Sync TicketItem status
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.SUPERVISOR_APPROVED,
+      [TicketItemStatus.QUOTED],
+    );
+
+    return quote;
+  }
+
+  async rejectBySupervisor(quoteId: number, supervisorId: number, notes: string): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id: quoteId },
+      relations: ['productItems', 'serviceItems'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${quoteId} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException(`Cannot reject a deleted quote`);
+    }
+
+    if (quote.status === QuoteStatus.SUPERVISOR_APPROVED) {
+      throw new BadRequestException(`Quote ${quoteId} is already approved. Cannot reject.`);
+    }
+
+    if (quote.status === QuoteStatus.SUPERVISOR_REJECTED) {
+      throw new BadRequestException(`Quote ${quoteId} is already rejected`);
+    }
+
+    await this.ensureSupervisor(supervisorId);
+
+    quote.rejectedBySupervisorId = supervisorId;
+    quote.rejectedBySupervisorAt = new Date();
+    quote.supervisorNotes = notes;
+    quote.status = QuoteStatus.SUPERVISOR_REJECTED;
+
+    // Clear approval fields if previously approved
+    quote.approvedBySupervisorId = null;
+    quote.approvedBySupervisorAt = null;
+
+    await this.quoteRepository.save(quote);
+
+    // Sync TicketItem status
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.SUPERVISOR_REJECTED,
+      [TicketItemStatus.QUOTED],
+    );
+
+    return quote;
+  }
+
+  async resubmitQuote(id: number, dto: { products?: any[]; services?: any[]; notes?: string }): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id },
+      relations: ['productItems', 'serviceItems', 'ticketItem'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${id} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException('Cannot resubmit a deleted quote');
+    }
+
+    // Only allow resubmitting rejected quotes
+    if (quote.status !== QuoteStatus.SUPERVISOR_REJECTED) {
+      throw new BadRequestException(
+        `Quote ${id} can only be resubmitted if it has been rejected by supervisor`,
+      );
+    }
+
+    return this.quoteRepository.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(Quote);
+
+      // Update products if provided
+      if (dto.products) {
+        await manager.getRepository(QuoteProduct).delete({ quoteId: quote.id });
+        const productItems = await this.buildProductItems(dto.products, manager);
+        await this.persistProductItems(manager, quote.id, productItems);
+        quote.productItems = productItems.map(
+          (item) => ({ ...item, quoteId: quote.id } as QuoteProduct),
+        );
+      }
+
+      // Update services if provided
+      if (dto.services) {
+        await manager.getRepository(QuoteServiceItem).delete({ quoteId: quote.id });
+        const serviceItems = await this.buildServiceItems(dto.services, manager);
+        await this.persistServiceItems(manager, quote.id, serviceItems);
+        quote.serviceItems = serviceItems.map(
+          (item) => ({ ...item, quoteId: quote.id } as QuoteServiceItem),
+        );
+      }
+
+      // Recalculate total
+      quote.totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
+
+      // Update notes if provided
+      if (dto.notes !== undefined) {
+        quote.notes = dto.notes;
+      }
+
+      // Increment sequence number for this new version
+      quote.sequenceNumber++;
+
+      // Reset supervisor rejection fields and status
+      quote.rejectedBySupervisorId = null;
+      quote.rejectedBySupervisorAt = null;
+      quote.supervisorNotes = null;
+      quote.status = QuoteStatus.PENDING_SUPERVISOR_APPROVAL;
+
+      // Save updated quote
+      await repo.save(quote);
+
+      // Sync TicketItem back to QUOTED
+      await this.transitionTicketItemStatus(
+        quote.ticketItemId,
+        TicketItemStatus.QUOTED,
+        [TicketItemStatus.SUPERVISOR_REJECTED],
+      );
+
+      return quote;
+    });
+  }
+
+  async sendToClient(quoteId: number, notes?: string): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id: quoteId },
+      relations: ['productItems', 'serviceItems'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${quoteId} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException(`Cannot send a deleted quote to client`);
+    }
+
+    if (quote.status !== QuoteStatus.SUPERVISOR_APPROVED) {
+      throw new BadRequestException(
+        `Quote ${quoteId} must be approved by supervisor before sending to client`,
+      );
+    }
+
+    quote.sentToClientAt = new Date();
+    if (notes) {
+      quote.notes = notes;
+    }
+
+    await this.quoteRepository.save(quote);
+
+    // Sync TicketItem status - First to SENT_TO_CLIENT
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.SENT_TO_CLIENT,
+      [TicketItemStatus.SUPERVISOR_APPROVED],
+    );
+
+    // Then immediately to AWAITING_CLIENT_RESPONSE
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.AWAITING_CLIENT_RESPONSE,
+      [TicketItemStatus.SENT_TO_CLIENT],
+    );
+
+    return quote;
+  }
+
+  async approveByClient(quoteId: number, notes?: string): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id: quoteId },
+      relations: ['productItems', 'serviceItems'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${quoteId} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException(`Cannot approve a deleted quote`);
+    }
+
+    if (!quote.sentToClientAt) {
+      throw new BadRequestException(`Quote ${quoteId} has not been sent to client yet`);
+    }
+
+    if (quote.clientApprovedAt) {
+      throw new BadRequestException(`Quote ${quoteId} is already approved by client`);
+    }
+
+    if (quote.clientRejectedAt) {
+      throw new BadRequestException(`Quote ${quoteId} has been rejected by client`);
+    }
+
+    quote.clientApprovedAt = new Date();
+    quote.clientNotes = notes ?? null;
+
+    // Clear rejection fields if previously rejected
+    quote.clientRejectedAt = null;
+
+    await this.quoteRepository.save(quote);
+
+    // Sync TicketItem status
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.CLIENT_APPROVED,
+      [TicketItemStatus.SENT_TO_CLIENT, TicketItemStatus.AWAITING_CLIENT_RESPONSE],
+    );
+
+    return quote;
+  }
+
+  async rejectByClient(quoteId: number, notes?: string): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id: quoteId },
+      relations: ['productItems', 'serviceItems'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${quoteId} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException(`Cannot reject a deleted quote`);
+    }
+
+    if (!quote.sentToClientAt) {
+      throw new BadRequestException(`Quote ${quoteId} has not been sent to client yet`);
+    }
+
+    if (quote.clientApprovedAt) {
+      throw new BadRequestException(`Quote ${quoteId} is already approved by client. Cannot reject.`);
+    }
+
+    if (quote.clientRejectedAt) {
+      throw new BadRequestException(`Quote ${quoteId} is already rejected by client`);
+    }
+
+    quote.clientRejectedAt = new Date();
+    quote.clientNotes = notes ?? null;
+
+    // Clear approval fields if previously approved
+    quote.clientApprovedAt = null;
+
+    await this.quoteRepository.save(quote);
+
+    // Sync TicketItem status
+    await this.transitionTicketItemStatus(
+      quote.ticketItemId,
+      TicketItemStatus.CLIENT_REJECTED,
+      [TicketItemStatus.SENT_TO_CLIENT, TicketItemStatus.AWAITING_CLIENT_RESPONSE],
+    );
+
+    return quote;
+  }
+
+  async resubmitAfterClientRejection(id: number, dto: { products?: any[]; services?: any[]; notes?: string }): Promise<Quote> {
+    const quote = await this.quoteRepository.findOne({
+      where: { id },
+      relations: ['productItems', 'serviceItems', 'ticketItem'],
+    });
+
+    if (!quote) {
+      throw new NotFoundException(`Quote with id ${id} not found`);
+    }
+
+    if (quote.deletedAt) {
+      throw new BadRequestException('Cannot resubmit a deleted quote');
+    }
+
+    // Only allow resubmitting rejected quotes
+    if (!quote.clientRejectedAt) {
+      throw new BadRequestException(
+        `Quote ${id} can only be resubmitted if it has been rejected by client`,
+      );
+    }
+
+    return this.quoteRepository.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(Quote);
+
+      // Update products if provided
+      if (dto.products) {
+        await manager.getRepository(QuoteProduct).delete({ quoteId: quote.id });
+        const productItems = await this.buildProductItems(dto.products, manager);
+        await this.persistProductItems(manager, quote.id, productItems);
+        quote.productItems = productItems.map(
+          (item) => ({ ...item, quoteId: quote.id } as QuoteProduct),
+        );
+      }
+
+      // Update services if provided
+      if (dto.services) {
+        await manager.getRepository(QuoteServiceItem).delete({ quoteId: quote.id });
+        const serviceItems = await this.buildServiceItems(dto.services, manager);
+        await this.persistServiceItems(manager, quote.id, serviceItems);
+        quote.serviceItems = serviceItems.map(
+          (item) => ({ ...item, quoteId: quote.id } as QuoteServiceItem),
+        );
+      }
+
+      // Recalculate total
+      quote.totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
+
+      // Update notes if provided
+      if (dto.notes !== undefined) {
+        quote.notes = dto.notes;
+      }
+
+      // Increment sequence number for this new version
+      quote.sequenceNumber++;
+
+      // Reset client rejection fields and status
+      quote.clientRejectedAt = null;
+      quote.clientNotes = null;
+      quote.sentToClientAt = null;
+
+      // For DIAGNOSIS, needs supervisor approval again
+      // For STANDARD_SERVICE, can go directly back to waiting for client
+      const needsSupervisorApproval = quote.ticketItem?.serviceType === 'DIAGNOSIS';
+      quote.status = needsSupervisorApproval
+        ? QuoteStatus.PENDING_SUPERVISOR_APPROVAL
+        : QuoteStatus.CURRENT;
+
+      // Save updated quote
+      await repo.save(quote);
+
+      // Sync TicketItem back to QUOTED
+      await this.transitionTicketItemStatus(
+        quote.ticketItemId,
+        TicketItemStatus.QUOTED,
+        [TicketItemStatus.CLIENT_REJECTED],
+      );
+
+      return quote;
+    });
+  }
+
+  private async ensureSupervisor(id: number): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id }, relations: ['roles'] });
+    if (!user) {
+      throw new NotFoundException(`User with id ${id} not found`);
+    }
+    if (!user.isActive) {
+      throw new BadRequestException(`User with id ${id} is not active`);
+    }
+    if (user.deletedAt) {
+      throw new BadRequestException(`User with id ${id} is not active`);
+    }
+
+    const isSupervisor = hasRoleName(user.roles, SUPERVISOR_ROLE_NAMES);
+    if (!isSupervisor) {
+      throw new BadRequestException(`User with id ${id} is not a supervisor`);
+    }
+
+    return user;
   }
 
   private async transitionTicketItemStatus(

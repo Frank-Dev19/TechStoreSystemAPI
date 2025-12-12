@@ -4,9 +4,14 @@ import { Repository, DeepPartial, Brackets, In, Not, IsNull } from 'typeorm';
 import { TicketItem } from '../entities/ticket-item.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { CreateTicketItemDto } from '../dto/create-ticket-item.dto';
-import { ServiceLocation, TicketItemStatus, TicketStatus } from '../enums';
+import { ServiceLocation, ServiceType, TicketItemStatus, TicketStatus } from '../enums';
 import { canTransitionTicketItem } from '../state-machines/ticket-item.state-machine';
 import { User } from '../../users/entities/user.entity';
+import {
+  hasRoleName,
+  SUPERVISOR_ROLE_NAMES,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
 
 type FindTicketItemsQuery = {
   page?: number | string;
@@ -32,7 +37,6 @@ export class TicketItemService {
 
   private readonly terminalItemStatuses = [
     TicketItemStatus.DELIVERED,
-    TicketItemStatus.QUOTE_REJECTED,
     TicketItemStatus.CANCELLED,
   ];
 
@@ -46,10 +50,12 @@ export class TicketItemService {
     }
 
     const technicianLoads = await this.prepareTechnicianLoadMap();
+    const supervisorLoads = await this.prepareSupervisorLoadMap();
 
     return dtos.map((dto, index) => {
       const technicianId = this.pickTechnicianId(technicianLoads);
-      return this.buildTicketItem(dto, startingNumber + index + 1, now, technicianId);
+      const supervisorId = this.pickSupervisorId(supervisorLoads);
+      return this.buildTicketItem(dto, startingNumber + index + 1, now, technicianId, supervisorId);
     });
   }
 
@@ -58,6 +64,7 @@ export class TicketItemService {
     itemNumber: number,
     now: Date,
     technicianId?: number,
+    supervisorId?: number,
   ): TicketItem {
     const slaTargetDays = dto.slaTargetDays ?? 5;
     const slaStartDate = now;
@@ -73,7 +80,7 @@ export class TicketItemService {
       serialNumber: dto.serialNumber ?? null,
       initialIssue: dto.initialIssue,
       accessories: dto.accessories ?? null,
-      requiresDiagnosis: dto.requiresDiagnosis ?? true,
+      serviceType: dto.serviceType ?? ServiceType.DIAGNOSIS,
       serviceLocation: dto.serviceLocation ?? ServiceLocation.ON_SITE,
       serviceAddress: dto.serviceAddress ?? null,
       serviceAddressReference: dto.serviceAddressReference ?? null,
@@ -86,7 +93,9 @@ export class TicketItemService {
       receivedAt: now,
       assignedToTechnicianId: technicianId ?? null,
       assignedAt: technicianId ? now : null,
-      status: technicianId ? TicketItemStatus.ASSIGNED : TicketItemStatus.RECEIVED,
+      assignedToSupervisorId: supervisorId ?? null,
+      assignedSupervisorAt: supervisorId ? now : null,
+      status: technicianId ? TicketItemStatus.ASSIGNED : TicketItemStatus.ASSIGNED,
     };
 
     return this.ticketItemRepository.create(partial);
@@ -127,7 +136,7 @@ export class TicketItemService {
       return;
     }
 
-    const hasProgress = activeItems.some((item) => item.status !== TicketItemStatus.RECEIVED);
+    const hasProgress = activeItems.some((item) => item.status !== TicketItemStatus.ASSIGNED);
     if (hasProgress) {
       ticket.status = TicketStatus.IN_PROGRESS;
       return;
@@ -140,7 +149,19 @@ export class TicketItemService {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const includeDeleted = query.withDeleted === 'true';
-    const statuses = this.parseEnumList<TicketItemStatus>(query.status, TicketItemStatus, 'status');
+    const statusAliases: Record<string, TicketItemStatus> = {
+      RECEIVED: TicketItemStatus.ASSIGNED,
+      QUOTE_SENT: TicketItemStatus.SENT_TO_CLIENT,
+      QUOTE_APPROVED: TicketItemStatus.CLIENT_APPROVED,
+      QUOTE_REJECTED: TicketItemStatus.CLIENT_REJECTED,
+    };
+    const normalizedStatusParam = query.status
+      ?.split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => statusAliases[entry] ?? entry)
+      .join(',');
+    const statuses = this.parseEnumList<TicketItemStatus>(normalizedStatusParam, TicketItemStatus, 'status');
 
     const qb = this.ticketItemRepository
       .createQueryBuilder('item')
@@ -204,10 +225,17 @@ export class TicketItemService {
   }
 
   async findOne(id: number, withDeleted = false): Promise<TicketItem> {
-    const item = await this.ticketItemRepository.findOne({
-      where: { id },
-      withDeleted,
-    });
+    const qb = this.ticketItemRepository
+      .createQueryBuilder('item')
+      .leftJoinAndSelect('item.assignedTechnician', 'technician')
+      .leftJoinAndSelect('item.assignedSupervisor', 'supervisor')
+      .where('item.id = :id', { id });
+
+    if (withDeleted) {
+      qb.withDeleted();
+    }
+
+    const item = await qb.getOne();
 
     if (!item) {
       throw new NotFoundException(`Ticket item with id ${id} not found`);
@@ -221,7 +249,7 @@ export class TicketItemService {
       .createQueryBuilder('user')
       .innerJoin('user.roles', 'role')
       .distinct(true)
-      .where('LOWER(role.name) = :role', { role: 'technician' })
+      .where('LOWER(role.name) IN (:...roles)', { roles: [...TECHNICIAN_ROLE_NAMES] })
       .andWhere('user.isActive = true')
       .andWhere('user.deletedAt IS NULL')
       .getMany();
@@ -273,6 +301,63 @@ export class TicketItemService {
     return technicianId;
   }
 
+  private async prepareSupervisorLoadMap(): Promise<Map<number, number>> {
+    const supervisors = await this.userRepository
+      .createQueryBuilder('user')
+      .innerJoin('user.roles', 'role')
+      .distinct(true)
+      .where('LOWER(role.name) IN (:...roles)', { roles: [...SUPERVISOR_ROLE_NAMES] })
+      .andWhere('user.isActive = true')
+      .andWhere('user.deletedAt IS NULL')
+      .getMany();
+
+    if (!supervisors.length) {
+      throw new BadRequestException('No hay supervisores disponibles para asignar ticket items');
+    }
+
+    const loadMap = new Map<number, number>();
+    supervisors.forEach((sup) => loadMap.set(sup.id, 0));
+
+    const loadRows = await this.ticketItemRepository
+      .createQueryBuilder('item')
+      .select('item.assignedToSupervisorId', 'supervisorId')
+      .addSelect('COUNT(*)', 'count')
+      .where('item.assignedToSupervisorId IS NOT NULL')
+      .andWhere('item.status NOT IN (:...terminalStatuses)', {
+        terminalStatuses: this.terminalItemStatuses,
+      })
+      .andWhere('item.deletedAt IS NULL')
+      .groupBy('item.assignedToSupervisorId')
+      .getRawMany<{ supervisorId: string; count: string }>();
+
+    for (const row of loadRows) {
+      const supervisorId = Number(row.supervisorId);
+      if (loadMap.has(supervisorId)) {
+        loadMap.set(supervisorId, Number(row.count));
+      }
+    }
+
+    return loadMap;
+  }
+
+  private pickSupervisorId(loadMap: Map<number, number>): number {
+    const candidates = [...loadMap.entries()];
+    if (!candidates.length) {
+      throw new BadRequestException('No hay supervisores disponibles para asignar ticket items');
+    }
+
+    candidates.sort((a, b) => {
+      if (a[1] === b[1]) {
+        return a[0] - b[0];
+      }
+      return a[1] - b[1];
+    });
+
+    const [supervisorId, load] = candidates[0];
+    loadMap.set(supervisorId, load + 1);
+    return supervisorId;
+  }
+
   async assignTechnician(itemId: number, technicianId: number): Promise<TicketItem> {
     const item = await this.ticketItemRepository.findOne({
       where: { id: itemId },
@@ -291,9 +376,29 @@ export class TicketItemService {
     item.assignedToTechnicianId = technicianId;
     item.assignedAt = new Date();
 
-    if (item.status === TicketItemStatus.RECEIVED) {
-      item.status = TicketItemStatus.ASSIGNED;
+    await this.ticketItemRepository.save(item);
+    await this.refreshAggregatesForTicket(item.ticketId);
+
+    return item;
+  }
+
+  async assignSupervisor(itemId: number, supervisorId: number): Promise<TicketItem> {
+    const item = await this.ticketItemRepository.findOne({
+      where: { id: itemId },
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Ticket item with id ${itemId} not found`);
     }
+
+    if (item.deletedAt) {
+      throw new BadRequestException(`Ticket item with id ${itemId} is deleted`);
+    }
+
+    await this.ensureSupervisor(supervisorId);
+
+    item.assignedToSupervisorId = supervisorId;
+    item.assignedSupervisorAt = new Date();
 
     await this.ticketItemRepository.save(item);
     await this.refreshAggregatesForTicket(item.ticketId);
@@ -394,9 +499,9 @@ export class TicketItemService {
       throw new BadRequestException(`Ticket item with id ${itemId} is deleted`);
     }
 
-    if (!canTransitionTicketItem(item.status, newStatus)) {
+    if (!canTransitionTicketItem(item.status, newStatus, item.serviceType)) {
       throw new BadRequestException(
-        `Cannot transition ticket item ${itemId} from ${item.status} to ${newStatus}`,
+        `Cannot transition ticket item ${itemId} from ${item.status} to ${newStatus} (serviceType: ${item.serviceType})`,
       );
     }
 
@@ -444,14 +549,23 @@ export class TicketItemService {
       case TicketItemStatus.QUOTED:
         item.quotedAt = now;
         break;
-      case TicketItemStatus.QUOTE_SENT:
+      case TicketItemStatus.SUPERVISOR_APPROVED:
+        item.supervisorApprovedAt = now;
+        break;
+      case TicketItemStatus.SUPERVISOR_REJECTED:
+        item.supervisorRejectedAt = now;
+        break;
+      case TicketItemStatus.SENT_TO_CLIENT:
         item.quoteSentAt = now;
         break;
-      case TicketItemStatus.QUOTE_APPROVED:
+      case TicketItemStatus.AWAITING_CLIENT_RESPONSE:
+        // No hay timestamp específico, se usa quoteSentAt como referencia
+        break;
+      case TicketItemStatus.CLIENT_APPROVED:
         item.quoteApprovedAt = now;
         item.lastCustomerResponseAt = now;
         break;
-      case TicketItemStatus.QUOTE_REJECTED:
+      case TicketItemStatus.CLIENT_REJECTED:
         item.quoteRejectedAt = now;
         item.lastCustomerResponseAt = now;
         break;
@@ -525,9 +639,32 @@ export class TicketItemService {
       throw new BadRequestException(`User with id ${id} is not active`);
     }
 
-    const isTechnician = user.roles?.some((role) => role.name?.toLowerCase() === 'technician');
+    const isTechnician = hasRoleName(user.roles, TECHNICIAN_ROLE_NAMES);
     if (!isTechnician) {
       throw new BadRequestException(`User with id ${id} is not a technician`);
+    }
+
+    return user;
+  }
+
+  private async ensureSupervisor(id: number): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id } });
+
+    if (!user) {
+      throw new NotFoundException(`User with id ${id} not found`);
+    }
+
+    if (!user.isActive) {
+      throw new BadRequestException(`User with id ${id} is not active`);
+    }
+
+    if (user.deletedAt) {
+      throw new BadRequestException(`User with id ${id} is not active`);
+    }
+
+    const isSupervisor = hasRoleName(user.roles, SUPERVISOR_ROLE_NAMES);
+    if (!isSupervisor) {
+      throw new BadRequestException(`User with id ${id} is not a supervisor`);
     }
 
     return user;
