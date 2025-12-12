@@ -10,6 +10,7 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { MailerModule } from 'src/mailer/mailer.module';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditModule } from 'src/audit/audit.module';
 @Module({
   imports: [
     UsersModule,
@@ -18,6 +19,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     JwtModule.register({}),
     TypeOrmModule.forFeature([PasswordResetToken]),
     MailerModule,
+    AuditModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAccessStrategy, JwtRefreshStrategy],

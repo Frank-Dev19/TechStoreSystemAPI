@@ -1,5 +1,6 @@
 // src/app.module.ts
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { RequestContextMiddleware } from './common/request-context.middleware';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
@@ -20,6 +21,8 @@ import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
 import { BusinessPartnerModule } from './business-partner/business-partner.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { SalesModule } from './sales/sales.module';
+import { PricingModule } from './pricing/pricing.module';
 import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { TicketModule } from './ticket/ticket.module';
 import { QuotesModule } from './ticket/quotes/quotes.module';

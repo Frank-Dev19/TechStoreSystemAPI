@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Query, Param, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Param, BadRequestException, UseGuards } from '@nestjs/common';
 import { SerialsService } from '../services/serials.service';
-
+import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+@UseGuards(JwtAccessGuard)
 @Controller('serials')
 export class SerialsController {
     constructor(private readonly svc: SerialsService) { }

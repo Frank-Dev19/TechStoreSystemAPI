@@ -22,15 +22,57 @@ export class CatalogsService {
 
     listCategories() { return this.catRepo.find(); }
 
-    updateCategory(id: number, dto: Partial<CreateCategoryDto>) { return this.catRepo.update(id, dto); }
+    async updateCategory(id: number, dto: Partial<CreateCategoryDto>) {
+        const category = await this.catRepo.findOneBy({ id });
+        if (!category) {
+            throw new NotFoundException('Categoría no encontrada');
+        }
 
-    removeCategory(id: number) { return this.catRepo.delete(id); }
+        Object.assign(category, {
+            code: dto.code ?? category.code,
+            name: dto.name ?? category.name,
+            description: dto.description ?? category.description,
+        });
+
+        return this.catRepo.save(category);   // ← IMPORTANTE: save()
+    }
+
+    async removeCategory(id: number) {
+        const category = await this.catRepo.findOneBy({ id });
+        if (!category) {
+            throw new NotFoundException('Categoría no encontrada');
+        }
+
+        // 👇 esto sí dispara afterRemove en el subscriber
+        return this.catRepo.remove(category);
+    }
 
     // UNITS
     createUnit(dto: CreateUnitDto) { return this.unitRepo.save(this.unitRepo.create(dto)); }
     listUnits() { return this.unitRepo.find(); }
-    updateUnit(id: number, dto: Partial<CreateUnitDto>) { return this.unitRepo.update(id, dto); }
-    removeUnit(id: number) { return this.unitRepo.delete(id); }
+    async updateUnit(id: number, dto: Partial<CreateUnitDto>) {
+        const unit = await this.unitRepo.findOneBy({ id });
+        if (!unit) {
+            throw new NotFoundException('Unidad no encontrada');
+        }
+
+        Object.assign(unit, {
+            code: dto.code ?? unit.code,
+            name: dto.name ?? unit.name,
+            abbreviation: dto.abbreviation ?? unit.abbreviation,
+        });
+
+        return this.unitRepo.save(unit);      // ← IMPORTANTE: save()
+    }
+
+    async removeUnit(id: number) {
+        const unit = await this.unitRepo.findOneBy({ id });
+        if (!unit) {
+            throw new NotFoundException('Unidad no encontrada');
+        }
+
+        return this.unitRepo.remove(unit);
+    }
 
     // PRODUCTS (aceptamos unit_id del front)
     async createProduct(dto: CreateProductDto) {
@@ -69,5 +111,14 @@ export class CatalogsService {
     }
 
     listProducts() { return this.prodRepo.find(); }
-    removeProduct(id: number) { return this.prodRepo.delete(id); }
+
+
+    async removeProduct(id: number) {
+        const product = await this.prodRepo.findOneBy({ id });
+        if (!product) {
+            throw new NotFoundException('Producto no encontrado');
+        }
+
+        return this.prodRepo.remove(product);
+    }
 }

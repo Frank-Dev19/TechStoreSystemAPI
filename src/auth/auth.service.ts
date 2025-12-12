@@ -14,6 +14,10 @@ import { ResetPasswordDto } from './dtos/reset-password.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan, IsNull } from 'typeorm';
 import { ChangePasswordDto } from './dtos/change-password.dto';
+import { JwtPayload } from './utils/jwt-payload.type';
+import { RequestContext } from 'src/common/request-context';
+
+import { AuditService } from 'src/audit/audit.service';
 
 @Injectable()
 export class AuthService {
@@ -26,6 +30,7 @@ export class AuthService {
         private cfg: ConfigService,
         @InjectRepository(PasswordResetToken) private prRepo: Repository<PasswordResetToken>,
         private mailer: MailerService,
+        private audit: AuditService,
     ) {
         this.cookieName = this.cfg.get<string>('COOKIE_NAME') || 'rt';
     }
@@ -57,9 +62,10 @@ export class AuthService {
 
 
     private signAccess(user: any) {
-        const payload = {
+        const payload: JwtPayload = {
             sub: user.id,
             email: user.email,
+            name: user.name,   // ahora el token trae el nombre
             roles: user.roles?.map((r: any) => ({
                 id: r.id,
                 name: r.name,
@@ -96,7 +102,33 @@ export class AuthService {
 
     async login(dto: LoginDto, req: Request, res: Response) {
         const user = await this.users.validateCredentials(dto.email, dto.password);
-        if (!user) throw new UnauthorizedException('Credenciales inválidas');
+        if (!user) {
+            await this.audit.business('LOGIN_FAILURE', {
+                userId: null,
+                entity: 'AUTH',
+                entityId: null,
+                reason: `Intento de inicio de sesión fallido para ${dto.email}`,
+                keyId: dto.email,  // opcional: guardas el correo probado
+            }).catch(() => void 0);
+
+            throw new UnauthorizedException('Credenciales inválidas');
+        }
+
+        // 👇 Parchea el contexto para el módulo de Auditoría
+        RequestContext.patch({
+            userId: user.id,
+            actorEmail: user.email,
+            actorName: user.name,
+        });
+
+
+        // 👉 LOG DE LOGIN_SUCCESS
+        this.audit.business('LOGIN_SUCCESS', {
+            userId: user.id,
+            entity: 'AUTH',
+            entityId: user.id.toString(),
+            reason: `Inicio de sesión exitoso de ${user.email}`,
+        }).catch(() => void 0);
 
         const accessToken = this.signAccess(user);
 
@@ -166,13 +198,39 @@ export class AuthService {
         const presented = req.cookies?.[this.cookieName];
         if (presented) {
             try {
-                const payload: any = this.jwt.verify(presented, { secret: this.cfg.get<string>('JWT_REFRESH_SECRET') });
+                const payload: any = this.jwt.verify(
+                    presented,
+                    { secret: this.cfg.get<string>('JWT_REFRESH_SECRET') },
+                );
+
+                // cargamos el usuario para fines de auditoría
+                const user = await this.users.findOne(payload.sub);
+                if (user) {
+                    RequestContext.patch({
+                        userId: user.id,
+                        actorEmail: user.email,
+                        actorName: user.name,
+                    });
+
+                    // 👉 LOG DE LOGOUT
+                    this.audit.business('LOGOUT', {
+                        userId: user.id,
+                        entity: 'AUTH',
+                        entityId: user.id.toString(),
+                        reason: `Cierre de sesión de ${user.email}`,
+                    }).catch(() => void 0);
+                }
+
                 await this.sessions.markRevoked(payload.jti);
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         }
+
         res.clearCookie(this.cookieName, { path: '/auth/refresh' });
         return { ok: true };
     }
+
 
     // ============ FORGOT / RESET PASSWORD ============
 

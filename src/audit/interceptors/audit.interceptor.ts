@@ -5,60 +5,111 @@ import {
     ExecutionContext,
     CallHandler,
 } from '@nestjs/common';
-import type { Request, Response } from 'express';
-import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { Observable, tap } from 'rxjs';
+import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from '../audit.service';
+import { getRealIp } from '../utils/ip.util';
+import { safeJson } from '../utils/masking.util';
+import { EXCLUDE_PREFIXES } from '../audit.constants';
+
+// 👇 importa el context
+import { RequestContext } from 'src/common/request-context';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
     constructor(private readonly audit: AuditService) { }
 
-    intercept(ctx: ExecutionContext, next: CallHandler): Observable<any> {
-        // ojo: es switchToHttp() (camelCase)
-        const http = ctx.switchToHttp();
-        const req = http.getRequest<Request>();
-        const res = http.getResponse<Response>();
+    intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+        const http = context.switchToHttp();
+        const req: any = http.getRequest();
+        const res: any = http.getResponse();
 
-        const started = Date.now();
-        const userId = (req as any)?.user?.sub ?? null;
+        // usa originalUrl si existe (proxys)
+        const url: string = (req.originalUrl ?? req.url ?? '') as string;
 
-        const meta = {
-            method: req.method,
-            path: req.route?.path ?? req.url,
-            ip: (req.headers['x-forwarded-for'] as string) || req.ip,
-            ua: (req.headers['user-agent'] as string) ?? null,
-        };
+        // salta auditoría para prefijos excluidos y preflight OPTIONS
+        if (req.method === 'OPTIONS' || EXCLUDE_PREFIXES.some((p) => url.startsWith(p))) {
+            return next.handle();
+        }
 
+        const t0 = Date.now();
+        const method = (req.method ?? null) as string | null;
+        const path = (url ?? null) as string | null;
+
+        const userId: number | null = req.user?.id ?? null;
+
+        let requestId: string | null = (req.headers['x-request-id'] as string) || null;
+        if (!requestId) {
+            requestId = uuidv4();
+            req.generatedRequestId = requestId;
+            // res.setHeader?.('x-request-id', requestId); // opcional
+        }
+
+        const sessionId: string | null = req.session?.id ?? null;
+        const ip = getRealIp(req);
+        const userAgent = (req.headers['user-agent'] as string) || null;
+
+        // BEFORE: params/query/body enmascarados
         const before = {
-            params: req.params,
-            query: req.query,
-            body: req.body,
+            params: safeJson(req.params),
+            query: safeJson(req.query),
+            body: safeJson(req.body),
         };
+
+        // 👇 Parchea/actualiza el contexto del request
+        RequestContext.patch({
+            userId,
+            actorEmail: req.user?.email ?? null,   // nuevo
+            actorName: req.user?.name ?? null,    // nuevo
+            requestId,
+            method,
+            path,
+            ip,
+            userAgent,
+        });
 
         return next.handle().pipe(
             tap({
-                next: (result) => {
-                    this.audit.log({
-                        userId,
-                        action: `${meta.method} ${meta.path}`,
-                        status: res?.statusCode ?? 200,
-                        durationMs: Date.now() - started,
-                        meta,
-                        before,
-                        after: result,
-                    });
+                next: (body) => {
+                    const durationMs = Date.now() - t0;
+                    const status = res.statusCode ?? 200;
+                    const after = safeJson(body);
+
+                    this.audit
+                        .http({
+                            userId,
+                            method,
+                            path,
+                            status,
+                            durationMs,
+                            ip,
+                            userAgent,
+                            requestId,
+                            sessionId,
+                            before,
+                            after,
+                        })
+                        .catch(() => void 0);
                 },
-                error: (err) => {
-                    this.audit.log({
-                        userId,
-                        action: `${meta.method} ${meta.path}`,
-                        status: (err?.status ?? err?.statusCode ?? 500) as number,
-                        durationMs: Date.now() - started,
-                        meta,
-                        before,
-                        after: { error: true, message: err?.message },
-                    });
+                error: () => {
+                    const durationMs = Date.now() - t0;
+                    const status = res.statusCode ?? 500;
+
+                    this.audit
+                        .http({
+                            userId,
+                            method,
+                            path,
+                            status,
+                            durationMs,
+                            ip,
+                            userAgent,
+                            requestId,
+                            sessionId,
+                            before,
+                            after: { error: true },
+                        })
+                        .catch(() => void 0);
                 },
             }),
         );
