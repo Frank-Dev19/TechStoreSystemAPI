@@ -73,6 +73,7 @@ export class BootstrapService implements OnModuleInit {
       // Auditoría (demo; ajusta si lo implementas)
       { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoría', sortOrder: 10 },
       { moduleKey: 'auditoria', actionKey: 'delete', description: 'Eliminar eventos', sortOrder: 20 },
+      { moduleKey: 'auditoria', actionKey: 'stream', description: 'Ver eventos en vivo', sortOrder: 30 },
 
       //Business-partner (Socio de comercio)
       { moduleKey: 'business-partner', actionKey: 'create', description: 'Crear socios', sortOrder: 10 },
@@ -82,6 +83,8 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'business-partner', actionKey: 'restore', description: 'Restaurar un socios', sortOrder: 70 },
       { moduleKey: 'business-partner', actionKey: 'bulk-delete', description: 'Eliminar varios socios', sortOrder: 50 },
       { moduleKey: 'business-partner', actionKey: 'bulk-restore', description: 'Restaurar varios socios', sortOrder: 40 },
+
+
     ];
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE

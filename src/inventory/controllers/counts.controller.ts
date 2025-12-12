@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { CountsService } from '../services/counts.service';
 import { CreateCountDto } from '../dto/create-count.dto';
-
+import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+@UseGuards(JwtAccessGuard)
 @Controller('inventory/counts')
 export class CountsController {
     constructor(private readonly svc: CountsService) { }

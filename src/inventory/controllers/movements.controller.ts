@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { MovementsService } from '../services/movements.service';
 import { MovementDto } from '../dto/movement.dto';
 import { Req } from '@nestjs/common';
-
+import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+@UseGuards(JwtAccessGuard)
 @Controller('inventory/movements')
 export class MovementsController {
     constructor(private readonly svc: MovementsService) { }

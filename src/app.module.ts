@@ -1,5 +1,6 @@
 // src/app.module.ts
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { RequestContextMiddleware } from './common/request-context.middleware';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
@@ -20,6 +21,8 @@ import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
 import { BusinessPartnerModule } from './business-partner/business-partner.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { SalesModule } from './sales/sales.module';
+import { PricingModule } from './pricing/pricing.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -77,7 +80,15 @@ import { InventoryModule } from './inventory/inventory.module';
     DocumentTypesModule,
     BusinessPartnerModule,
     InventoryModule,
+    SalesModule,
+    PricingModule,
     // SalesModule,
   ],
 })
-export class AppModule { }
+export class AppModule implements NestModule {
+
+  configure(consumer: MiddlewareConsumer) {
+    // Se ejecuta antes de guards/interceptors/controllers
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}
