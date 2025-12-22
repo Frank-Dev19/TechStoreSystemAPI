@@ -24,8 +24,11 @@ import { ProductPricesController } from './controllers/product-prices.controller
 import { DiscountRulesController } from './controllers/discount-rules.controller';
 import { CombosController } from './controllers/combos.controller';
 import { PricingQueryController } from './controllers/pricing-query.controller';
+import { DiscountExpiryService } from './services/discount-expiry.service';
+import { ComboValidityService } from './services/combo-validity.service';
 
 
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -37,6 +40,7 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
       Product,
       Category,
     ]),
+    ScheduleModule.forRoot(),
   ],
   controllers: [
     PriceListsController,
@@ -51,6 +55,8 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
     DiscountRulesService,
     CombosService,
     PricingEngineService,
+    DiscountExpiryService,
+    ComboValidityService,
   ],
   exports: [PricingEngineService],
 })

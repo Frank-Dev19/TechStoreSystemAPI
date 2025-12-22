@@ -125,14 +125,31 @@ export class PricingEngineService {
         qty: number,
         at: Date,
     ): Promise<DiscountRule[]> {
+
+        // NORMALIZAR: Convertir 'at' al final del día en UTC
+        const normalizeDateForComparison = (date: Date): Date => {
+            // Tomar la fecha y ponerla al final del día en UTC
+            const year = date.getUTCFullYear();
+            const month = date.getUTCMonth();
+            const day = date.getUTCDate();
+            return new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+        };
+
+        const comparisonDate = normalizeDateForComparison(at);
+
         const qb = this.drRepo
             .createQueryBuilder('d')
             .where('d.isActive = :a', { a: true })
             .andWhere(
-                '(d.startsAt IS NULL OR d.startsAt <= :now)',
+                `(d.startsAt IS NULL OR 
+         DATE(d.startsAt) <= DATE(:now))`,
                 { now: at },
             )
-            .andWhere('(d.endsAt IS NULL OR d.endsAt >= :now)', { now: at })
+            .andWhere(
+                `(d.endsAt IS NULL OR 
+         DATE(d.endsAt) >= DATE(:now))`,
+                { now: at },
+            )
             .andWhere(
                 '(d.priceListId IS NULL OR d.priceListId = :plId)',
                 { plId: priceListId },
@@ -146,8 +163,7 @@ export class PricingEngineService {
 
         return rules.filter((r) => {
             const minOk = r.minQty == null || qty >= Number(r.minQty || 0);
-            const maxOk =
-                r.maxQty == null || qty <= Number(r.maxQty || 0);
+            const maxOk = r.maxQty == null || qty <= Number(r.maxQty || 0);
             return minOk && maxOk;
         });
     }

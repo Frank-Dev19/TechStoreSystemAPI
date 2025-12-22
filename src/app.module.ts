@@ -23,6 +23,8 @@ import { BusinessPartnerModule } from './business-partner/business-partner.modul
 import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { PricingModule } from './pricing/pricing.module';
+
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -64,6 +66,8 @@ import { PricingModule } from './pricing/pricing.module';
         };
       },
     }),
+    ScheduleModule.forRoot(),
+
 
     // Tus módulos
     AuthModule,

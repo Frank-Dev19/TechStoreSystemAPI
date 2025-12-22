@@ -9,6 +9,7 @@ import {
     Put,
     UseGuards,
     Query,
+    Req,
 } from '@nestjs/common';
 import { CombosService } from '../services/combos.service';
 import { CreateComboDto } from '../dto/create-combo.dto';
@@ -21,7 +22,7 @@ export class CombosController {
     constructor(private readonly svc: CombosService) { }
 
     @Get()
-    list(@Query('activeOnly') activeOnly: string, @Query('page') page: string, @Query('limit') limit: string) {
+    list(@Query('activeOnly') activeOnly: string, @Query('page') page: string, @Query('limit') limit: string, @Query('auto_check') autoCheck?: string,) {
         // Convertir el parámetro a booleano o null
         let activeOnlyBool: boolean | null = null;
 
@@ -42,20 +43,74 @@ export class CombosController {
         }
         // Si no se envía activeOnly, mostrar todos (null)
 
-        return this.svc.list({
-            activeOnly: activeOnlyBool,
-            page: parseInt(page, 10) || 1,
-            limit: parseInt(limit, 10) || 10
-        });
+        const shouldAutoCheck = autoCheck === 'true' || autoCheck === '1';
+
+        if (shouldAutoCheck) {
+            // Usar el método que auto-valida
+            return this.svc.listWithAutoValidity({
+                activeOnly: activeOnlyBool,
+                page: parseInt(page, 10) || 1,
+                limit: parseInt(limit, 10) || 10
+            });
+        } else {
+            // Usar el método normal
+            return this.svc.list({
+                activeOnly: activeOnlyBool,
+                page: parseInt(page, 10) || 1,
+                limit: parseInt(limit, 10) || 10
+            });
+        }
     }
 
 
 
+
+
+    @Get('all')
+    listAll(@Query('activeOnly') activeOnly: string, @Query('auto_check') autoCheck?: string, @Req() req?: Request) {
+        // Convertir el parámetro a booleano o null
+        console.log(`🔍 [${new Date().toISOString()}] Llamada a /combos/all`);
+        console.log(`🔍 Parámetros: activeOnly=${activeOnly}, auto_check=${autoCheck}`);
+        console.log(`🔍 User-Agent: ${req?.headers['user-agent']}`);
+        //console.log(`🔍 IP: ${req?.ip}`);
+        let activeOnlyBool: boolean | null = null;
+
+        if (activeOnly !== undefined && activeOnly !== null && activeOnly !== '') {
+            // Si es 'true', '1', 'yes' => filtrar solo activos
+            if (activeOnly === 'true' || activeOnly === '1' || activeOnly === 'yes' || activeOnly === 'active') {
+                activeOnlyBool = true;
+            }
+            // Si es 'false', '0', 'no' => filtrar solo inactivos
+            else if (activeOnly === 'false' || activeOnly === '0' || activeOnly === 'no') {
+                activeOnlyBool = false;
+            }
+            // Si es cualquier otro valor (incluyendo 'inactive'), no filtrar (mostrar todos)
+            else if (activeOnly === 'inactive') {
+                activeOnlyBool = false; // Para mostrar solo inactivos
+            }
+        }
+        // Si no se envía activeOnly, mostrar todos (null)
+
+        const shouldAutoCheck = autoCheck === 'true' || autoCheck === '1';
+
+        if (shouldAutoCheck) {
+            // PRIMERO ejecutar validación automática
+            return this.svc.listWithAutoValidity({
+                activeOnly: activeOnlyBool,
+            });
+        } else {
+            // Usar el método normal
+            return this.svc.findAll({
+                activeOnly: activeOnlyBool
+            });
+        }
+    }
 
     @Get(':id')
     get(@Param('id') id: string) {
         return this.svc.get(+id);
     }
+
 
     @Post()
     create(@Body() dto: CreateComboDto) {
