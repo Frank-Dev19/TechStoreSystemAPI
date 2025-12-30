@@ -26,7 +26,10 @@ import { CombosController } from './controllers/combos.controller';
 import { PricingQueryController } from './controllers/pricing-query.controller';
 import { DiscountExpiryService } from './services/discount-expiry.service';
 import { ComboValidityService } from './services/combo-validity.service';
-
+// import { SimulationEngineService } from './services/simulation-engine.service';
+//import { SimulationController } from './controllers/simulation.controller';
+import { PricingSimulationController } from './controllers/pricing-simulation.controller';
+import { PricingSimulationService } from './services/pricing-simulation.service';
 
 import { ScheduleModule } from '@nestjs/schedule';
 @Module({
@@ -48,6 +51,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     DiscountRulesController,
     CombosController,
     PricingQueryController,
+    //SimulationController,
+    PricingSimulationController,
   ],
   providers: [
     PriceListsService,
@@ -57,6 +62,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     PricingEngineService,
     DiscountExpiryService,
     ComboValidityService,
+    // SimulationEngineService,
+    PricingSimulationService
   ],
   exports: [PricingEngineService],
 })

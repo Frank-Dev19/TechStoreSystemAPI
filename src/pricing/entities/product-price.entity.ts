@@ -50,11 +50,11 @@ export class ProductPrice {
     })
     maxQty?: number | null;
 
-    @Column({ name: 'valid_from', type: 'datetime', nullable: true })
-    validFrom?: Date | null;
+    // @Column({ name: 'valid_from', type: 'datetime', nullable: true })
+    // validFrom?: Date | null;
 
-    @Column({ name: 'valid_to', type: 'datetime', nullable: true })
-    validTo?: Date | null;
+    // @Column({ name: 'valid_to', type: 'datetime', nullable: true })
+    // validTo?: Date | null;
 
     @Column({ name: 'is_active', type: 'tinyint', default: 1 })
     isActive: boolean;

@@ -31,11 +31,11 @@ export class PriceList {
     @Column({ type: 'tinyint', default: 0 })
     isDefault: boolean;
 
-    @Column({ type: 'datetime', nullable: true })
-    activeFrom?: Date | null;
+    // @Column({ type: 'datetime', nullable: true })
+    // activeFrom?: Date | null;
 
-    @Column({ type: 'datetime', nullable: true })
-    activeTo?: Date | null;
+    // @Column({ type: 'datetime', nullable: true })
+    // activeTo?: Date | null;
 
     @Column({ type: 'tinyint', default: 1 })
     isActive: boolean;

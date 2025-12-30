@@ -63,39 +63,63 @@ export class PricingEngineService {
         code?: string,
         at?: Date,
     ): Promise<PriceList> {
-        const now = at ?? new Date();
+        //const now = at ?? new Date();
 
         if (code) {
+            // 1. Buscar lista activa con el código especificado
             const pl = await this.plRepo.findOne({
                 where: {
                     code,
-                    isActive: true,
+                    isActive: true, // ✅ Solo listas activas
                 },
             });
+
             if (!pl) {
-                throw new BadRequestException(
-                    `Lista de precios ${code} no encontrada o inactiva`,
-                );
+                // 2. Verificar si existe pero está inactiva para dar mensaje más específico
+                const inactivePl = await this.plRepo.findOne({
+                    where: { code, isActive: false },
+                });
+
+                if (inactivePl) {
+                    throw new BadRequestException(
+                        `Lista de precios "${code}" está inactiva. Actívela para usarla.`,
+                    );
+                } else {
+                    throw new BadRequestException(
+                        `Lista de precios "${code}" no encontrada`,
+                    );
+                }
             }
-            if (
-                (pl.activeFrom && pl.activeFrom > now) ||
-                (pl.activeTo && pl.activeTo < now)
-            ) {
-                throw new BadRequestException(
-                    `Lista de precios ${code} fuera de vigencia`,
-                );
-            }
+
+            // ✅ Lista encontrada y activa
             return pl;
         }
 
+        // 3. Buscar lista por defecto (solo activa)
         const pl = await this.plRepo.findOne({
-            where: { isDefault: true, isActive: true },
+            where: {
+                isDefault: true,
+                isActive: true // ✅ Solo lista por defecto activa
+            },
         });
+
         if (!pl) {
-            throw new BadRequestException(
-                'No hay lista de precios por defecto configurada',
-            );
+            // 4. Verificar si hay lista por defecto pero inactiva
+            const inactiveDefaultPl = await this.plRepo.findOne({
+                where: { isDefault: true, isActive: false },
+            });
+
+            if (inactiveDefaultPl) {
+                throw new BadRequestException(
+                    'La lista de precios por defecto está configurada pero INACTIVA. Actívela o configure otra lista como predeterminada.',
+                );
+            } else {
+                throw new BadRequestException(
+                    'No hay lista de precios por defecto configurada',
+                );
+            }
         }
+
         return pl;
     }
 

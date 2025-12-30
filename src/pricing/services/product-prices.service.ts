@@ -45,8 +45,8 @@ export class ProductPricesService {
             currencyCode: dto.currency_code ?? 'PEN',
             minQty: dto.min_qty,
             maxQty: dto.max_qty ?? null,
-            validFrom: dto.valid_from ? new Date(dto.valid_from) : null,
-            validTo: dto.valid_to ? new Date(dto.valid_to) : null,
+            // validFrom: dto.valid_from ? new Date(dto.valid_from) : null,
+            // validTo: dto.valid_to ? new Date(dto.valid_to) : null,
             isActive: dto.is_active ?? true,
         });
 
@@ -80,12 +80,12 @@ export class ProductPricesService {
             pp.currencyCode = dto.currency_code || 'PEN';
         if (dto.min_qty !== undefined) pp.minQty = dto.min_qty;
         if (dto.max_qty !== undefined) pp.maxQty = dto.max_qty ?? null;
-        if (dto.valid_from !== undefined) {
-            pp.validFrom = dto.valid_from ? new Date(dto.valid_from) : null;
-        }
-        if (dto.valid_to !== undefined) {
-            pp.validTo = dto.valid_to ? new Date(dto.valid_to) : null;
-        }
+        // if (dto.valid_from !== undefined) {
+        //     pp.validFrom = dto.valid_from ? new Date(dto.valid_from) : null;
+        // }
+        // if (dto.valid_to !== undefined) {
+        //     pp.validTo = dto.valid_to ? new Date(dto.valid_to) : null;
+        // }
         if (dto.is_active !== undefined) pp.isActive = dto.is_active;
 
         return this.ppRepo.save(pp);
