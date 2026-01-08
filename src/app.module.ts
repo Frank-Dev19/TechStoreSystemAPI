@@ -26,6 +26,7 @@ import { PricingModule } from './pricing/pricing.module';
 import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { TicketModule } from './ticket/ticket.module';
 import { QuotesModule } from './ticket/quotes/quotes.module';
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -67,6 +68,8 @@ import { QuotesModule } from './ticket/quotes/quotes.module';
         };
       },
     }),
+    ScheduleModule.forRoot(),
+
 
     // Tus módulos
     AuthModule,

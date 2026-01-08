@@ -24,8 +24,14 @@ import { ProductPricesController } from './controllers/product-prices.controller
 import { DiscountRulesController } from './controllers/discount-rules.controller';
 import { CombosController } from './controllers/combos.controller';
 import { PricingQueryController } from './controllers/pricing-query.controller';
+import { DiscountExpiryService } from './services/discount-expiry.service';
+import { ComboValidityService } from './services/combo-validity.service';
+// import { SimulationEngineService } from './services/simulation-engine.service';
+//import { SimulationController } from './controllers/simulation.controller';
+import { PricingSimulationController } from './controllers/pricing-simulation.controller';
+import { PricingSimulationService } from './services/pricing-simulation.service';
 
-
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -37,6 +43,7 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
       Product,
       Category,
     ]),
+    ScheduleModule.forRoot(),
   ],
   controllers: [
     PriceListsController,
@@ -44,6 +51,8 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
     DiscountRulesController,
     CombosController,
     PricingQueryController,
+    //SimulationController,
+    PricingSimulationController,
   ],
   providers: [
     PriceListsService,
@@ -51,6 +60,10 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
     DiscountRulesService,
     CombosService,
     PricingEngineService,
+    DiscountExpiryService,
+    ComboValidityService,
+    // SimulationEngineService,
+    PricingSimulationService
   ],
   exports: [PricingEngineService],
 })

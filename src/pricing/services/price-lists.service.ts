@@ -31,8 +31,8 @@ export class PriceListsService {
             description: dto.description ?? null,
             type: dto.type,
             isDefault: dto.is_default ?? false,
-            activeFrom: dto.active_from ? new Date(dto.active_from) : null,
-            activeTo: dto.active_to ? new Date(dto.active_to) : null,
+            // activeFrom: dto.active_from ? new Date(dto.active_from) : null,
+            // activeTo: dto.active_to ? new Date(dto.active_to) : null,
             isActive: dto.is_active ?? true,
         });
 
@@ -66,12 +66,12 @@ export class PriceListsService {
         if (dto.name !== undefined) pl.name = dto.name;
         if (dto.description !== undefined) pl.description = dto.description;
         if (dto.type !== undefined) pl.type = dto.type;
-        if (dto.active_from !== undefined) {
-            pl.activeFrom = dto.active_from ? new Date(dto.active_from) : null;
-        }
-        if (dto.active_to !== undefined) {
-            pl.activeTo = dto.active_to ? new Date(dto.active_to) : null;
-        }
+        // if (dto.active_from !== undefined) {
+        //     pl.activeFrom = dto.active_from ? new Date(dto.active_from) : null;
+        // }
+        // if (dto.active_to !== undefined) {
+        //     pl.activeTo = dto.active_to ? new Date(dto.active_to) : null;
+        // }
         if (dto.is_active !== undefined) pl.isActive = dto.is_active;
         if (dto.is_default !== undefined) pl.isDefault = dto.is_default;
 

@@ -63,39 +63,63 @@ export class PricingEngineService {
         code?: string,
         at?: Date,
     ): Promise<PriceList> {
-        const now = at ?? new Date();
+        //const now = at ?? new Date();
 
         if (code) {
+            // 1. Buscar lista activa con el código especificado
             const pl = await this.plRepo.findOne({
                 where: {
                     code,
-                    isActive: true,
+                    isActive: true, // ✅ Solo listas activas
                 },
             });
+
             if (!pl) {
-                throw new BadRequestException(
-                    `Lista de precios ${code} no encontrada o inactiva`,
-                );
+                // 2. Verificar si existe pero está inactiva para dar mensaje más específico
+                const inactivePl = await this.plRepo.findOne({
+                    where: { code, isActive: false },
+                });
+
+                if (inactivePl) {
+                    throw new BadRequestException(
+                        `Lista de precios "${code}" está inactiva. Actívela para usarla.`,
+                    );
+                } else {
+                    throw new BadRequestException(
+                        `Lista de precios "${code}" no encontrada`,
+                    );
+                }
             }
-            if (
-                (pl.activeFrom && pl.activeFrom > now) ||
-                (pl.activeTo && pl.activeTo < now)
-            ) {
-                throw new BadRequestException(
-                    `Lista de precios ${code} fuera de vigencia`,
-                );
-            }
+
+            // ✅ Lista encontrada y activa
             return pl;
         }
 
+        // 3. Buscar lista por defecto (solo activa)
         const pl = await this.plRepo.findOne({
-            where: { isDefault: true, isActive: true },
+            where: {
+                isDefault: true,
+                isActive: true // ✅ Solo lista por defecto activa
+            },
         });
+
         if (!pl) {
-            throw new BadRequestException(
-                'No hay lista de precios por defecto configurada',
-            );
+            // 4. Verificar si hay lista por defecto pero inactiva
+            const inactiveDefaultPl = await this.plRepo.findOne({
+                where: { isDefault: true, isActive: false },
+            });
+
+            if (inactiveDefaultPl) {
+                throw new BadRequestException(
+                    'La lista de precios por defecto está configurada pero INACTIVA. Actívela o configure otra lista como predeterminada.',
+                );
+            } else {
+                throw new BadRequestException(
+                    'No hay lista de precios por defecto configurada',
+                );
+            }
         }
+
         return pl;
     }
 
@@ -125,14 +149,31 @@ export class PricingEngineService {
         qty: number,
         at: Date,
     ): Promise<DiscountRule[]> {
+
+        // NORMALIZAR: Convertir 'at' al final del día en UTC
+        const normalizeDateForComparison = (date: Date): Date => {
+            // Tomar la fecha y ponerla al final del día en UTC
+            const year = date.getUTCFullYear();
+            const month = date.getUTCMonth();
+            const day = date.getUTCDate();
+            return new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+        };
+
+        const comparisonDate = normalizeDateForComparison(at);
+
         const qb = this.drRepo
             .createQueryBuilder('d')
             .where('d.isActive = :a', { a: true })
             .andWhere(
-                '(d.startsAt IS NULL OR d.startsAt <= :now)',
+                `(d.startsAt IS NULL OR 
+         DATE(d.startsAt) <= DATE(:now))`,
                 { now: at },
             )
-            .andWhere('(d.endsAt IS NULL OR d.endsAt >= :now)', { now: at })
+            .andWhere(
+                `(d.endsAt IS NULL OR 
+         DATE(d.endsAt) >= DATE(:now))`,
+                { now: at },
+            )
             .andWhere(
                 '(d.priceListId IS NULL OR d.priceListId = :plId)',
                 { plId: priceListId },
@@ -146,8 +187,7 @@ export class PricingEngineService {
 
         return rules.filter((r) => {
             const minOk = r.minQty == null || qty >= Number(r.minQty || 0);
-            const maxOk =
-                r.maxQty == null || qty <= Number(r.maxQty || 0);
+            const maxOk = r.maxQty == null || qty <= Number(r.maxQty || 0);
             return minOk && maxOk;
         });
     }

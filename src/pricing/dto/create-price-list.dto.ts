@@ -32,13 +32,13 @@ export class CreatePriceListDto {
     @IsBoolean()
     is_default?: boolean;
 
-    @IsOptional()
-    @IsDateString()
-    active_from?: string;
+    // @IsOptional()
+    // @IsDateString()
+    // active_from?: string;
 
-    @IsOptional()
-    @IsDateString()
-    active_to?: string;
+    // @IsOptional()
+    // @IsDateString()
+    // active_to?: string;
 
     @IsOptional()
     @IsBoolean()

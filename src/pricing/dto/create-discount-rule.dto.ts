@@ -33,7 +33,7 @@ export class CreateDiscountRuleDto {
 
     @IsOptional()
     @IsInt()
-    price_list_id?: number;
+    price_list_id?: number | null;
 
     @IsEnum(DiscountType)
     discount_type: DiscountType;

@@ -12,6 +12,8 @@ import { CreateComboDto, ComboItemInputDto } from '../dto/create-combo.dto';
 import { UpdateComboDto } from '../dto/update-combo.dto';
 import { Product } from 'src/inventory/entities/product.entity';
 import { ComboType } from '../enums/combo-type.enum';
+import { ComboValidityService } from './combo-validity.service';
+
 
 @Injectable()
 export class CombosService {
@@ -22,6 +24,7 @@ export class CombosService {
         private readonly comboItemRepo: Repository<ComboItem>,
         @InjectRepository(Product)
         private readonly prodRepo: Repository<Product>,
+        private readonly comboValidityService: ComboValidityService,
     ) { }
 
     private async validateItems(items: ComboItemInputDto[]) {
@@ -65,7 +68,45 @@ export class CombosService {
             );
         }
 
+
+        // Validar fechas si están presentes
+        if (dto.starts_at && dto.ends_at) {
+            const startDate = new Date(dto.starts_at);
+            const endDate = new Date(dto.ends_at);
+
+            if (endDate < startDate) {
+                throw new BadRequestException('La fecha de fin no puede ser anterior a la fecha de inicio');
+            }
+        }
+
         await this.validateItems(dto.items);
+
+        // Determinar isActive inicial basado en fecha de inicio
+        let initialIsActive = dto.is_active ?? true;
+        if (dto.starts_at) {
+            const startDate = new Date(dto.starts_at);
+            const today = new Date();
+
+            // 👇 USAR UTC para evitar problemas de zona horaria
+            const todayDateOnly = new Date(Date.UTC(
+                today.getUTCFullYear(),
+                today.getUTCMonth(),
+                today.getUTCDate()
+            ));
+
+            const startDateOnly = new Date(Date.UTC(
+                startDate.getUTCFullYear(),
+                startDate.getUTCMonth(),
+                startDate.getUTCDate()
+            ));
+            console.log("Fecha de Inicio: " + startDateOnly);
+            console.log("Fecha de Hoy: " + todayDateOnly);
+
+            // Si la fecha de inicio es futura, desactivar
+            if (startDateOnly > todayDateOnly) {
+                initialIsActive = false;
+            }
+        }
 
         const combo = this.comboRepo.create({
             code: dto.code,
@@ -84,7 +125,7 @@ export class CombosService {
             requiresPermission: dto.requires_permission ?? null,
             startsAt: dto.starts_at ? new Date(dto.starts_at) : null,
             endsAt: dto.ends_at ? new Date(dto.ends_at) : null,
-            isActive: dto.is_active ?? true,
+            isActive: initialIsActive,
         });
 
         const saved = await this.comboRepo.save(combo);
@@ -130,11 +171,59 @@ export class CombosService {
         if (dto.auto_apply !== undefined) combo.autoApply = dto.auto_apply;
         if (dto.requires_permission !== undefined)
             combo.requiresPermission = dto.requires_permission ?? null;
+
+        // ✅ ACTUALIZAR FECHAS PRIMERO
         if (dto.starts_at !== undefined)
             combo.startsAt = dto.starts_at ? new Date(dto.starts_at) : null;
         if (dto.ends_at !== undefined)
             combo.endsAt = dto.ends_at ? new Date(dto.ends_at) : null;
-        if (dto.is_active !== undefined) combo.isActive = dto.is_active;
+
+        // ✅ NUEVO: RECALCULAR isActive BASADO EN LAS FECHAS ACTUALIZADAS
+        const today = new Date();
+        // 👇 USAR UTC para evitar problemas de zona horaria
+        const todayDateOnly = new Date(Date.UTC(
+            today.getUTCFullYear(),
+            today.getUTCMonth(),
+            today.getUTCDate()
+        ));
+
+        let shouldBeActive = true; // Por defecto activo si no hay fechas
+
+        // Si hay fecha de inicio futura, desactivar
+        if (combo.startsAt) {
+            // 👇 USAR UTC para la fecha de inicio
+            const startDateOnly = new Date(Date.UTC(
+                combo.startsAt.getUTCFullYear(),
+                combo.startsAt.getUTCMonth(),
+                combo.startsAt.getUTCDate()
+
+            ));
+            console.log("Fecha de Inicio: " + startDateOnly);
+            console.log("Fecha de Hoy: " + todayDateOnly);
+
+            if (startDateOnly > todayDateOnly) {
+                shouldBeActive = false;
+            }
+        }
+
+        // Si hay fecha de fin pasada, desactivar
+        if (combo.endsAt) {
+            // 👇 USAR UTC para la fecha de fin
+            const endDateOnly = new Date(Date.UTC(
+                combo.endsAt.getUTCFullYear(),
+                combo.endsAt.getUTCMonth(),
+                combo.endsAt.getUTCDate()
+            ));
+            console.log("Fecha de fin: " + endDateOnly);
+
+            if (endDateOnly < todayDateOnly) {
+                shouldBeActive = false;
+            }
+        }
+
+        // Aplicar el estado calculado
+        combo.isActive = shouldBeActive;
+        // ✅ FIN NUEVO CÓDIGO
 
         // actualizar items si vienen
         if (dto.items && dto.items.length) {
@@ -191,6 +280,14 @@ export class CombosService {
     }
 
 
+    async listWithAutoValidity(filters?: { activeOnly?: boolean | null, page?: number, limit?: number }) {
+        // PRIMERO: Gestionar validez automáticamente
+        await this.autoManageComboValidity();
+
+        // LUEGO: Listar normalmente
+        return this.list(filters);
+    }
+
     async get(id: number) {
         const combo = await this.comboRepo.findOne({
             where: { id },
@@ -213,5 +310,84 @@ export class CombosService {
 
         return this.comboRepo.save(combo);
     }
+
+
+    // Agrega este método en CombosService
+    async findAll(filters?: { activeOnly?: boolean | null }) {
+        const where: any = {};
+
+        // Si activeOnly es true: solo activos
+        if (filters?.activeOnly === true) {
+            where.isActive = true;
+        }
+        // Si activeOnly es false: solo inactivos
+        else if (filters?.activeOnly === false) {
+            where.isActive = false;
+        }
+        // Si activeOnly es null/undefined: mostrar todos
+
+        // Obtener TODOS los combos sin paginación
+        return this.comboRepo.find({
+            where,
+            relations: ['items', 'items.product'],
+            order: { code: 'ASC' },
+        });
+    }
+
+
+    //  NUEVO MÉTODO PRIVADO PARA GESTIONAR VALIDEZ
+    private async autoManageComboValidity(): Promise<void> {
+        const today = new Date();
+        const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+        // 1. Desactivar combos expirados
+        const expired = await this.comboRepo
+            .createQueryBuilder('c')
+            .where('c.isActive = :active', { active: true })
+            .andWhere('c.endsAt IS NOT NULL')
+            .andWhere('DATE(c.endsAt) < DATE(:today)', { today: todayDateOnly })
+            .getMany();
+
+        // 2. Activar combos cuya fecha de inicio ha llegado
+        const toActivate = await this.comboRepo
+            .createQueryBuilder('c')
+            .where('c.isActive = :active', { active: false })
+            .andWhere('c.startsAt IS NOT NULL')
+            .andWhere('DATE(c.startsAt) <= DATE(:today)', { today: todayDateOnly })
+            .andWhere('(c.endsAt IS NULL OR DATE(c.endsAt) >= DATE(:today))', { today: todayDateOnly })
+            .getMany();
+
+        // 3. Desactivar combos con inicio futuro
+        const futureStart = await this.comboRepo
+            .createQueryBuilder('c')
+            .where('c.isActive = :active', { active: true })
+            .andWhere('c.startsAt IS NOT NULL')
+            .andWhere('DATE(c.startsAt) > DATE(:today)', { today: todayDateOnly })
+            .getMany();
+
+        // Aplicar cambios
+        if (expired.length > 0) {
+            for (const c of expired) {
+                c.isActive = false;
+            }
+            await this.comboRepo.save(expired);
+        }
+
+        if (toActivate.length > 0) {
+            for (const c of toActivate) {
+                c.isActive = true;
+            }
+            await this.comboRepo.save(toActivate);
+        }
+
+        if (futureStart.length > 0) {
+            for (const c of futureStart) {
+                c.isActive = false;
+            }
+            await this.comboRepo.save(futureStart);
+        }
+    }
+
+
 
 }

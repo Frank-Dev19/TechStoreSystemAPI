@@ -5,7 +5,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, LessThanOrEqual, IsNull } from 'typeorm';
+import { Repository, MoreThanOrEqual, LessThanOrEqual, IsNull, Like } from 'typeorm';
 import { DiscountRule } from '../entities/discount-rule.entity';
 import { CreateDiscountRuleDto } from '../dto/create-discount-rule.dto';
 import { UpdateDiscountRuleDto } from '../dto/update-discount-rule.dto';
@@ -55,6 +55,30 @@ export class DiscountRulesService {
             priceListId = pl.id;
         }
 
+        if (dto.starts_at && dto.ends_at) {
+            const startDate = new Date(dto.starts_at);
+            const endDate = new Date(dto.ends_at);
+
+            if (endDate < startDate) {
+                throw new BadRequestException('La fecha de fin no puede ser anterior a la fecha de inicio');
+            }
+        }
+
+
+        // Determinar isActive inicial basado en fecha de inicio
+        let initialIsActive = dto.is_active ?? true;
+        if (dto.starts_at) {
+            const startDate = new Date(dto.starts_at);
+            const today = new Date();
+            const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+
+            // Si la fecha de inicio es futura, desactivar
+            if (startDateOnly > todayDateOnly) {
+                initialIsActive = false;
+            }
+        }
+
         const dr = this.drRepo.create({
             name: dto.name,
             description: dto.description ?? null,
@@ -71,7 +95,7 @@ export class DiscountRulesService {
             endsAt: dto.ends_at ? new Date(dto.ends_at) : null,
             priority: dto.priority ?? 0,
             isExclusive: dto.is_exclusive ?? false,
-            isActive: dto.is_active ?? true,
+            isActive: initialIsActive,
         });
 
         return this.drRepo.save(dr);
@@ -148,7 +172,68 @@ export class DiscountRulesService {
     }
 
     // Filtros simples (puedes extender según necesites)
-    list(filters: {
+    async list(filters?: {
+        product_id?: number;
+        category_id?: number;
+        price_list_id?: number;
+        active_only?: boolean;
+        page?: number;
+        limit?: number;
+        search?: string;
+    }) {
+        const where: any = {};
+
+        if (filters?.product_id !== undefined) {
+            where.productId = filters.product_id;
+        }
+        if (filters?.category_id !== undefined) {
+            where.categoryId = filters.category_id;
+        }
+        if (filters?.price_list_id !== undefined) {
+            where.priceListId = filters.price_list_id;
+        }
+        if (filters?.active_only === true) {
+            where.isActive = true;
+        }
+
+        if (filters?.search) {
+            const searchTerm = filters.search.toLowerCase();
+            where.name = Like(`%${searchTerm}%`);
+        }
+
+        // Paginación
+        const page = filters?.page ?? 1;
+        const limit = filters?.limit ?? 10;
+        const skip = (page - 1) * limit;
+
+        // Contar total de registros
+        const total = await this.drRepo.count({ where });
+
+        // Obtener datos con paginación
+        const data = await this.drRepo.find({
+            where,
+            order: { priority: 'DESC', id: 'ASC' },
+            relations: ['product', 'category', 'priceList'],
+            skip,
+            take: limit,
+        });
+
+        return {
+            data,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+                hasNextPage: page < Math.ceil(total / limit),
+                hasPrevPage: page > 1,
+            }
+        };
+    }
+
+
+    // Método para obtener TODOS los descuentos
+    async findAll(filters?: {
         product_id?: number;
         category_id?: number;
         price_list_id?: number;
@@ -156,23 +241,116 @@ export class DiscountRulesService {
     }) {
         const where: any = {};
 
-        if (filters.product_id !== undefined) {
+        if (filters?.product_id !== undefined) {
             where.productId = filters.product_id;
         }
-        if (filters.category_id !== undefined) {
+        if (filters?.category_id !== undefined) {
             where.categoryId = filters.category_id;
         }
-        if (filters.price_list_id !== undefined) {
+        if (filters?.price_list_id !== undefined) {
             where.priceListId = filters.price_list_id;
         }
-        if (filters.active_only === true) {      // 👈 solo si es true
+        if (filters?.active_only === true) {
             where.isActive = true;
         }
 
         return this.drRepo.find({
             where,
             order: { priority: 'DESC', id: 'ASC' },
+            relations: ['product', 'category', 'priceList'],
         });
+    }
+
+    async findAllWithAutoDeactivation(filters?: {
+        product_id?: number;
+        category_id?: number;
+        price_list_id?: number;
+        active_only?: boolean;
+    }) {
+        // PRIMERO: Gestionar validez automáticamente
+        await this.autoManageDiscountValidity();
+
+        return this.findAll(filters);
+    }
+
+    async listWithAutoDeactivation(filters: {
+        product_id?: number;
+        category_id?: number;
+        price_list_id?: number;
+        active_only?: boolean;
+        page?: number,
+        limit?: number,
+    }) {
+        // PRIMERO: Gestionar validez automáticamente
+        await this.autoManageDiscountValidity();
+
+        // LUEGO: Listar normalmente
+        return this.list(filters);
+    }
+
+
+    private async autoManageDiscountValidity(): Promise<void> {
+        const today = new Date();
+        const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+        // 1. Desactivar descuentos expirados
+        const expired = await this.drRepo
+            .createQueryBuilder('d')
+            .where('d.isActive = :active', { active: true })
+            .andWhere('d.endsAt IS NOT NULL')
+            .andWhere('DATE(d.endsAt) < DATE(:today)', { today: todayDateOnly })
+            .getMany();
+
+        // 2. Activar descuentos cuya fecha de inicio ha llegado
+        const toActivate = await this.drRepo
+            .createQueryBuilder('d')
+            .where('d.isActive = :active', { active: false })
+            .andWhere('d.startsAt IS NOT NULL')
+            .andWhere('DATE(d.startsAt) <= DATE(:today)', { today: todayDateOnly })
+            .andWhere('(d.endsAt IS NULL OR DATE(d.endsAt) >= DATE(:today))', { today: todayDateOnly })
+            .getMany();
+
+        // 3. Desactivar descuentos con inicio futuro
+        const futureStart = await this.drRepo
+            .createQueryBuilder('d')
+            .where('d.isActive = :active', { active: true })
+            .andWhere('d.startsAt IS NOT NULL')
+            .andWhere('DATE(d.startsAt) > DATE(:today)', { today: todayDateOnly })
+            .getMany();
+
+        // Aplicar cambios
+        if (expired.length > 0) {
+            for (const d of expired) {
+                d.isActive = false;
+            }
+            await this.drRepo.save(expired);
+        }
+
+        if (toActivate.length > 0) {
+            for (const d of toActivate) {
+                d.isActive = true;
+            }
+            await this.drRepo.save(toActivate);
+        }
+
+        if (futureStart.length > 0) {
+            for (const d of futureStart) {
+                d.isActive = false;
+            }
+            await this.drRepo.save(futureStart);
+        }
+    }
+
+
+
+
+
+
+
+    // También actualizar el método anterior para que use esta nueva lógica
+    private async autoDeactivateExpired(): Promise<void> {
+        // Usar el nuevo método que maneja ambas fechas
+        await this.autoManageDiscountValidity();
     }
 
 }

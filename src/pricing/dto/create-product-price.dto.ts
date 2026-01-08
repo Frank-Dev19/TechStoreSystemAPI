@@ -35,13 +35,13 @@ export class CreateProductPriceDto {
     @Min(0)
     max_qty?: number;
 
-    @IsOptional()
-    @IsDateString()
-    valid_from?: string;
+    // @IsOptional()
+    // @IsDateString()
+    // valid_from?: string;
 
-    @IsOptional()
-    @IsDateString()
-    valid_to?: string;
+    // @IsOptional()
+    // @IsDateString()
+    // valid_to?: string;
 
     @IsOptional()
     @IsBoolean()
