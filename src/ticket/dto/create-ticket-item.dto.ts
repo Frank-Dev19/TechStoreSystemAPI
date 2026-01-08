@@ -1,8 +1,5 @@
 import {
-  IsBoolean,
-  IsDateString,
   IsEnum,
-  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -10,7 +7,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { EquipmentType, ServiceLocation, ServiceType } from '../enums';
+import { EquipmentType, ServiceType } from '../enums';
 
 export class CreateTicketItemDto {
   @IsEnum(EquipmentType)
@@ -42,31 +39,6 @@ export class CreateTicketItemDto {
   @IsEnum(ServiceType)
   @IsOptional()
   serviceType?: ServiceType;
-
-  @IsEnum(ServiceLocation)
-  @IsOptional()
-  serviceLocation?: ServiceLocation;
-
-  @IsString()
-  @IsOptional()
-  serviceAddress?: string;
-
-  @IsString()
-  @IsOptional()
-  serviceAddressReference?: string;
-
-  @IsDateString()
-  @IsOptional()
-  scheduledServiceDate?: string;
-
-  @IsInt()
-  @IsOptional()
-  @IsPositive()
-  slaTargetDays?: number;
-
-  @IsBoolean()
-  @IsOptional()
-  requiresParts?: boolean;
 
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsOptional()

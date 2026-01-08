@@ -16,7 +16,7 @@ import { UpdateQuoteDto } from './dto/update-quote.dto';
 import { QuoteStatus } from './quote-status.enum';
 import { QuoteProductItemDto } from './dto/quote-product-item.dto';
 import { QuoteServiceItemDto } from './dto/quote-service-item.dto';
-import { TicketItemStatus } from '../enums';
+import { ServiceType, TicketItemStatus } from '../enums';
 import { TicketItemService } from '../services/ticket-item.service';
 import { User } from '../../users/entities/user.entity';
 import { hasRoleName, SUPERVISOR_ROLE_NAMES } from '../../common/constants/role-names';
@@ -33,6 +33,7 @@ type FindQuotesQuery = {
 
 @Injectable()
 export class QuotesService {
+  private static readonly DIAGNOSTIC_SERVICE_CODE = 'DIAGNOSIS_FEE';
   constructor(
     @InjectRepository(Quote)
     private readonly quoteRepository: Repository<Quote>,
@@ -53,8 +54,11 @@ export class QuotesService {
     const qb = this.quoteRepository
       .createQueryBuilder('quote')
       .leftJoinAndSelect('quote.productItems', 'productItems')
+      .leftJoinAndSelect('productItems.product', 'product')
       .leftJoinAndSelect('quote.serviceItems', 'serviceItems')
-      .leftJoin('quote.ticketItem', 'ticketItem')
+      .leftJoinAndSelect('serviceItems.service', 'service')
+      .leftJoinAndSelect('quote.ticketItem', 'ticketItem')
+      .leftJoinAndSelect('ticketItem.ticket', 'ticket')
       .orderBy('quote.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -97,7 +101,7 @@ export class QuotesService {
   async findOne(id: number, withDeleted = false) {
     const quote = await this.quoteRepository.findOne({
       where: { id },
-      relations: ['productItems', 'serviceItems'],
+      relations: ['ticketItem', 'ticketItem.ticket', 'productItems', 'productItems.product', 'serviceItems', 'serviceItems.service'],
       withDeleted,
     });
 
@@ -121,7 +125,10 @@ export class QuotesService {
     const quote = await this.quoteRepository.manager.transaction(async (manager) => {
       const repo = manager.getRepository(Quote);
       const productItems = await this.buildProductItems(dto.products, manager);
-      const serviceItems = await this.buildServiceItems(dto.services, manager);
+      const servicePayload = ticketItem?.serviceType === ServiceType.DIAGNOSIS
+        ? await this.ensureDiagnosticServiceItem(manager, dto.services)
+        : dto.services;
+      const serviceItems = await this.buildServiceItems(servicePayload, manager);
       const totalAmount = this.calculateTotalAmount(productItems, serviceItems);
       const sequenceNumber = owningTicketItemId
         ? dto.sequenceNumber ?? (await this.resolveNextSequence(repo, owningTicketItemId))
@@ -163,6 +170,7 @@ export class QuotesService {
 
     await this.transitionTicketItemStatus(owningTicketItemId, TicketItemStatus.QUOTED, [
       TicketItemStatus.DIAGNOSED,
+      TicketItemStatus.ASSIGNED,
     ]);
 
     // For STANDARD_SERVICE, auto-approve quote by client (skip supervisor approval)
@@ -171,9 +179,14 @@ export class QuotesService {
         TicketItemStatus.QUOTED,
       ]);
 
+      await this.transitionTicketItemStatus(owningTicketItemId, TicketItemStatus.READY_FOR_REPAIR, [
+        TicketItemStatus.CLIENT_APPROVED,
+      ]);
+
       // Mark quote as client approved
-      quote.clientApprovedAt = new Date();
-      await this.quoteRepository.save(quote);
+      await this.quoteRepository.update(quote.id, {
+        clientApprovedAt: new Date(),
+      });
     }
 
     return quote;
@@ -197,8 +210,11 @@ export class QuotesService {
     quote.serviceItems = quote.serviceItems ?? [];
 
     let ticketItemChanged = false;
+    let ticketItem = quote.ticketItemId
+      ? await this.ticketItemRepository.findOne({ where: { id: quote.ticketItemId } })
+      : null;
     if (dto.ticketItemId && dto.ticketItemId !== quote.ticketItemId) {
-      const ticketItem = await this.ensureTicketItem(dto.ticketItemId);
+      ticketItem = await this.ensureTicketItem(dto.ticketItemId);
       quote.ticketItemId = ticketItem.id;
       ticketItemChanged = true;
     }
@@ -266,7 +282,10 @@ export class QuotesService {
 
       if (dto.services) {
         await manager.getRepository(QuoteServiceItem).delete({ quoteId: quote.id });
-        const serviceItems = await this.buildServiceItems(dto.services, manager);
+        const servicePayload = ticketItem?.serviceType === ServiceType.DIAGNOSIS
+          ? await this.ensureDiagnosticServiceItem(manager, dto.services)
+          : dto.services;
+        const serviceItems = await this.buildServiceItems(servicePayload, manager);
         await this.persistServiceItems(manager, quote.id, serviceItems);
         quote.serviceItems = serviceItems.map(
           (item) => ({ ...item, quoteId: quote.id } as QuoteServiceItem),
@@ -375,15 +394,17 @@ export class QuotesService {
       return [];
     }
     const repo = manager.getRepository(QuoteProduct);
-    return items.map((item) =>
-      repo.create({
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice ?? 0,
-        requiresPurchase: item.requiresPurchase ?? false,
-        notes: item.notes ?? null,
-      }),
-    );
+    return items.map((item) => {
+      const { productId, quantity, unitPrice, requiresPurchase, notes } = item;
+      // Evitar que un id existente fuerce un UPDATE con quote_id nulo
+      return repo.create({
+        productId,
+        quantity,
+        unitPrice: unitPrice ?? 0,
+        requiresPurchase: requiresPurchase ?? false,
+        notes: notes ?? null,
+      });
+    });
   }
 
   private async buildServiceItems(
@@ -419,6 +440,33 @@ export class QuotesService {
     });
   }
 
+  private async ensureDiagnosticServiceItem(
+    manager: EntityManager,
+    items: QuoteServiceItemDto[] | undefined,
+  ): Promise<QuoteServiceItemDto[]> {
+    const normalized = items ? [...items] : [];
+    const serviceRepo = manager.getRepository(Service);
+    const diagnostic = await serviceRepo.findOne({
+      where: { code: QuotesService.DIAGNOSTIC_SERVICE_CODE },
+    });
+
+    if (!diagnostic) {
+      throw new NotFoundException(
+        `Service "${QuotesService.DIAGNOSTIC_SERVICE_CODE}" no encontrado. Ejecuta el seeder.`,
+      );
+    }
+
+    const alreadyIncluded = normalized.some(
+      (item) => Number(item.serviceId) === Number(diagnostic.id),
+    );
+
+    if (!alreadyIncluded) {
+      normalized.push({ serviceId: diagnostic.id });
+    }
+
+    return normalized;
+  }
+
   private async persistProductItems(
     manager: EntityManager,
     quoteId: number,
@@ -427,15 +475,20 @@ export class QuotesService {
     if (!items.length) {
       return;
     }
-    const repo = manager.getRepository(QuoteProduct);
-    await repo.save(
-      items.map((item) =>
-        repo.create({
-          ...item,
-          quoteId,
-        }),
-      ),
-    );
+    const values = items.map((item) => {
+      const { id: _ignored, quoteId: _ignoredQuote, quote: _ignoredRel, ...rest } = item as any;
+      return {
+        ...rest,
+        quoteId,
+      };
+    });
+
+    await manager
+      .createQueryBuilder()
+      .insert()
+      .into(QuoteProduct)
+      .values(values)
+      .execute();
   }
 
   private async persistServiceItems(
@@ -446,15 +499,20 @@ export class QuotesService {
     if (!items.length) {
       return;
     }
-    const repo = manager.getRepository(QuoteServiceItem);
-    await repo.save(
-      items.map((item) =>
-        repo.create({
-          ...item,
-          quoteId,
-        }),
-      ),
-    );
+    const values = items.map((item) => {
+      const { id: _ignored, quoteId: _ignoredQuote, quote: _ignoredRel, ...rest } = item as any;
+      return {
+        ...rest,
+        quoteId,
+      };
+    });
+
+    await manager
+      .createQueryBuilder()
+      .insert()
+      .into(QuoteServiceItem)
+      .values(values)
+      .execute();
   }
 
   private calculateTotalAmount(
@@ -649,7 +707,10 @@ export class QuotesService {
       // Update services if provided
       if (dto.services) {
         await manager.getRepository(QuoteServiceItem).delete({ quoteId: quote.id });
-        const serviceItems = await this.buildServiceItems(dto.services, manager);
+        const servicePayload = quote.ticketItem?.serviceType === ServiceType.DIAGNOSIS
+          ? await this.ensureDiagnosticServiceItem(manager, dto.services)
+          : dto.services;
+        const serviceItems = await this.buildServiceItems(servicePayload, manager);
         await this.persistServiceItems(manager, quote.id, serviceItems);
         quote.serviceItems = serviceItems.map(
           (item) => ({ ...item, quoteId: quote.id } as QuoteServiceItem),
@@ -657,7 +718,7 @@ export class QuotesService {
       }
 
       // Recalculate total
-      quote.totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
+      const totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
 
       // Update notes if provided
       if (dto.notes !== undefined) {
@@ -665,16 +726,21 @@ export class QuotesService {
       }
 
       // Increment sequence number for this new version
-      quote.sequenceNumber++;
+      const nextSequence = (quote.sequenceNumber || 0) + 1;
 
       // Reset supervisor rejection fields and status
-      quote.rejectedBySupervisorId = null;
-      quote.rejectedBySupervisorAt = null;
-      quote.supervisorNotes = null;
-      quote.status = QuoteStatus.PENDING_SUPERVISOR_APPROVAL;
+      const updateFields: Partial<Quote> = {
+        totalAmount,
+        notes: dto.notes !== undefined ? dto.notes : quote.notes,
+        sequenceNumber: nextSequence,
+        rejectedBySupervisorId: null,
+        rejectedBySupervisorAt: null,
+        supervisorNotes: null,
+        status: QuoteStatus.PENDING_SUPERVISOR_APPROVAL,
+      };
 
-      // Save updated quote
-      await repo.save(quote);
+      // Save updated quote without cascading to product/service items
+      await repo.update(quote.id, updateFields);
 
       // Sync TicketItem back to QUOTED
       await this.transitionTicketItemStatus(
@@ -683,7 +749,11 @@ export class QuotesService {
         [TicketItemStatus.SUPERVISOR_REJECTED],
       );
 
-      return quote;
+      // Return refreshed quote with items
+      return repo.findOne({
+        where: { id: quote.id },
+        relations: ['productItems', 'serviceItems', 'ticketItem'],
+      }) as Promise<Quote>;
     });
   }
 
@@ -856,7 +926,10 @@ export class QuotesService {
       // Update services if provided
       if (dto.services) {
         await manager.getRepository(QuoteServiceItem).delete({ quoteId: quote.id });
-        const serviceItems = await this.buildServiceItems(dto.services, manager);
+        const servicePayload = quote.ticketItem?.serviceType === ServiceType.DIAGNOSIS
+          ? await this.ensureDiagnosticServiceItem(manager, dto.services)
+          : dto.services;
+        const serviceItems = await this.buildServiceItems(servicePayload, manager);
         await this.persistServiceItems(manager, quote.id, serviceItems);
         quote.serviceItems = serviceItems.map(
           (item) => ({ ...item, quoteId: quote.id } as QuoteServiceItem),
@@ -864,7 +937,7 @@ export class QuotesService {
       }
 
       // Recalculate total
-      quote.totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
+      const totalAmount = this.calculateTotalAmount(quote.productItems, quote.serviceItems);
 
       // Update notes if provided
       if (dto.notes !== undefined) {
@@ -872,22 +945,22 @@ export class QuotesService {
       }
 
       // Increment sequence number for this new version
-      quote.sequenceNumber++;
+      const nextSequence = (quote.sequenceNumber || 0) + 1;
 
       // Reset client rejection fields and status
-      quote.clientRejectedAt = null;
-      quote.clientNotes = null;
-      quote.sentToClientAt = null;
-
-      // For DIAGNOSIS, needs supervisor approval again
-      // For STANDARD_SERVICE, can go directly back to waiting for client
       const needsSupervisorApproval = quote.ticketItem?.serviceType === 'DIAGNOSIS';
-      quote.status = needsSupervisorApproval
-        ? QuoteStatus.PENDING_SUPERVISOR_APPROVAL
-        : QuoteStatus.CURRENT;
+      const updateFields: Partial<Quote> = {
+        totalAmount,
+        notes: dto.notes !== undefined ? dto.notes : quote.notes,
+        sequenceNumber: nextSequence,
+        clientRejectedAt: null,
+        clientNotes: null,
+        sentToClientAt: null,
+        status: needsSupervisorApproval ? QuoteStatus.PENDING_SUPERVISOR_APPROVAL : QuoteStatus.CURRENT,
+      };
 
-      // Save updated quote
-      await repo.save(quote);
+      // Save updated quote without cascading to items
+      await repo.update(quote.id, updateFields);
 
       // Sync TicketItem back to QUOTED
       await this.transitionTicketItemStatus(
@@ -896,7 +969,11 @@ export class QuotesService {
         [TicketItemStatus.CLIENT_REJECTED],
       );
 
-      return quote;
+      // Return refreshed quote with items
+      return repo.findOne({
+        where: { id: quote.id },
+        relations: ['productItems', 'serviceItems', 'ticketItem'],
+      }) as Promise<Quote>;
     });
   }
 

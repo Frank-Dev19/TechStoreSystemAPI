@@ -8,6 +8,8 @@ import { Role } from 'src/roles/entities/role.entity';
 import { Permission } from 'src/roles/entities/permission.entity';
 import { PermissionModule } from 'src/roles/entities/permission-module.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import { ServiceCategory } from 'src/service-catalog/entities/service-category.entity';
+import { Service } from 'src/service-catalog/entities/service.entity';
 
 type ModuleSeed = { moduleKey: string; label: string; sortOrder: number; icon?: string | null };
 type PermSeed = { moduleKey: string; actionKey: string; description: string; sortOrder?: number };
@@ -22,6 +24,8 @@ export class BootstrapService implements OnModuleInit {
     @InjectRepository(Permission) private readonly permsRepo: Repository<Permission>,
     @InjectRepository(PermissionModule) private readonly permModulesRepo: Repository<PermissionModule>,
     @InjectRepository(DocumentType) private readonly docTypesRepo: Repository<DocumentType>,
+    @InjectRepository(ServiceCategory) private readonly serviceCategoryRepo: Repository<ServiceCategory>,
+    @InjectRepository(Service) private readonly serviceRepo: Repository<Service>,
   ) { }
 
   async onModuleInit() {
@@ -151,6 +155,9 @@ export class BootstrapService implements OnModuleInit {
     // 5) Crear usuario admin si no hay usuarios
     await this.ensureDefaultAdminUser();
 
+    // 6) Asegurar servicio de diagnóstico
+    await this.ensureDiagnosticServiceCatalog();
+
     this.log.log('Bootstrap OK (catálogo sincronizado, admin con permisos, usuario inicial si hacía falta).');
   }
 
@@ -177,6 +184,60 @@ export class BootstrapService implements OnModuleInit {
       dt.deletedAt = null;
       await this.docTypesRepo.save(dt);
       this.log.log('DocumentType "DNI" restaurado (soft-delete).');
+    }
+  }
+
+  private async ensureDiagnosticServiceCatalog() {
+    const categoryCode = 'SC-000001';
+    const serviceCode = 'DIAGNOSIS_FEE';
+    const price = 30;
+
+    let category = await this.serviceCategoryRepo.findOne({
+      where: { code: categoryCode },
+      withDeleted: true,
+    });
+    if (!category) {
+      category = this.serviceCategoryRepo.create({
+        code: categoryCode,
+        name: 'Diagnostico',
+        description: 'Servicios de diagnostico',
+        isActive: true,
+      });
+      await this.serviceCategoryRepo.save(category);
+      this.log.log(`ServiceCategory "${categoryCode}" creada.`);
+    } else if (category.deletedAt) {
+      category.deletedAt = null;
+      category.isActive = true;
+      await this.serviceCategoryRepo.save(category);
+      this.log.log(`ServiceCategory "${categoryCode}" restaurada.`);
+    }
+
+    let service = await this.serviceRepo.findOne({
+      where: { code: serviceCode },
+      withDeleted: true,
+    });
+    if (!service) {
+      service = this.serviceRepo.create({
+        code: serviceCode,
+        name: 'Servicio de Diagnostico',
+        description: 'Costo base por diagnostico',
+        categoryId: category.id,
+        price,
+        estimatedDurationMinutes: 60,
+        warrantyDays: 0,
+        isActive: true,
+      });
+      await this.serviceRepo.save(service);
+      this.log.log(`Service "${serviceCode}" creado.`);
+    } else if (service.deletedAt) {
+      service.deletedAt = null;
+      service.isActive = true;
+      await this.serviceRepo.save(service);
+      this.log.log(`Service "${serviceCode}" restaurado.`);
+    } else if (service.price !== price) {
+      service.price = price;
+      await this.serviceRepo.save(service);
+      this.log.log(`Service "${serviceCode}" actualizado con precio ${price}.`);
     }
   }
 

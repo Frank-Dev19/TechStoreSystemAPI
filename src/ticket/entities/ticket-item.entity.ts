@@ -14,8 +14,6 @@ import { Ticket } from './ticket.entity';
 import { User } from '../../users/entities/user.entity';
 import {
   TicketItemStatus,
-  ServiceLocation,
-  ClientSLAPauseReason,
   EquipmentType,
   ServiceType,
 } from '../enums';
@@ -88,57 +86,6 @@ export class TicketItem {
   @Column({ name: 'assigned_supervisor_at', type: 'datetime', nullable: true })
   assignedSupervisorAt: Date | null;
 
-  // ==================== UBICACIÓN DEL SERVICIO ====================
-  @Column({
-    name: 'service_location',
-    type: 'enum',
-    enum: ServiceLocation,
-    default: ServiceLocation.ON_SITE,
-  })
-  serviceLocation: ServiceLocation;
-
-  @Column({ name: 'service_address', type: 'text', nullable: true })
-  serviceAddress: string | null;
-
-  @Column({ name: 'service_address_reference', type: 'varchar', length: 255, nullable: true })
-  serviceAddressReference: string | null;
-
-  @Column({ name: 'scheduled_service_date', type: 'datetime', nullable: true })
-  scheduledServiceDate: Date | null;
-
-  // ==================== SLA DEL CLIENTE (EXTERNO) ====================
-  @Column({ name: 'sla_target_days', type: 'int', unsigned: true, default: 5 })
-  slaTargetDays: number;
-
-  @Column({ name: 'sla_start_date', type: 'datetime', nullable: true })
-  slaStartDate: Date | null;
-
-  @Column({ name: 'sla_deadline', type: 'datetime', nullable: true })
-  slaDeadline: Date | null;
-
-  @Column({ name: 'sla_paused', type: 'boolean', default: false })
-  slaPaused: boolean;
-
-  @Column({ name: 'sla_paused_at', type: 'datetime', nullable: true })
-  slaPausedAt: Date | null;
-
-  @Column({
-    name: 'sla_paused_reason',
-    type: 'enum',
-    enum: ClientSLAPauseReason,
-    nullable: true,
-  })
-  slaPausedReason: ClientSLAPauseReason | null;
-
-  @Column({ name: 'sla_paused_days', type: 'int', unsigned: true, default: 0 })
-  slaPausedDays: number;
-
-  @Column({ name: 'sla_breached', type: 'boolean', default: false })
-  slaBreached: boolean;
-
-  @Column({ name: 'sla_breached_at', type: 'datetime', nullable: true })
-  slaBreachedAt: Date | null;
-
   // ==================== KPIs INTERNOS DEL TÉCNICO ====================
   // Nota: Estos valores se calculan automáticamente cuando cambian los status
   // y se almacenan para mejor performance en queries
@@ -188,16 +135,6 @@ export class TicketItem {
   })
   repairEfficiencyPercent: number | null; // Calculado: (estimatedRepairHours / actualRepairHours) * 100
 
-  // ==================== REPUESTOS ====================
-  @Column({ name: 'requires_parts', type: 'boolean', default: false })
-  requiresParts: boolean;
-
-  @Column({ name: 'parts_requested_at', type: 'datetime', nullable: true })
-  partsRequestedAt: Date | null;
-
-  @Column({ name: 'parts_received_at', type: 'datetime', nullable: true })
-  partsReceivedAt: Date | null;
-
   // ==================== FECHAS DE TRACKING ====================
   @Column({ name: 'received_at', type: 'datetime' })
   receivedAt: Date;
@@ -228,9 +165,6 @@ export class TicketItem {
 
   @Column({ name: 'repair_completed_at', type: 'datetime', nullable: true })
   repairCompletedAt: Date | null;
-
-  @Column({ name: 'ready_for_delivery_at', type: 'datetime', nullable: true })
-  readyForDeliveryAt: Date | null;
 
   @Column({ name: 'delivered_at', type: 'datetime', nullable: true })
   deliveredAt: Date | null;
@@ -287,13 +221,6 @@ export class TicketItem {
 
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt: Date | null;
-
-  // ==================== RELACIONES ====================
-  // @OneToMany(() => TicketItemDiagnosis, (diagnosis) => diagnosis.ticketItem)
-  // diagnoses: TicketItemDiagnosis[];
-
-  // @OneToMany(() => Quote, (quote) => quote.ticketItem)
-  // quotes: Quote[];
 
   // ==================== CAMPOS VIRTUALES ====================
   assignedToTechnicianName?: string | null;

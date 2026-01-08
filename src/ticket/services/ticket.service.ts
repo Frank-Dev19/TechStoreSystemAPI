@@ -24,6 +24,7 @@ type FindAllTicketsQuery = {
   businessPartnerId?: number | string;
   itemStatus?: string;
   withDeleted?: string;
+  includeItems?: string | boolean;
   from?: string;
   to?: string;
 };
@@ -82,12 +83,11 @@ export class TicketService {
 
         const savedTicket = await this.ticketRepository.save(ticket);
 
-        // Auto-transition STANDARD_SERVICE items to DIAGNOSED
-        for (const item of savedTicket.items ?? []) {
-          if (item.serviceType === 'STANDARD_SERVICE' && item.status === TicketItemStatus.ASSIGNED) {
-            await this.ticketItemService.changeStatus(item.id, TicketItemStatus.DIAGNOSED);
-          }
-        }
+        await this.ticketItemService.notifyTechnicianAssignmentsForTicket(
+          savedTicket.code,
+          items,
+          savedTicket.contactPhone ?? partner.phone ?? null,
+        );
 
         return savedTicket;
       } catch (error) {
@@ -116,6 +116,7 @@ export class TicketService {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const includeDeleted = query.withDeleted === 'true';
+    const includeItems = query.includeItems === true || query.includeItems === 'true';
 
     const statuses = this.parseEnumList<TicketStatus>(query.status, TicketStatus, 'status');
     const priorities = this.parseEnumList<TicketPriority>(query.priority, TicketPriority, 'priority');
@@ -125,15 +126,21 @@ export class TicketService {
       'itemStatus',
     );
 
-    const qb = this.ticketRepository
-      .createQueryBuilder('ticket')
-      .leftJoinAndSelect(
-        'ticket.items',
-        'item',
-        includeDeleted ? undefined : 'item.deletedAt IS NULL',
-      )
-      .leftJoinAndSelect('item.assignedTechnician', 'assignedTechnician')
-      .leftJoinAndSelect('item.assignedSupervisor', 'assignedSupervisor');
+    const qb = this.ticketRepository.createQueryBuilder('ticket');
+
+    const searchTerm = query.search?.trim();
+    const shouldJoinItems = includeItems || itemStatuses?.length || !!searchTerm;
+    const itemJoinCondition = includeDeleted ? undefined : 'item.deletedAt IS NULL';
+
+    if (shouldJoinItems) {
+      if (includeItems) {
+        qb.leftJoinAndSelect('ticket.items', 'item', itemJoinCondition)
+          .leftJoinAndSelect('item.assignedTechnician', 'assignedTechnician')
+          .leftJoinAndSelect('item.assignedSupervisor', 'assignedSupervisor');
+      } else {
+        qb.leftJoin('ticket.items', 'item', itemJoinCondition);
+      }
+    }
 
     if (includeDeleted) {
       qb.withDeleted();
@@ -160,7 +167,6 @@ export class TicketService {
       qb.andWhere('item.status IN (:...itemStatuses)', { itemStatuses });
     }
 
-    const searchTerm = query.search?.trim();
     if (searchTerm) {
       const normalizedSearch = `%${searchTerm.toLowerCase()}%`;
       qb.andWhere(
@@ -271,17 +277,6 @@ export class TicketService {
     this.ticketItemService.applyAggregates(ticket);
 
     const savedTicket = await this.ticketRepository.save(ticket);
-
-    // Auto-transition STANDARD_SERVICE items to DIAGNOSED
-    if (dto.items?.length) {
-      const newItemsStartIndex = (ticket.items?.length ?? 0) - dto.items.length;
-      const newlyAddedItems = savedTicket.items?.slice(newItemsStartIndex) ?? [];
-      for (const item of newlyAddedItems) {
-        if (item.serviceType === 'STANDARD_SERVICE' && item.status === TicketItemStatus.ASSIGNED) {
-          await this.ticketItemService.changeStatus(item.id, TicketItemStatus.DIAGNOSED);
-        }
-      }
-    }
 
     return savedTicket;
   }
@@ -484,7 +479,11 @@ export class TicketService {
   private async generateNextTicketCode(): Promise<string> {
     const now = new Date();
     const year = now.getFullYear();
-    const prefix = `ST-${year}-`;
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const prefix = `ST${year}${month}${day}${hours}${minutes}`;
 
     const lastTicket = await this.ticketRepository
       .createQueryBuilder('ticket')
@@ -498,8 +497,7 @@ export class TicketService {
       return `${prefix}0001`;
     }
 
-    const parts = lastTicket.code.split('-');
-    const numberPart = parts[2];
+    const numberPart = lastTicket.code.slice(prefix.length);
 
     const current = Number(numberPart);
     if (!Number.isFinite(current)) {

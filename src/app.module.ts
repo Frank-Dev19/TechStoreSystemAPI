@@ -40,7 +40,7 @@ import { QuotesModule } from './ticket/quotes/quotes.module';
           autoLoadEntities: true,
           logging: config.get<string>('DB_LOGGING') === 'true',
           // Opcional pero recomendable:
-          timezone: 'Z',
+          timezone: '-05:00',
           charset: 'utf8mb4',
         };
         if (isProd) {
@@ -86,6 +86,7 @@ import { QuotesModule } from './ticket/quotes/quotes.module';
     ServiceCatalogModule,
     TicketModule,
     QuotesModule,
+    PricingModule
   ],
 })
 export class AppModule { }

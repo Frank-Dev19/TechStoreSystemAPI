@@ -21,7 +21,7 @@ export class Ticket {
   id: number;
 
   @Column({ name: 'code', type: 'varchar', length: 50, unique: true })
-  code: string; // ST-2025-0001
+  code: string; // STYYYYMMDDHHmm#### (ej. ST2025122216240001)
 
   // ==================== ESTADOS Y PRIORIDAD ====================
   @Column({

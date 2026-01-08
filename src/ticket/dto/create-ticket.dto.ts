@@ -4,6 +4,7 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -30,9 +31,9 @@ export class CreateTicketDto {
   contactName?: string;
 
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   @MaxLength(20)
-  contactPhone?: string;
+  contactPhone: string;
 
   @IsString()
   @IsOptional()

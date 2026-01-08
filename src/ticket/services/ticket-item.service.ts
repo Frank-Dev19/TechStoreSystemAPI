@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DeepPartial, Brackets, In, Not, IsNull } from 'typeorm';
 import { TicketItem } from '../entities/ticket-item.entity';
 import { Ticket } from '../entities/ticket.entity';
+import { TechnicianMetrics } from '../entities/technician-metrics.entity';
 import { CreateTicketItemDto } from '../dto/create-ticket-item.dto';
-import { ServiceLocation, ServiceType, TicketItemStatus, TicketStatus } from '../enums';
+import { ServiceType, TicketItemStatus, TicketStatus } from '../enums';
 import { canTransitionTicketItem } from '../state-machines/ticket-item.state-machine';
 import { User } from '../../users/entities/user.entity';
 import {
@@ -31,9 +33,14 @@ export class TicketItemService {
     private readonly ticketItemRepository: Repository<TicketItem>,
     @InjectRepository(Ticket)
     private readonly ticketRepository: Repository<Ticket>,
+    @InjectRepository(TechnicianMetrics)
+    private readonly technicianMetricsRepository: Repository<TechnicianMetrics>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly configService: ConfigService,
   ) {}
+
+  private readonly logger = new Logger(TicketItemService.name);
 
   private readonly terminalItemStatuses = [
     TicketItemStatus.DELIVERED,
@@ -66,12 +73,6 @@ export class TicketItemService {
     technicianId?: number,
     supervisorId?: number,
   ): TicketItem {
-    const slaTargetDays = dto.slaTargetDays ?? 5;
-    const slaStartDate = now;
-    const slaDeadline = slaTargetDays
-      ? new Date(slaStartDate.getTime() + slaTargetDays * 24 * 60 * 60 * 1000)
-      : null;
-
     const partial: DeepPartial<TicketItem> = {
       itemNumber,
       equipmentType: dto.equipmentType,
@@ -81,14 +82,6 @@ export class TicketItemService {
       initialIssue: dto.initialIssue,
       accessories: dto.accessories ?? null,
       serviceType: dto.serviceType ?? ServiceType.DIAGNOSIS,
-      serviceLocation: dto.serviceLocation ?? ServiceLocation.ON_SITE,
-      serviceAddress: dto.serviceAddress ?? null,
-      serviceAddressReference: dto.serviceAddressReference ?? null,
-      scheduledServiceDate: dto.scheduledServiceDate ? new Date(dto.scheduledServiceDate) : null,
-      slaTargetDays,
-      slaStartDate,
-      slaDeadline,
-      requiresParts: dto.requiresParts ?? false,
       estimatedRepairHours: dto.estimatedRepairHours ?? null,
       receivedAt: now,
       assignedToTechnicianId: technicianId ?? null,
@@ -153,7 +146,6 @@ export class TicketItemService {
       RECEIVED: TicketItemStatus.ASSIGNED,
       QUOTE_SENT: TicketItemStatus.SENT_TO_CLIENT,
       QUOTE_APPROVED: TicketItemStatus.CLIENT_APPROVED,
-      QUOTE_REJECTED: TicketItemStatus.CLIENT_REJECTED,
     };
     const normalizedStatusParam = query.status
       ?.split(',')
@@ -361,6 +353,11 @@ export class TicketItemService {
   async assignTechnician(itemId: number, technicianId: number): Promise<TicketItem> {
     const item = await this.ticketItemRepository.findOne({
       where: { id: itemId },
+      relations: {
+        ticket: {
+          businessPartner: true,
+        },
+      },
     });
 
     if (!item) {
@@ -373,11 +370,13 @@ export class TicketItemService {
 
     await this.ensureTechnician(technicianId);
 
+    const previousTechnicianId = item.assignedToTechnicianId;
     item.assignedToTechnicianId = technicianId;
     item.assignedAt = new Date();
 
     await this.ticketItemRepository.save(item);
     await this.refreshAggregatesForTicket(item.ticketId);
+    await this.notifyTechnicianAssignmentForItem(item, technicianId, previousTechnicianId);
 
     return item;
   }
@@ -404,6 +403,137 @@ export class TicketItemService {
     await this.refreshAggregatesForTicket(item.ticketId);
 
     return item;
+  }
+
+  async notifyTechnicianAssignmentsForTicket(
+    ticketCode: string,
+    items: TicketItem[],
+    contactPhone: string | null,
+  ): Promise<void> {
+    if (!contactPhone) {
+      return;
+    }
+
+    const webhookUrl = this.getAssignmentWebhookUrl();
+    if (!webhookUrl) {
+      return;
+    }
+
+    const technicianIds = [
+      ...new Set(
+        items
+          .map((item) => item.assignedToTechnicianId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    ];
+
+    if (!technicianIds.length) {
+      return;
+    }
+
+    const technicians = await this.userRepository.find({
+      where: { id: In(technicianIds) },
+    });
+    const technicianMap = new Map(technicians.map((tech) => [tech.id, tech]));
+
+    await Promise.all(
+      items
+        .filter((item) => typeof item.assignedToTechnicianId === 'number')
+        .map(async (item) => {
+          const technician = technicianMap.get(item.assignedToTechnicianId!);
+          await this.sendTechnicianAssignmentWebhook(webhookUrl, {
+            phone: contactPhone,
+            code: this.buildTicketItemCode(ticketCode, item.itemNumber),
+            brand: item.brand ?? null,
+            model: item.model ?? null,
+            serialNumber: item.serialNumber ?? null,
+            technicianName: technician?.name ?? `Técnico #${item.assignedToTechnicianId}`,
+            assignmentType: 'assigned',
+          });
+        }),
+    );
+  }
+
+  private async notifyTechnicianAssignmentForItem(
+    item: TicketItem,
+    technicianId: number,
+    previousTechnicianId: number | null,
+  ): Promise<void> {
+    const webhookUrl = this.getAssignmentWebhookUrl();
+    if (!webhookUrl) {
+      return;
+    }
+
+    const contactPhone =
+      item.ticket?.contactPhone ?? item.ticket?.businessPartner?.phone ?? null;
+
+    if (!contactPhone) {
+      return;
+    }
+
+    const assignmentType =
+      previousTechnicianId && previousTechnicianId !== technicianId ? 'reassigned' : 'assigned';
+
+    if (previousTechnicianId === technicianId) {
+      return;
+    }
+
+    const technician = await this.userRepository.findOne({
+      where: { id: technicianId },
+    });
+
+    await this.sendTechnicianAssignmentWebhook(webhookUrl, {
+      phone: contactPhone,
+      code: this.buildTicketItemCode(item.ticket?.code ?? 'ST', item.itemNumber),
+      brand: item.brand ?? null,
+      model: item.model ?? null,
+      serialNumber: item.serialNumber ?? null,
+      technicianName: technician?.name ?? `Técnico #${technicianId}`,
+      assignmentType,
+    });
+  }
+
+  private getAssignmentWebhookUrl(): string | null {
+    const baseUrl = this.configService.get<string>('N8N_WEBHOOK_BASE_URL');
+    if (!baseUrl) {
+      return null;
+    }
+
+    return `${baseUrl.replace(/\/$/, '')}/assigned-technician-message`;
+  }
+
+  private buildTicketItemCode(ticketCode: string, itemNumber: number): string {
+    return `${ticketCode}${itemNumber}`;
+  }
+
+  private async sendTechnicianAssignmentWebhook(
+    url: string,
+    payload: {
+      phone: string;
+      code: string;
+      brand: string | null;
+      model: string | null;
+      serialNumber: string | null;
+      technicianName: string;
+      assignmentType: 'assigned' | 'reassigned';
+    },
+  ): Promise<void> {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.warn(
+          `N8N webhook responded with ${response.status}: ${body || 'sin detalle'}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`N8N webhook request failed: ${String(error)}`);
+    }
   }
 
   async softDelete(id: number) {
@@ -565,12 +695,12 @@ export class TicketItemService {
         item.quoteApprovedAt = now;
         item.lastCustomerResponseAt = now;
         break;
+      case TicketItemStatus.QUOTE_EXPIRED:
+        item.quoteRejectedAt = item.quoteRejectedAt ?? now;
+        break;
       case TicketItemStatus.CLIENT_REJECTED:
         item.quoteRejectedAt = now;
         item.lastCustomerResponseAt = now;
-        break;
-      case TicketItemStatus.AWAITING_PARTS:
-        item.partsRequestedAt = item.partsRequestedAt ?? now;
         break;
       case TicketItemStatus.IN_REPAIR:
         item.repairStartedAt = item.repairStartedAt ?? now;
@@ -581,9 +711,6 @@ export class TicketItemService {
           item.repairStartedAt,
           item.repairCompletedAt,
         );
-        break;
-      case TicketItemStatus.READY_FOR_DELIVERY:
-        item.readyForDeliveryAt = now;
         break;
       case TicketItemStatus.DELIVERED:
         item.deliveredAt = now;
@@ -596,6 +723,7 @@ export class TicketItemService {
     }
 
     await this.ticketItemRepository.save(item);
+    await this.updateTechnicianMetrics(item, newStatus);
     await this.refreshAggregatesForTicket(item.ticketId);
 
     return item;
@@ -734,5 +862,85 @@ export class TicketItemService {
     }
     const diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
     return Number(diff.toFixed(2));
+  }
+
+  private async updateTechnicianMetrics(item: TicketItem, newStatus: TicketItemStatus): Promise<void> {
+    const technicianId = item.assignedToTechnicianId;
+    if (!technicianId) {
+      return;
+    }
+
+    const metrics = await this.technicianMetricsRepository.findOne({
+      where: { technicianId },
+    });
+
+    const entity = metrics ?? this.technicianMetricsRepository.create({ technicianId });
+
+    if (newStatus === TicketItemStatus.DIAGNOSED) {
+      const hours = this.calculateBusinessHours(item.diagnosisStartedAt, item.diagnosisCompletedAt);
+      if (hours > 0) {
+        entity.totalDiagnosisHours = Number(entity.totalDiagnosisHours ?? 0) + hours;
+      }
+      entity.diagnosisCount = Number(entity.diagnosisCount ?? 0) + 1;
+    }
+
+    if (newStatus === TicketItemStatus.REPAIRED) {
+      const hours = this.calculateBusinessHours(item.repairStartedAt, item.repairCompletedAt);
+      if (hours > 0) {
+        entity.totalRepairHours = Number(entity.totalRepairHours ?? 0) + hours;
+      }
+      entity.repairCount = Number(entity.repairCount ?? 0) + 1;
+    }
+
+    await this.technicianMetricsRepository.save(entity);
+  }
+
+  private calculateBusinessHours(start?: Date | null, end?: Date | null): number {
+    if (!start || !end) {
+      return 0;
+    }
+    if (end <= start) {
+      return 0;
+    }
+
+    const workStartHour = 9;
+    const workEndHour = 21;
+
+    let totalMs = 0;
+    const current = new Date(start);
+
+    while (current < end) {
+      const dayStart = new Date(
+        current.getFullYear(),
+        current.getMonth(),
+        current.getDate(),
+        workStartHour,
+        0,
+        0,
+        0,
+      );
+      const dayEnd = new Date(
+        current.getFullYear(),
+        current.getMonth(),
+        current.getDate(),
+        workEndHour,
+        0,
+        0,
+        0,
+      );
+
+      const intervalStart = current > dayStart ? current : dayStart;
+      const intervalEnd = end < dayEnd ? end : dayEnd;
+
+      if (intervalEnd > intervalStart) {
+        totalMs += intervalEnd.getTime() - intervalStart.getTime();
+      }
+
+      current.setDate(current.getDate() + 1);
+      current.setHours(0, 0, 0, 0);
+    }
+
+    const hours = totalMs / (1000 * 60 * 60);
+    return Number(hours.toFixed(2));
   }
 }
