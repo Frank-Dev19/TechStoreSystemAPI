@@ -14,29 +14,49 @@ import {
 import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
 import { SaleItem } from './sale-item.entity';
 import { SalePayment } from './sale-payment.entity';
-import { type SaleStatus } from '../enums/sale-status.enum';
+import { SaleLineDiscount } from './sale-line-discount.entity';
+import { SaleComboItem } from './sale-combo-item.entity';
+import { SaleType } from '../enums/sale-type.enum';
+import { SaleStatus } from '../enums/sale-status.enum';
+import { DocumentType } from '../enums/document-type.enum';
+import { CashRegister } from './cash-register.entity';
+
+// export type SaleStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED' | 'REFUNDED';
+// export type SaleType = 'PRODUCT' | 'COMBO' | 'MIXED';
+// export type DocumentType = 'NOTA_PEDIDO' | 'BOLETA' | 'FACTURA';
 
 @Entity({ name: 'sales' })
 @Index(['companyId', 'series', 'number'], { unique: true })
 export class Sale {
-    // ANTES: @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
     @PrimaryGeneratedColumn()
     id: number;
 
-    // ANTES: bigint unsigned
     @Column({ name: 'company_id' })
     companyId: number;
 
-    // Cliente (BusinessPartner)
     @Column({ name: 'customer_id', type: 'bigint', unsigned: true })
     customerId: number;
 
-    @ManyToOne(() => BusinessPartner, { eager: false, nullable: false })
+    @ManyToOne(() => BusinessPartner, { eager: true, nullable: false })
     @JoinColumn({ name: 'customer_id' })
     customer: BusinessPartner;
 
-    @Column({ name: 'document_type', length: 30 })
-    documentType: string;
+    // Caja Registradora
+    @Column({ name: 'cash_register_id', nullable: true })
+    cashRegisterId?: number | null;
+
+    @ManyToOne(() => CashRegister, { nullable: true })
+    @JoinColumn({ name: 'cash_register_id' })
+    cashRegister?: CashRegister | null;
+
+
+    // Tipo de venta
+    @Column({ name: 'sale_type', length: 16, default: 'PRODUCT' })
+    saleType: SaleType;
+
+    // Comprobante
+    @Column({ name: 'document_type', length: 16 })
+    documentType: DocumentType;
 
     @Column({ name: 'series', length: 10 })
     series: string;
@@ -45,22 +65,30 @@ export class Sale {
     number: string;
 
     @Column({ name: 'issue_date', type: 'date' })
-    issueDate: string; // 'YYYY-MM-DD'
+    issueDate: string;
 
     @Column({ name: 'due_date', type: 'date', nullable: true })
     dueDate?: string | null;
 
-    @Column({ name: 'currency', length: 3 })
-    currency: string; // 'PEN' | 'USD' | etc.
+    // Precios y descuentos
+    @Column({ name: 'price_list_code', length: 32, nullable: true })
+    priceListCode?: string;
 
     @Column({
-        name: 'exchange_rate',
-        type: 'decimal',
-        precision: 10,
-        scale: 4,
-        default: 1,
+        name: 'apply_auto_discounts',
+        type: 'boolean',
+        default: true,
     })
-    exchangeRate: number;
+    applyAutoDiscounts: boolean;
+
+    @Column({
+        name: 'base_subtotal',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    baseSubtotal: number;  // Subtotal ANTES de descuentos
 
     // Totales
     @Column({
@@ -71,6 +99,15 @@ export class Sale {
         default: 0,
     })
     subtotal: number;
+
+    @Column({
+        name: 'discount_total',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    discountTotal: number;
 
     @Column({
         name: 'tax_amount',
@@ -99,26 +136,21 @@ export class Sale {
     })
     taxRate: number;
 
+    // Estado
     @Column({ name: 'status', length: 16, default: 'DRAFT' })
     status: SaleStatus;
 
+    // Información adicional
     @Column({ name: 'observations', type: 'text', nullable: true })
     observations?: string | null;
 
-    @Column({
-        name: 'created_by',
-        type: 'varchar',
-        length: 100,
-        nullable: true,
-    })
+    @Column({ name: 'created_by', type: 'varchar', length: 100, nullable: true })
     createdBy?: string | null;
 
-    @Column({
-        name: 'cancelled_by',
-        type: 'varchar',
-        length: 100,
-        nullable: true,
-    })
+    @Column({ name: 'confirmed_by', type: 'varchar', length: 100, nullable: true })
+    confirmedBy?: string | null;
+
+    @Column({ name: 'cancelled_by', type: 'varchar', length: 100, nullable: true })
     cancelledBy?: string | null;
 
     @Column({ name: 'cancelled_reason', type: 'text', nullable: true })
@@ -136,9 +168,16 @@ export class Sale {
     @DeleteDateColumn({ name: 'deleted_at', type: 'datetime', nullable: true })
     deletedAt?: Date | null;
 
+    // Relaciones
     @OneToMany(() => SaleItem, (item) => item.sale, { cascade: true })
     items: SaleItem[];
 
     @OneToMany(() => SalePayment, (p) => p.sale, { cascade: true })
     payments: SalePayment[];
+
+    @OneToMany(() => SaleLineDiscount, (d) => d.sale, { cascade: true })
+    lineDiscounts: SaleLineDiscount[];
+
+    @OneToMany(() => SaleComboItem, (c) => c.sale, { cascade: true })
+    comboItems: SaleComboItem[];
 }

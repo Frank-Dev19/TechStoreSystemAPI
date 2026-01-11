@@ -1,35 +1,62 @@
 // src/sales/dto/filter-sales.dto.ts
-import { IsOptional, IsString, IsNumber, IsInt } from 'class-validator';
+import {
+    IsDateString,
+    IsEnum,
+    IsInt,
+    IsOptional,
+    IsString,
+    Min,
+    Max
+} from 'class-validator';
+import { Type } from 'class-transformer'; // ✅ Importar Type
+import { SaleStatus } from '../enums/sale-status.enum';
+import { DocumentType } from '../enums/document-type.enum';
+import { SaleType } from '../enums/sale-type.enum';
 
 export class FilterSalesDto {
-    @IsNumber()
+    @Type(() => Number) // ✅ Agregar transformación
+    @IsInt()
     companyId: number;
 
     @IsOptional()
+    @Type(() => Number) // ✅ Agregar transformación
     @IsInt()
     customerId?: number;
 
     @IsOptional()
-    @IsString()
-    status?: string; // 'DRAFT' | 'EMITTED' | 'CANCELLED'
+    @IsEnum(SaleStatus)
+    status?: SaleStatus;
 
     @IsOptional()
-    @IsString()
-    dateFrom?: string; // 'YYYY-MM-DD'
+    @IsEnum(DocumentType)
+    documentType?: DocumentType;
 
     @IsOptional()
-    @IsString()
-    dateTo?: string; // 'YYYY-MM-DD'
+    @IsEnum(SaleType)
+    saleType?: SaleType;
+
+    @IsOptional()
+    @IsDateString()
+    dateFrom?: string;
+
+    @IsOptional()
+    @IsDateString()
+    dateTo?: string;
 
     @IsOptional()
     @IsString()
     search?: string;
 
     @IsOptional()
+    @Type(() => Number) // ✅ Agregar transformación
     @IsInt()
-    page?: number;
+    @Min(1)
+    page?: number = 1;
 
     @IsOptional()
+    @Type(() => Number) // ✅ Agregar transformación
     @IsInt()
-    limit?: number;
+    @Min(1)
+    @Max(100)
+    limit?: number = 10;
 }

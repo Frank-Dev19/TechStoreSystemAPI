@@ -1,30 +1,98 @@
 // src/sales/dto/create-sale.dto.ts
 import {
-    IsArray,
     ArrayMinSize,
+    IsArray,
+    IsBoolean,
     IsDateString,
+    IsEnum,
+    IsInt,
     IsNotEmpty,
     IsNumber,
     IsOptional,
+    IsPositive,
     IsString,
     MaxLength,
+    Max,
     Min,
-    IsInt,
+    ValidateNested,
 } from 'class-validator';
-import { CreateSaleItemDto } from './create-sale-item.dto';
-import { CreateSalePaymentDto } from './create-sale-payment.dto';
+import { Type } from 'class-transformer';
+import { SaleType } from '../enums/sale-type.enum';
+import { DocumentType } from '../enums/document-type.enum';
+import { PaymentMethod } from '../enums/payment-method.enum';
+
+export class SaleItemDto {
+    @IsInt()
+    productId: number;
+
+    @IsOptional()
+    @IsInt()
+    lotId?: number | null;
+
+    @IsNumber()
+    @IsPositive()
+    quantity: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    baseUnitPrice?: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    finalUnitPrice?: number;
+
+    @IsOptional()
+    @IsArray()
+    @IsInt({ each: true })
+    serialIds?: number[];
+
+    @IsOptional()
+    @IsInt()
+    comboId?: number | null;
+}
+
+export class SalePaymentDto {
+    @IsEnum(PaymentMethod)
+    method: PaymentMethod;
+
+    @IsNumber()
+    @IsPositive()
+    amount: number;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    reference?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    bankName?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(50)
+    cardType?: string;
+
+    @IsOptional()
+    @IsDateString()
+    paymentDate?: string;
+}
 
 export class CreateSaleDto {
-    @IsNumber()
+    @IsInt()
     companyId: number;
 
-    @IsNumber()
+    @IsInt()
     customerId: number;
 
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(30)
-    documentType: string;
+    @IsEnum(SaleType)
+    saleType: SaleType;
+
+    @IsEnum(DocumentType)
+    documentType: DocumentType;
 
     @IsString()
     @IsNotEmpty()
@@ -43,20 +111,20 @@ export class CreateSaleDto {
     @IsDateString()
     dueDate?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    @MaxLength(3)
-    currency: string; // 'PEN', 'USD', etc.
+    @MaxLength(32)
+    priceListCode?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    applyAutoDiscounts?: boolean;
 
     @IsOptional()
     @IsNumber()
     @Min(0)
-    exchangeRate?: number;
-
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    taxRate?: number; // ej. 0.18
+    @Max(1)
+    taxRate?: number;
 
     @IsOptional()
     @IsString()
@@ -64,9 +132,13 @@ export class CreateSaleDto {
 
     @IsArray()
     @ArrayMinSize(1)
-    items: CreateSaleItemDto[];
+    @ValidateNested({ each: true })
+    @Type(() => SaleItemDto)
+    items: SaleItemDto[];
 
-    @IsOptional()
     @IsArray()
-    payments?: CreateSalePaymentDto[];
+    @ArrayMinSize(1)
+    @ValidateNested({ each: true })
+    @Type(() => SalePaymentDto)
+    payments: SalePaymentDto[];
 }
