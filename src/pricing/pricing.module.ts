@@ -65,6 +65,6 @@ import { ScheduleModule } from '@nestjs/schedule';
     // SimulationEngineService,
     PricingSimulationService
   ],
-  exports: [PricingEngineService],
+  exports: [PricingEngineService, PricingSimulationService, CombosService],
 })
 export class PricingModule { }
