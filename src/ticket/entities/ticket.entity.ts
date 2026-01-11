@@ -134,4 +134,8 @@ export class Ticket {
   // ==================== RELACIONES ====================
   @OneToMany(() => TicketItem, (item) => item.ticket, { cascade: true })
   items: TicketItem[];
+
+  pendingQuoteItemsCount?: number;
+  rejectedQuoteItemsCount?: number;
+  pendingDeliveryItemsCount?: number;
 }

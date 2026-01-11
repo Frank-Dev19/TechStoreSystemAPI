@@ -182,6 +182,48 @@ export class TicketService {
       ).setParameter('search', normalizedSearch);
     }
 
+    qb.loadRelationCountAndMap(
+      'ticket.pendingQuoteItemsCount',
+      'ticket.items',
+      'pendingItems',
+      (countQb) => {
+        if (!includeDeleted) {
+          countQb.andWhere('pendingItems.deletedAt IS NULL');
+        }
+        return countQb.andWhere('pendingItems.status = :pendingStatus', {
+          pendingStatus: TicketItemStatus.DIAGNOSED,
+        });
+      },
+    );
+
+    qb.loadRelationCountAndMap(
+      'ticket.rejectedQuoteItemsCount',
+      'ticket.items',
+      'rejectedItems',
+      (countQb) => {
+        if (!includeDeleted) {
+          countQb.andWhere('rejectedItems.deletedAt IS NULL');
+        }
+        return countQb.andWhere('rejectedItems.status IN (:...rejectedStatuses)', {
+          rejectedStatuses: [TicketItemStatus.SUPERVISOR_REJECTED, TicketItemStatus.CLIENT_REJECTED],
+        });
+      },
+    );
+
+    qb.loadRelationCountAndMap(
+      'ticket.pendingDeliveryItemsCount',
+      'ticket.items',
+      'deliveryItems',
+      (countQb) => {
+        if (!includeDeleted) {
+          countQb.andWhere('deliveryItems.deletedAt IS NULL');
+        }
+        return countQb.andWhere('deliveryItems.status = :deliveryStatus', {
+          deliveryStatus: TicketItemStatus.REPAIRED,
+        });
+      },
+    );
+
     const fromDate = this.parseDate(query.from, 'from');
     if (fromDate) {
       qb.andWhere('ticket.createdAt >= :from', { from: fromDate });

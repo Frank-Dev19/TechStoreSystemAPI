@@ -5,8 +5,10 @@ import { Repository, DeepPartial, Brackets, In, Not, IsNull } from 'typeorm';
 import { TicketItem } from '../entities/ticket-item.entity';
 import { Ticket } from '../entities/ticket.entity';
 import { TechnicianMetrics } from '../entities/technician-metrics.entity';
+import { TicketItemCycle } from '../entities/ticket-item-cycle.entity';
+import { TicketItemEvent } from '../entities/ticket-item-event.entity';
 import { CreateTicketItemDto } from '../dto/create-ticket-item.dto';
-import { ServiceType, TicketItemStatus, TicketStatus } from '../enums';
+import { ServiceType, TicketItemCyclePhase, TicketItemStatus, TicketStatus } from '../enums';
 import { canTransitionTicketItem } from '../state-machines/ticket-item.state-machine';
 import { User } from '../../users/entities/user.entity';
 import {
@@ -35,6 +37,10 @@ export class TicketItemService {
     private readonly ticketRepository: Repository<Ticket>,
     @InjectRepository(TechnicianMetrics)
     private readonly technicianMetricsRepository: Repository<TechnicianMetrics>,
+    @InjectRepository(TicketItemCycle)
+    private readonly ticketItemCycleRepository: Repository<TicketItemCycle>,
+    @InjectRepository(TicketItemEvent)
+    private readonly ticketItemEventRepository: Repository<TicketItemEvent>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly configService: ConfigService,
@@ -615,7 +621,12 @@ export class TicketItemService {
     return { ok: true, message: `${idsToRestore.length} ticket items restored successfully` };
   }
 
-  async changeStatus(itemId: number, newStatus: TicketItemStatus) {
+  async changeStatus(
+    itemId: number,
+    newStatus: TicketItemStatus,
+    actorId?: number,
+    reason?: string,
+  ) {
     const item = await this.ticketItemRepository.findOne({
       where: { id: itemId },
       withDeleted: true,
@@ -659,22 +670,22 @@ export class TicketItemService {
       }
     }
 
+    const previousStatus = item.status;
     item.status = newStatus;
     const now = new Date();
+
+    await this.handleCycleTransition(item, previousStatus, newStatus, now, reason);
 
     switch (newStatus) {
       case TicketItemStatus.ASSIGNED:
         item.assignedAt = now;
         break;
       case TicketItemStatus.IN_DIAGNOSIS:
-        item.diagnosisStartedAt = item.diagnosisStartedAt ?? now;
+        item.diagnosisStartedAt = now;
+        item.diagnosisCompletedAt = null;
         break;
       case TicketItemStatus.DIAGNOSED:
         item.diagnosisCompletedAt = now;
-        item.actualDiagnosisHours = this.calculateDurationHours(
-          item.diagnosisStartedAt,
-          item.diagnosisCompletedAt,
-        );
         break;
       case TicketItemStatus.QUOTED:
         item.quotedAt = now;
@@ -703,14 +714,11 @@ export class TicketItemService {
         item.lastCustomerResponseAt = now;
         break;
       case TicketItemStatus.IN_REPAIR:
-        item.repairStartedAt = item.repairStartedAt ?? now;
+        item.repairStartedAt = now;
+        item.repairCompletedAt = null;
         break;
       case TicketItemStatus.REPAIRED:
         item.repairCompletedAt = now;
-        item.actualRepairHours = this.calculateDurationHours(
-          item.repairStartedAt,
-          item.repairCompletedAt,
-        );
         break;
       case TicketItemStatus.DELIVERED:
         item.deliveredAt = now;
@@ -723,10 +731,200 @@ export class TicketItemService {
     }
 
     await this.ticketItemRepository.save(item);
-    await this.updateTechnicianMetrics(item, newStatus);
+    await this.createItemEvent(item.id, previousStatus, newStatus, actorId, reason);
     await this.refreshAggregatesForTicket(item.ticketId);
 
     return item;
+  }
+
+  async requestRediagnosis(itemId: number, reason: string, actorId?: number) {
+    if (!reason?.trim()) {
+      throw new BadRequestException('Reason is required to request a new diagnosis');
+    }
+
+    const item = await this.ticketItemRepository.findOne({
+      where: { id: itemId },
+      withDeleted: true,
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Ticket item with id ${itemId} not found`);
+    }
+
+    if (item.deletedAt) {
+      throw new BadRequestException(`Ticket item with id ${itemId} is deleted`);
+    }
+
+    if (item.status !== TicketItemStatus.IN_REPAIR) {
+      throw new BadRequestException(
+        `Ticket item ${itemId} must be IN_REPAIR to request a new diagnosis`,
+      );
+    }
+
+    if (item.serviceType !== ServiceType.DIAGNOSIS) {
+      throw new BadRequestException(
+        `Ticket item ${itemId} must be DIAGNOSIS to request a new diagnosis`,
+      );
+    }
+
+    return this.changeStatus(itemId, TicketItemStatus.IN_DIAGNOSIS, actorId, reason);
+  }
+
+  private async handleCycleTransition(
+    item: TicketItem,
+    previousStatus: TicketItemStatus,
+    newStatus: TicketItemStatus,
+    now: Date,
+    reason?: string,
+  ): Promise<void> {
+    if (newStatus === TicketItemStatus.IN_DIAGNOSIS) {
+      if (previousStatus === TicketItemStatus.IN_REPAIR) {
+        const closedRepair = await this.closeActiveCycle(item.id, TicketItemCyclePhase.REPAIR, now);
+        await this.applyCycleHours(item, TicketItemCyclePhase.REPAIR, closedRepair);
+      }
+      await this.createCycleIfMissing(item, TicketItemCyclePhase.DIAGNOSIS, now, reason);
+      return;
+    }
+
+    if (newStatus === TicketItemStatus.DIAGNOSED) {
+      const closedDiagnosis = await this.closeActiveCycle(item.id, TicketItemCyclePhase.DIAGNOSIS, now);
+      await this.applyCycleHours(item, TicketItemCyclePhase.DIAGNOSIS, closedDiagnosis);
+      return;
+    }
+
+    if (newStatus === TicketItemStatus.IN_REPAIR) {
+      await this.createCycleIfMissing(item, TicketItemCyclePhase.REPAIR, now);
+      return;
+    }
+
+    if (newStatus === TicketItemStatus.REPAIRED) {
+      const closedRepair = await this.closeActiveCycle(item.id, TicketItemCyclePhase.REPAIR, now);
+      await this.applyCycleHours(item, TicketItemCyclePhase.REPAIR, closedRepair);
+    }
+  }
+
+  private async createCycleIfMissing(
+    item: TicketItem,
+    phase: TicketItemCyclePhase,
+    now: Date,
+    reason?: string,
+  ): Promise<TicketItemCycle> {
+    const active = await this.ticketItemCycleRepository.findOne({
+      where: { ticketItemId: item.id, phase, endedAt: IsNull() },
+    });
+
+    if (active) {
+      return active;
+    }
+
+    const nextSequence = await this.getNextCycleSequence(item.id, phase);
+    const cycle = this.ticketItemCycleRepository.create({
+      ticketItemId: item.id,
+      phase,
+      sequenceNumber: nextSequence,
+      technicianId: item.assignedToTechnicianId ?? null,
+      startedAt: now,
+      reason: reason ?? null,
+    });
+
+    return this.ticketItemCycleRepository.save(cycle);
+  }
+
+  private async closeActiveCycle(
+    ticketItemId: number,
+    phase: TicketItemCyclePhase,
+    now: Date,
+  ): Promise<TicketItemCycle | null> {
+    const active = await this.ticketItemCycleRepository.findOne({
+      where: { ticketItemId, phase, endedAt: IsNull() },
+    });
+
+    if (!active) {
+      return null;
+    }
+
+    active.endedAt = now;
+    return this.ticketItemCycleRepository.save(active);
+  }
+
+  private async getNextCycleSequence(
+    ticketItemId: number,
+    phase: TicketItemCyclePhase,
+  ): Promise<number> {
+    const raw = await this.ticketItemCycleRepository
+      .createQueryBuilder('cycle')
+      .select('MAX(cycle.sequenceNumber)', 'max')
+      .where('cycle.ticketItemId = :ticketItemId', { ticketItemId })
+      .andWhere('cycle.phase = :phase', { phase })
+      .getRawOne<{ max: string | null } | undefined>();
+    const maxValue = raw?.max ?? null;
+    return (Number(maxValue) || 0) + 1;
+  }
+
+  private async applyCycleHours(
+    item: TicketItem,
+    phase: TicketItemCyclePhase,
+    cycle: TicketItemCycle | null,
+  ): Promise<void> {
+    if (!cycle?.startedAt || !cycle.endedAt) {
+      return;
+    }
+
+    const hours = this.calculateBusinessHours(cycle.startedAt, cycle.endedAt);
+    if (hours <= 0) {
+      return;
+    }
+
+    if (phase === TicketItemCyclePhase.DIAGNOSIS) {
+      item.actualDiagnosisHours = Number(item.actualDiagnosisHours ?? 0) + hours;
+    } else {
+      item.actualRepairHours = Number(item.actualRepairHours ?? 0) + hours;
+    }
+
+    await this.updateTechnicianMetricsForCycle(cycle.technicianId, phase, hours);
+  }
+
+  private async updateTechnicianMetricsForCycle(
+    technicianId: number | null,
+    phase: TicketItemCyclePhase,
+    hours: number,
+  ): Promise<void> {
+    if (!technicianId || hours <= 0) {
+      return;
+    }
+
+    const metrics = await this.technicianMetricsRepository.findOne({
+      where: { technicianId },
+    });
+
+    const entity = metrics ?? this.technicianMetricsRepository.create({ technicianId });
+
+    if (phase === TicketItemCyclePhase.DIAGNOSIS) {
+      entity.totalDiagnosisHours = Number(entity.totalDiagnosisHours ?? 0) + hours;
+      entity.diagnosisCount = Number(entity.diagnosisCount ?? 0) + 1;
+    } else {
+      entity.totalRepairHours = Number(entity.totalRepairHours ?? 0) + hours;
+      entity.repairCount = Number(entity.repairCount ?? 0) + 1;
+    }
+
+    await this.technicianMetricsRepository.save(entity);
+  }
+
+  private async createItemEvent(
+    ticketItemId: number,
+    fromStatus: TicketItemStatus,
+    toStatus: TicketItemStatus,
+    actorId?: number,
+    reason?: string,
+  ): Promise<void> {
+    const event = this.ticketItemEventRepository.create({
+      ticketItemId,
+      fromStatus,
+      toStatus,
+      actorId: actorId ?? null,
+      reason: reason ?? null,
+    });
+    await this.ticketItemEventRepository.save(event);
   }
 
   private async refreshAggregatesForTicket(ticketId?: number) {
@@ -854,45 +1052,6 @@ export class TicketItemService {
     }
 
     return values;
-  }
-
-  private calculateDurationHours(start?: Date | null, end?: Date | null): number | null {
-    if (!start || !end) {
-      return null;
-    }
-    const diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-    return Number(diff.toFixed(2));
-  }
-
-  private async updateTechnicianMetrics(item: TicketItem, newStatus: TicketItemStatus): Promise<void> {
-    const technicianId = item.assignedToTechnicianId;
-    if (!technicianId) {
-      return;
-    }
-
-    const metrics = await this.technicianMetricsRepository.findOne({
-      where: { technicianId },
-    });
-
-    const entity = metrics ?? this.technicianMetricsRepository.create({ technicianId });
-
-    if (newStatus === TicketItemStatus.DIAGNOSED) {
-      const hours = this.calculateBusinessHours(item.diagnosisStartedAt, item.diagnosisCompletedAt);
-      if (hours > 0) {
-        entity.totalDiagnosisHours = Number(entity.totalDiagnosisHours ?? 0) + hours;
-      }
-      entity.diagnosisCount = Number(entity.diagnosisCount ?? 0) + 1;
-    }
-
-    if (newStatus === TicketItemStatus.REPAIRED) {
-      const hours = this.calculateBusinessHours(item.repairStartedAt, item.repairCompletedAt);
-      if (hours > 0) {
-        entity.totalRepairHours = Number(entity.totalRepairHours ?? 0) + hours;
-      }
-      entity.repairCount = Number(entity.repairCount ?? 0) + 1;
-    }
-
-    await this.technicianMetricsRepository.save(entity);
   }
 
   private calculateBusinessHours(start?: Date | null, end?: Date | null): number {

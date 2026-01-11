@@ -95,7 +95,8 @@ export class QuotesService {
     }
 
     const [data, total] = await qb.getManyAndCount();
-    return { data, total, page, limit };
+    const normalized = data.map((quote) => this.normalizeQuoteStatus(quote));
+    return { data: normalized, total, page, limit };
   }
 
   async findOne(id: number, withDeleted = false) {
@@ -109,6 +110,21 @@ export class QuotesService {
       throw new NotFoundException(`Quote with id ${id} not found`);
     }
 
+    return this.normalizeQuoteStatus(quote);
+  }
+
+  private normalizeQuoteStatus(quote: Quote): Quote {
+    if (quote.clientApprovedAt) {
+      quote.status = QuoteStatus.CLIENT_APPROVED;
+      return quote;
+    }
+    if (quote.clientRejectedAt) {
+      quote.status = QuoteStatus.CLIENT_REJECTED;
+      return quote;
+    }
+    if (quote.sentToClientAt) {
+      quote.status = QuoteStatus.AWAITING_CLIENT_RESPONSE;
+    }
     return quote;
   }
 
@@ -781,6 +797,7 @@ export class QuotesService {
     if (notes) {
       quote.notes = notes;
     }
+    quote.status = QuoteStatus.AWAITING_CLIENT_RESPONSE;
 
     await this.quoteRepository.save(quote);
 
@@ -832,6 +849,7 @@ export class QuotesService {
 
     // Clear rejection fields if previously rejected
     quote.clientRejectedAt = null;
+    quote.status = QuoteStatus.CLIENT_APPROVED;
 
     await this.quoteRepository.save(quote);
 
@@ -876,6 +894,7 @@ export class QuotesService {
 
     // Clear approval fields if previously approved
     quote.clientApprovedAt = null;
+    quote.status = QuoteStatus.CLIENT_REJECTED;
 
     await this.quoteRepository.save(quote);
 
@@ -956,6 +975,12 @@ export class QuotesService {
         clientRejectedAt: null,
         clientNotes: null,
         sentToClientAt: null,
+        approvedBySupervisorId: null,
+        approvedBySupervisorAt: null,
+        rejectedBySupervisorId: null,
+        rejectedBySupervisorAt: null,
+        supervisorNotes: null,
+        updatedAt: new Date(),
         status: needsSupervisorApproval ? QuoteStatus.PENDING_SUPERVISOR_APPROVAL : QuoteStatus.CURRENT,
       };
 

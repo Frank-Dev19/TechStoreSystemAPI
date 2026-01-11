@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { TicketItem } from '../../entities/ticket-item.entity';
+import { TicketItemCycle } from '../../entities/ticket-item-cycle.entity';
 import { DiagnosisStatus } from '../diagnosis-status.enum';
 
 @Entity('ticket_item_diagnoses')
@@ -22,6 +23,13 @@ export class TicketItemDiagnosis {
 
   @Column({ name: 'ticket_item_id', type: 'bigint', unsigned: true })
   ticketItemId: number;
+
+  @ManyToOne(() => TicketItemCycle, { eager: false, nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'cycle_id' })
+  cycle: TicketItemCycle | null;
+
+  @Column({ name: 'cycle_id', type: 'bigint', unsigned: true, nullable: true })
+  cycleId: number | null;
 
   @Column({ name: 'sequence_number', type: 'int', unsigned: true, default: 1 })
   sequenceNumber: number;

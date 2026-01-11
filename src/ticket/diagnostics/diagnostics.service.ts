@@ -4,13 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { TicketItemDiagnosis } from './entities/ticket-item-diagnosis.entity';
 import { CreateDiagnosisDto } from './dto/create-diagnosis.dto';
 import { UpdateDiagnosisDto } from './dto/update-diagnosis.dto';
 import { TicketItem } from '../entities/ticket-item.entity';
+import { TicketItemCycle } from '../entities/ticket-item-cycle.entity';
 import { DiagnosisStatus } from './diagnosis-status.enum';
-import { TicketItemStatus } from '../enums';
+import { TicketItemCyclePhase, TicketItemStatus } from '../enums';
 import { TicketItemService } from '../services/ticket-item.service';
 
 type FindDiagnosisQuery = {
@@ -28,6 +29,8 @@ export class DiagnosticsService {
     private readonly diagnosisRepository: Repository<TicketItemDiagnosis>,
     @InjectRepository(TicketItem)
     private readonly ticketItemRepository: Repository<TicketItem>,
+    @InjectRepository(TicketItemCycle)
+    private readonly ticketItemCycleRepository: Repository<TicketItemCycle>,
     private readonly ticketItemService: TicketItemService,
   ) {}
 
@@ -85,9 +88,18 @@ export class DiagnosticsService {
 
     const diagnosis = await this.diagnosisRepository.manager.transaction(async (manager) => {
       const repo = manager.getRepository(TicketItemDiagnosis);
+      const cycleRepo = manager.getRepository(TicketItemCycle);
       const nextSequence =
         dto.sequenceNumber ??
         (await this.resolveNextSequence(repo, dto.ticketItemId));
+
+      const activeCycle = await cycleRepo.findOne({
+        where: {
+          ticketItemId: dto.ticketItemId,
+          phase: TicketItemCyclePhase.DIAGNOSIS,
+          endedAt: IsNull(),
+        },
+      });
 
       await repo
         .createQueryBuilder()
@@ -99,6 +111,7 @@ export class DiagnosticsService {
 
       const entity = repo.create({
         ticketItemId: dto.ticketItemId,
+        cycleId: activeCycle?.id ?? null,
         sequenceNumber: nextSequence,
         status: DiagnosisStatus.CURRENT,
         summary: dto.summary,

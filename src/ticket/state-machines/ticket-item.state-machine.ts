@@ -93,6 +93,7 @@ export const ticketItemStateMachine: TransitionMap = {
   [TicketItemStatus.IN_REPAIR]: [
     TicketItemStatus.AWAITING_PARTS,   // Si necesita más repuestos
     TicketItemStatus.REPAIRED,
+    TicketItemStatus.IN_DIAGNOSIS,     // Si necesita nuevo diagnóstico
     TicketItemStatus.QUOTED,           // Si aparece nuevo daño (nueva cotización)
     TicketItemStatus.CANCELLED,
   ],

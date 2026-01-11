@@ -14,6 +14,7 @@ import { TicketItemService } from '../services/ticket-item.service';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
 import { AssignTechnicianDto } from '../dto/assign-technician.dto';
 import { AssignSupervisorDto } from '../dto/assign-supervisor.dto';
+import { RequestRediagnosisDto } from '../dto/request-rediagnosis.dto';
 import { TicketItemStatus } from '../enums';
 import { CurrentUser } from '../../rbac/decorators/current-user.decorator';
 import { JwtAccessGuard } from '../../auth/guards/jwt-access.guard';
@@ -95,7 +96,18 @@ export class TicketItemController {
   changeStatus(
     @Param('itemId', ParseIntPipe) itemId: number,
     @Param('status') status: TicketItemStatus,
+    @CurrentUser() userId?: number,
   ) {
-    return this.ticketItemService.changeStatus(itemId, status);
+    return this.ticketItemService.changeStatus(itemId, status, userId);
+  }
+
+  @Permissions('ticket-item.update-status')
+  @Patch(':itemId/request-rediagnosis')
+  requestRediagnosis(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: RequestRediagnosisDto,
+    @CurrentUser() userId?: number,
+  ) {
+    return this.ticketItemService.requestRediagnosis(itemId, dto.reason, userId);
   }
 }
