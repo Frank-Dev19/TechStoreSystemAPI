@@ -50,7 +50,7 @@ import { CountDifferenceSummary } from './entities/count-difference-summary.enti
         CatalogsService, MovementsService, KardexService,
         StockService, LockService, CountsService, LotsService, SerialsService,
     ],
-    exports: [TypeOrmModule]
+    exports: [TypeOrmModule, MovementsService, StockService,]
 
 })
 export class InventoryModule { }
