@@ -38,6 +38,18 @@ export class CashFlowController {
         );
     }
 
+    // Admin: list all registers
+    @Get('registers')
+    getRegisters(@Query('companyId') companyId: string) {
+        return this.cashFlowService.getAllRegisters(parseInt(companyId));
+    }
+
+    // Admin: get currently open register
+    @Get('register/open-current')
+    getOpenRegister(@Query('companyId') companyId: string) {
+        return this.cashFlowService.getOpenRegister(parseInt(companyId));
+    }
+
     // @Permissions('cashflow.manage')
     @Post('register/open')
     openCashRegister(

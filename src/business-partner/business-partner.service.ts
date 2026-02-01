@@ -145,6 +145,32 @@ export class BusinessPartnerService {
     };
   }
 
+  async findByDocument(documentNumber: string, companyId?: number) {
+    if (!documentNumber?.trim()) {
+      throw new BadRequestException('Document number is required');
+    }
+
+    const where: any = { 
+      documentNumber: documentNumber.trim(),
+      deletedAt: IsNull()
+    };
+
+    if (companyId) {
+      where.companyId = Number(companyId);
+    }
+
+    const bp = await this.businessPartnerRepository.findOne({ 
+      where,
+      order: { createdAt: 'DESC' } // El más reciente si hay múltiples
+    });
+
+    if (!bp) {
+      throw new NotFoundException(`Business partner with document number ${documentNumber} not found`);
+    }
+
+    return bp;
+  }
+
   async findOne(id: number) {
     const bp = await this.businessPartnerRepository.findOne({ where: { id } });
     if (!bp) throw new NotFoundException(`Business partner with id ${id} not found`);

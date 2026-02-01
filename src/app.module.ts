@@ -89,7 +89,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     ServiceCatalogModule,
     TicketModule,
     QuotesModule,
-    PricingModule
+    PricingModule,
+    SalesModule,
   ],
 })
 export class AppModule { }

@@ -28,6 +28,12 @@ export class BusinessPartnerController {
   }
 
   @Permissions('business-partner.read')
+  @Get('search/:documentNumber')
+  findByDocument(@Param('documentNumber') documentNumber: string, @Query('companyId') companyId: number) {
+    return this.businessPartnerService.findByDocument(documentNumber, companyId);
+  }
+
+  @Permissions('business-partner.read')
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.businessPartnerService.findOne(+id);

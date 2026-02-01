@@ -40,6 +40,21 @@ export class CashFlowService {
         return register;
     }
 
+    // Admin: list all registers for a company
+    async getAllRegisters(companyId: number) {
+        return this.cashRegisterRepo.find({
+            where: { companyId },
+            relations: ['transactions'],
+            order: { createdAt: 'DESC' },
+        });
+    }
+
+    // Admin: get the currently open register for a company
+    async getOpenRegister(companyId: number) {
+        const register = await this.cashRegisterRepo.findOne({ where: { companyId, status: 'OPEN' } });
+        return register ?? null;
+    }
+
     async openCashRegister(
         companyId: number,
         code: string,
