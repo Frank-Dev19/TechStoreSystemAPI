@@ -20,6 +20,7 @@ export interface ProductPriceResult {
     priceListCode: string;
     currency: string;
     qty: number;
+    minQty: number;
     baseUnitPrice: number;
     finalUnitPrice: number;
     autoAppliedDiscounts: DiscountRule[];
@@ -31,6 +32,7 @@ export interface BestPriceOption {
     priceListCode: string;
     currency: string;
     qty: number;
+    minQty: number;
     baseUnitPrice: number;
     finalUnitPrice: number;
     autoAppliedDiscounts: DiscountRule[];
@@ -279,6 +281,7 @@ export class PricingEngineService {
             priceListCode: pl.code,
             currency: row.currencyCode,
             qty: query.qty,
+            minQty: row.minQty,
             baseUnitPrice: basePrice,
             finalUnitPrice: finalPrice,
             autoAppliedDiscounts: autoApplied,
@@ -339,6 +342,7 @@ export class PricingEngineService {
                     priceListCode: r.priceListCode,
                     currency: r.currency,
                     qty: r.qty,
+                    minQty: r.minQty,
                     baseUnitPrice: r.baseUnitPrice,
                     finalUnitPrice: r.finalUnitPrice,
                     autoAppliedDiscounts: r.autoAppliedDiscounts,

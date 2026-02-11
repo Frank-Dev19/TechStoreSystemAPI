@@ -27,6 +27,7 @@ import { SimulateSaleDto } from '../dto/simulate-sale.dto';
 import { SalesPricingService } from './sales-pricing.service';
 import { SalesInventoryService } from './sales-inventory.service';
 import { CashFlowService } from './cash-flow.service';
+import { PricingEngineService } from 'src/pricing/services/pricing-engine.service';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -66,6 +67,7 @@ export class SalesService {
     private readonly salesPricing: SalesPricingService,
     private readonly salesInventory: SalesInventoryService,
     private readonly cashFlowService: CashFlowService,
+    private readonly pricingEngine: PricingEngineService,
   ) { }
 
   // =========================
@@ -187,13 +189,41 @@ export class SalesService {
       throw new BadRequestException('Cliente no encontrado o no es cliente activo');
     }
 
-    // Simular para validar
+    // Si no se especifica priceListCode, determinarlo automáticamente
+    let finalPriceListCode = createSaleDto.priceListCode;
+    let enhancedItems = createSaleDto.items;
+
+    if (!finalPriceListCode) {
+      // Para cada item, obtener el mejor precio disponible
+      enhancedItems = [];
+
+      for (const item of createSaleDto.items) {
+        // Llamar al pricing engine para obtener el mejor precio
+        const bestPriceResponse = await this.pricingEngine.getBestPriceForQty({
+          product_id: item.productId,
+          qty: item.quantity,
+          user_permissions: [] // Aquí podrían pasarse permisos si fuera necesario
+        });
+
+        // Usar el priceListCode del mejor precio encontrado
+        const itemPriceListCode = bestPriceResponse.applied.priceListCode;
+        finalPriceListCode = itemPriceListCode; // Para esta venta
+
+        enhancedItems.push({
+          ...item,
+          baseUnitPrice: bestPriceResponse.applied.baseUnitPrice,
+          finalUnitPrice: bestPriceResponse.applied.finalUnitPrice
+        });
+      }
+    }
+
+    // Simular para validar (usando enhanced items y priceListCode determinado)
     const simulation = await this.simulate({
       customerId: createSaleDto.customerId,
       saleType: createSaleDto.saleType,
-      priceListCode: createSaleDto.priceListCode,
+      priceListCode: finalPriceListCode,
       applyAutoDiscounts: createSaleDto.applyAutoDiscounts ?? true,
-      items: createSaleDto.items,
+      items: enhancedItems,
     });
 
     if (!simulation.validation.isValid) {
@@ -245,7 +275,7 @@ export class SalesService {
         number: createSaleDto.number,
         issueDate: createSaleDto.issueDate,
         dueDate: createSaleDto.dueDate,
-        priceListCode: createSaleDto.priceListCode,
+        priceListCode: finalPriceListCode,
         applyAutoDiscounts: createSaleDto.applyAutoDiscounts ?? true,
         subtotal: simulation.summary.subtotal,           // Subtotal NETO (baseSubtotal - discountTotal)
         discountTotal: simulation.summary.discountTotal, // Total de descuentos
