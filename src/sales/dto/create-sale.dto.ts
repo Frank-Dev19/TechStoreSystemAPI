@@ -94,15 +94,15 @@ export class CreateSaleDto {
     @IsEnum(DocumentType)
     documentType: DocumentType;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
     @MaxLength(10)
-    series: string;
+    series?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
     @MaxLength(15)
-    number: string;
+    number?: string;
 
     @IsDateString()
     issueDate: string;

@@ -16,6 +16,7 @@ import { SaleItem } from './sale-item.entity';
 import { SalePayment } from './sale-payment.entity';
 import { SaleLineDiscount } from './sale-line-discount.entity';
 import { SaleComboItem } from './sale-combo-item.entity';
+import { DocumentSeries } from './document-series.entity';
 import { SaleType } from '../enums/sale-type.enum';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -57,6 +58,13 @@ export class Sale {
     // Comprobante
     @Column({ name: 'document_type', length: 16 })
     documentType: DocumentType;
+
+    @Column({ name: 'document_series_id', nullable: true })
+    documentSeriesId?: number | null;
+
+    @ManyToOne(() => DocumentSeries, { nullable: true })
+    @JoinColumn({ name: 'document_series_id' })
+    documentSeries?: DocumentSeries | null;
 
     @Column({ name: 'series', length: 10 })
     series: string;

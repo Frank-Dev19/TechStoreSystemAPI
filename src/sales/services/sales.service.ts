@@ -27,6 +27,7 @@ import { SimulateSaleDto } from '../dto/simulate-sale.dto';
 import { SalesPricingService } from './sales-pricing.service';
 import { SalesInventoryService } from './sales-inventory.service';
 import { CashFlowService } from './cash-flow.service';
+import { DocumentSeriesService } from './document-series.service';
 import { PricingEngineService } from 'src/pricing/services/pricing-engine.service';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
@@ -67,6 +68,7 @@ export class SalesService {
     private readonly salesPricing: SalesPricingService,
     private readonly salesInventory: SalesInventoryService,
     private readonly cashFlowService: CashFlowService,
+    private readonly documentSeriesService: DocumentSeriesService,
     private readonly pricingEngine: PricingEngineService,
   ) { }
 
@@ -189,6 +191,27 @@ export class SalesService {
       throw new BadRequestException('Cliente no encontrado o no es cliente activo');
     }
 
+    // Obtener serie y número si no se especifican
+    let finalSeries = createSaleDto.series;
+    let finalNumber = createSaleDto.number;
+    let documentSeriesId: number | null = null;
+
+    if (!finalSeries || !finalNumber) {
+      const nextNumber = await this.documentSeriesService.getNextNumber(
+        createSaleDto.companyId,
+        createSaleDto.documentType
+      );
+      finalSeries = nextNumber.series;
+      finalNumber = nextNumber.number;
+
+      // Obtener el ID de la serie para la relación
+      const documentSeries = await this.documentSeriesService.getActiveByType(
+        createSaleDto.companyId,
+        createSaleDto.documentType
+      );
+      documentSeriesId = documentSeries?.id || null;
+    }
+
     // Si no se especifica priceListCode, determinarlo automáticamente
     let finalPriceListCode = createSaleDto.priceListCode;
     let enhancedItems = createSaleDto.items;
@@ -271,8 +294,9 @@ export class SalesService {
         cashRegisterId: cashRegister.id,
         saleType: createSaleDto.saleType as SaleType,
         documentType: createSaleDto.documentType as DocumentType,
-        series: createSaleDto.series,
-        number: createSaleDto.number,
+        documentSeriesId,
+        series: finalSeries,
+        number: finalNumber,
         issueDate: createSaleDto.issueDate,
         dueDate: createSaleDto.dueDate,
         priceListCode: finalPriceListCode,

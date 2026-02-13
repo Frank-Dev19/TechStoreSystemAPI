@@ -5,13 +5,16 @@ import { SalesService } from './services/sales.service';
 import { SalesPricingService } from './services/sales-pricing.service';
 import { SalesInventoryService } from './services/sales-inventory.service';
 import { CashFlowService } from './services/cash-flow.service';
+import { DocumentSeriesService } from './services/document-series.service';
 import { SalesController } from './controllers/sales.controller';
 import { CashFlowController } from './controllers/cash-flow.controller';
+import { DocumentSeriesController } from './controllers/document-series.controller';
 import { Sale } from './entities/sale.entity';
 import { SaleItem } from './entities/sale-item.entity';
 import { SalePayment } from './entities/sale-payment.entity';
 import { SaleLineDiscount } from './entities/sale-line-discount.entity';
 import { SaleComboItem } from './entities/sale-combo-item.entity';
+import { DocumentSeries } from './entities/document-series.entity';
 import { CashRegister } from './entities/cash-register.entity';
 import { CashFlowTransaction } from './entities/cash-flow-transaction.entity';
 import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
@@ -32,6 +35,7 @@ import { BusinessPartnerModule } from 'src/business-partner/business-partner.mod
       SalePayment,
       SaleLineDiscount,
       SaleComboItem,
+      DocumentSeries,
       CashRegister,
       CashFlowTransaction,
       BusinessPartner,
@@ -45,13 +49,14 @@ import { BusinessPartnerModule } from 'src/business-partner/business-partner.mod
     InventoryModule,
     BusinessPartnerModule,
   ],
-  controllers: [SalesController, CashFlowController],
+  controllers: [SalesController, CashFlowController, DocumentSeriesController],
   providers: [
     SalesService,
     SalesPricingService,
     SalesInventoryService,
     CashFlowService,
+    DocumentSeriesService,
   ],
-  exports: [SalesService, CashFlowService],
+  exports: [SalesService, CashFlowService, DocumentSeriesService],
 })
 export class SalesModule { }
