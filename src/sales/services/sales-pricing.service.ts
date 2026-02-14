@@ -210,13 +210,20 @@ export class SalesPricingService {
             })
         );
 
-        // Calcular totales CORRECTAMENTE
+// Calcular totales SIN IGV (el precio del producto YA incluye el IGV)
         const baseSubtotal = itemResults.reduce((sum, item) => sum + item.baseSubtotal, 0);
         const discountTotal = itemResults.reduce((sum, item) => sum + item.totalDiscount, 0);
         const subtotal = baseSubtotal - discountTotal;
-        const taxRate = 0.18;
-        const taxAmount = subtotal * taxRate;
-        const total = subtotal + taxAmount;
+        
+        // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
+        // const taxRate = 0.18;
+        // const taxAmount = subtotal * taxRate;
+        // const total = subtotal + taxAmount;
+        
+        // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
+        const taxRate = 0; // Sin cálculo de IGV adicional
+        const taxAmount = 0; // Sin cálculo de IGV adicional
+        const total = subtotal; // El total es el precio con IGV incluido
 
         return {
             items: itemResults,

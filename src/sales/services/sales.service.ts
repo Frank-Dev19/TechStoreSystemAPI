@@ -115,13 +115,20 @@ export class SalesService {
     const baseSubtotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.baseSubtotal, 0
     );
-    const discountTotal = simulationResults.reduce(
+const discountTotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.totalDiscount, 0
     );
     const subtotal = baseSubtotal - discountTotal;
-    const taxRate = 0.18;
-    const taxAmount = subtotal * taxRate;
-    const total = subtotal + taxAmount;
+    
+    // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
+    // const taxRate = 0.18;
+    // const taxAmount = subtotal * taxRate;
+    // const total = subtotal + taxAmount;
+    
+    // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
+    const taxRate = 0; // Sin cálculo de IGV adicional
+    const taxAmount = 0; // Sin cálculo de IGV adicional
+    const total = subtotal; // El total es el precio con IGV incluido
 
     // Verificar consistencia
     const finalSubtotal = simulationResults.reduce(
