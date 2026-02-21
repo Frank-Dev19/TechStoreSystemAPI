@@ -399,7 +399,7 @@ const discountTotal = simulationResults.reduce(
         }
       }
 
-      // Crear pagos
+// Crear pagos
       let currentBalance = Number(cashRegister.currentBalance);
 
       for (const paymentDto of createSaleDto.payments) {
@@ -415,11 +415,31 @@ const discountTotal = simulationResults.reduce(
 
         await queryRunner.manager.save(payment);
 
-        // Solo actualizar balance para efectivo
-        if (paymentDto.method === 'CASH') {
-          currentBalance += Number(paymentDto.amount);
-          cashRegister.currentBalance = currentBalance;
-          cashRegister.expectedBalance = Number(cashRegister.expectedBalance) + Number(paymentDto.amount);
+        // Actualizar balance según método de pago
+        const paymentAmount = Number(paymentDto.amount);
+        
+        switch (paymentDto.method) {
+          case 'CASH':
+            currentBalance += paymentAmount;
+            cashRegister.currentBalance = currentBalance;
+            cashRegister.expectedBalance = Number(cashRegister.expectedBalance) + paymentAmount;
+            cashRegister.totalCash = Number(cashRegister.totalCash || 0) + paymentAmount;
+            break;
+          case 'CARD':
+            cashRegister.totalCard = Number(cashRegister.totalCard || 0) + paymentAmount;
+            break;
+          case 'TRANSFER':
+            cashRegister.totalTransfer = Number(cashRegister.totalTransfer || 0) + paymentAmount;
+            break;
+          case 'YAPE':
+            cashRegister.totalYape = Number(cashRegister.totalYape || 0) + paymentAmount;
+            break;
+          case 'PLIN':
+            cashRegister.totalPlin = Number(cashRegister.totalPlin || 0) + paymentAmount;
+            break;
+          case 'CREDIT':
+            // Crédito no afecta el balance de la caja directamente
+            break;
         }
 
         // ✅ Crear transacción usando el queryRunner

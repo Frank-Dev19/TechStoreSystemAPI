@@ -88,9 +88,17 @@ export class CashFlowService {
             throw new BadRequestException('La caja ya está abierta');
         }
 
-        register.openingBalance = openDto.openingBalance;
+register.openingBalance = openDto.openingBalance;
         register.currentBalance = openDto.openingBalance;
         register.expectedBalance = openDto.openingBalance;
+        
+        // Inicializar totales por método de pago
+        register.totalCash = 0;
+        register.totalCard = 0;
+        register.totalTransfer = 0;
+        register.totalYape = 0;
+        register.totalPlin = 0;
+        
         register.status = 'OPEN';
         register.openedBy = user;
         register.openedAt = new Date();

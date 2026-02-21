@@ -46,7 +46,7 @@ export class CashRegister {
     })
     currentBalance: number;
 
-    @Column({
+@Column({
         name: 'expected_balance',
         type: 'decimal',
         precision: 16,
@@ -54,6 +54,51 @@ export class CashRegister {
         default: 0,
     })
     expectedBalance: number;
+
+    @Column({
+        name: 'total_cash',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    totalCash: number;
+
+    @Column({
+        name: 'total_card',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    totalCard: number;
+
+    @Column({
+        name: 'total_transfer',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    totalTransfer: number;
+
+    @Column({
+        name: 'total_yape',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    totalYape: number;
+
+    @Column({
+        name: 'total_plin',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+    })
+    totalPlin: number;
 
     @Column({ name: 'status', length: 16, default: 'CLOSED' })
     status: CashRegisterStatus;
