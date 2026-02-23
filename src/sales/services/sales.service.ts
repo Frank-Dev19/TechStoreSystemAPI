@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
+import { Repository, DataSource, In, IsNull } from 'typeorm';
 import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
@@ -15,6 +15,9 @@ import { SaleComboItem } from '../entities/sale-combo-item.entity';
 import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Combo } from 'src/pricing/entities/combo.entity';
+import { Lot } from 'src/inventory/entities/lot.entity';
+import { Serial } from 'src/inventory/entities/serial.entity';
+import { Stock } from 'src/inventory/entities/stock.entity';
 import { CashRegister } from '../entities/cash-register.entity';
 import { CashFlowTransaction } from '../entities/cash-flow-transaction.entity';
 
@@ -60,6 +63,12 @@ export class SalesService {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(Combo)
     private readonly comboRepo: Repository<Combo>,
+    @InjectRepository(Lot)
+    private readonly lotRepo: Repository<Lot>,
+    @InjectRepository(Serial)
+    private readonly serialRepo: Repository<Serial>,
+    @InjectRepository(Stock)
+    private readonly stockRepo: Repository<Stock>,
     @InjectRepository(CashRegister)
     private readonly cashRegisterRepo: Repository<CashRegister>,
     @InjectRepository(CashFlowTransaction)
@@ -115,16 +124,16 @@ export class SalesService {
     const baseSubtotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.baseSubtotal, 0
     );
-const discountTotal = simulationResults.reduce(
+    const discountTotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.totalDiscount, 0
     );
     const subtotal = baseSubtotal - discountTotal;
-    
+
     // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
     // const taxRate = 0.18;
     // const taxAmount = subtotal * taxRate;
     // const total = subtotal + taxAmount;
-    
+
     // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
     const taxRate = 0; // Sin cálculo de IGV adicional
     const taxAmount = 0; // Sin cálculo de IGV adicional
@@ -183,6 +192,189 @@ const discountTotal = simulationResults.reduce(
         messages: validationMessages,
       },
     };
+  }
+
+  // =========================
+  // FUNCIÓN AUXILIAR: Obtener lote y seriales automáticamente
+  // =========================
+  // Ahora retorna un array de lotes para manejar ventas de múltiples lotes
+  private async getAutoLotAndSerials(productId: number, quantity: number, existingLotId?: number | null, existingSerialIds?: number[]) {
+    const product = await this.productRepo.findOne({ where: { id: productId } });
+
+    if (!product) {
+      throw new BadRequestException(`Producto con ID ${productId} no encontrado`);
+    }
+
+    // Si ya se especificó lote y seriales específicos, usarlos
+    if (existingLotId && existingSerialIds && existingSerialIds.length > 0) {
+      return [{
+        lotId: existingLotId,
+        quantityFromThisLot: quantity,
+        serialIds: existingSerialIds
+      }];
+    }
+
+    const result: Array<{
+      lotId: number | null;
+      quantityFromThisLot: number;
+      serialIds: number[];
+    }> = [];
+
+    // Si el producto maneja vencimiento y no se envió lote específico
+    if (product.managesExpiration && !existingLotId) {
+      // Obtener todos los lotes con stock disponible, ordenados por fecha de vencimiento (FEFO)
+      const stockWithLots = await this.stockRepo
+        .createQueryBuilder('stock')
+        .innerJoin('stock.lot', 'lot')
+        .where('stock.productId = :productId', { productId })
+        .andWhere('stock.qtyOnHand > 0')
+        .orderBy('lot.expirationDate', 'ASC')
+        .addOrderBy('stock.id', 'ASC')
+        .getMany();
+
+      if (stockWithLots.length === 0) {
+        throw new BadRequestException(`No hay stock disponible para el producto con ID ${productId}`);
+      }
+
+      // Distribuir la cantidad entre múltiples lotes
+      let remainingQty = quantity;
+
+      for (const stock of stockWithLots) {
+        if (remainingQty <= 0) break;
+
+        const availableQty = Number(stock.qtyOnHand);
+        const qtyToTake = Math.min(availableQty, remainingQty);
+
+        // Obtener seriales de este lote específico si es producto serializado
+        let serialIds: number[] = [];
+
+        if (product.isSerialized) {
+          // Primero buscar seriales del lote actual
+          let serialsInThisLot = await this.serialRepo.find({
+            where: {
+              productId,
+              lotId: stock.lotId!,
+              status: 'IN_STOCK',
+            },
+            order: { id: 'ASC' },
+            take: qtyToTake,
+          });
+
+          // Si no hay suficientes en este lote, buscar en otros lotes
+          if (serialsInThisLot.length < qtyToTake) {
+            let remainingSerialsNeeded = qtyToTake - serialsInThisLot.length;
+
+            // Buscar en otros lotes con stock
+            const otherLots = stockWithLots.filter(s => s.lotId !== stock.lotId && Number(s.qtyOnHand) > 0);
+
+            for (const otherStock of otherLots) {
+              if (remainingSerialsNeeded <= 0) break;
+
+              const serialsInOtherLot = await this.serialRepo.find({
+                where: {
+                  productId,
+                  lotId: otherStock.lotId!,
+                  status: 'IN_STOCK',
+                },
+                order: { id: 'ASC' },
+                take: remainingSerialsNeeded,
+              });
+
+              serialsInThisLot.push(...serialsInOtherLot);
+              remainingSerialsNeeded -= serialsInOtherLot.length;
+            }
+          }
+
+          // Si aún no hay suficientes, buscar seriales sin lote
+          if (serialsInThisLot.length < qtyToTake) {
+            const remainingSerialsNeeded = qtyToTake - serialsInThisLot.length;
+
+            const serialsWithoutLot = await this.serialRepo.find({
+              where: {
+                productId,
+                lotId: IsNull(),
+                status: 'IN_STOCK',
+              },
+              order: { id: 'ASC' },
+              take: remainingSerialsNeeded,
+            });
+
+            serialsInThisLot.push(...serialsWithoutLot);
+          }
+
+          if (serialsInThisLot.length < qtyToTake) {
+            throw new BadRequestException(
+              `Stock insuficiente de seriales para producto ${product.name}. Disponibles: ${serialsInThisLot.length}, necesarios: ${qtyToTake}`
+            );
+          }
+
+          serialIds = serialsInThisLot.slice(0, qtyToTake).map(s => s.id);
+        }
+
+        result.push({
+          lotId: stock.lotId!,
+          quantityFromThisLot: qtyToTake,
+          serialIds
+        });
+
+        remainingQty -= qtyToTake;
+      }
+
+      if (remainingQty > 0) {
+        throw new BadRequestException(
+          `Stock total insuficiente. Disponible: ${quantity - remainingQty}, solicitado: ${quantity}`
+        );
+      }
+
+      return result;
+    }
+
+    // Si no maneja vencimiento pero es serializado (solo seriales, sin lote)
+    if (product.isSerialized && !product.managesExpiration) {
+      const availableSerials = await this.serialRepo.find({
+        where: {
+          productId,
+          status: 'IN_STOCK',
+        },
+        order: { id: 'ASC' },
+        take: quantity,
+      });
+
+      if (availableSerials.length < quantity) {
+        throw new BadRequestException(
+          `Stock insuficiente de seriales para producto ${product.name}. Disponibles: ${availableSerials.length}, solicitados: ${quantity}`
+        );
+      }
+
+      // Agrupar seriales por lote
+      const serialsByLot = new Map<number | null, number[]>();
+
+      for (const serial of availableSerials) {
+        const lotKey = serial.lotId ?? null;
+        if (!serialsByLot.has(lotKey)) {
+          serialsByLot.set(lotKey, []);
+        }
+        serialsByLot.get(lotKey)!.push(serial.id);
+      }
+
+      // Crear entrada por cada lote
+      for (const [lotId, serialIds] of serialsByLot) {
+        result.push({
+          lotId: lotId,
+          quantityFromThisLot: serialIds.length,
+          serialIds
+        });
+      }
+
+      return result;
+    }
+
+    // Producto simple sin lote ni seriales
+    return [{
+      lotId: null,
+      quantityFromThisLot: quantity,
+      serialIds: []
+    }];
   }
 
   // =========================
@@ -323,16 +515,55 @@ const discountTotal = simulationResults.reduce(
 
       // Crear items de venta
       const saleItems: SaleItem[] = [];
+
+      // Array para guardar lotId y serialIds automáticos para el movimiento de inventario
+      // Ahora es un array de arrays porque puede haber múltiples lotes por producto
+      const itemsWithAutoData: Array<{
+        productId: number;
+        quantity: number;
+        lotId: number | null;
+        serialIds: number[];
+      }> = [];
+
       for (let i = 0; i < createSaleDto.items.length; i++) {
         const itemDto = createSaleDto.items[i];
         const simulationResult = simulation.items[i];
 
+        // ✅ OBTENER LOTE Y SERIALES AUTOMÁTICAMENTE si no se enviaron
+        // Ahora retorna un array de lotes
+        const lotsData = await this.getAutoLotAndSerials(
+          itemDto.productId,
+          itemDto.quantity,
+          itemDto.lotId,
+          itemDto.serialIds
+        );
+
+// Guardar para usar en el movimiento de inventario (cada lote es un movimiento separado)
+        for (const lotData of lotsData) {
+          itemsWithAutoData.push({
+            productId: itemDto.productId,
+            quantity: lotData.quantityFromThisLot,
+            lotId: lotData.lotId,
+            serialIds: lotData.serialIds
+          });
+        }
+
+        // Usar el primer lote para el item de venta (para compatibilidad)
+        const firstLotData = lotsData[0];
+
+        // Recopilar TODOS los seriales de TODOS los lotes para la validación
+        const allSerialIds: number[] = [];
+        for (const lotData of lotsData) {
+          allSerialIds.push(...lotData.serialIds);
+        }
+
         // Validar stock específico (con lote/serial si aplica)
+        // Ahora pasamos todos los seriales de todos los lotes
         await this.salesInventory.validateStock({
           productId: itemDto.productId,
           quantity: itemDto.quantity,
-          lotId: itemDto.lotId,
-          serialIds: itemDto.serialIds,
+          lotId: firstLotData.lotId,
+          serialIds: allSerialIds,
         });
 
         // Calcular valores CORRECTOS para el item
@@ -342,14 +573,14 @@ const discountTotal = simulationResults.reduce(
         const saleItem = this.saleItemRepo.create({
           saleId: savedSale.id,
           productId: itemDto.productId,
-          lotId: itemDto.lotId,
+          lotId: firstLotData.lotId,
           baseUnitPrice: simulationResult.baseUnitPrice,
           finalUnitPrice: simulationResult.finalUnitPrice,
           quantity: itemDto.quantity,
           discountAmount: discountPerUnit,
           taxAmount: taxPerUnit,
           lineTotal: simulationResult.finalSubtotal,
-          serialCount: itemDto.serialIds?.length || 0,
+          serialCount: firstLotData.serialIds?.length || 0,
           isComboItem: !!itemDto.comboId,
           comboId: itemDto.comboId,
         });
@@ -399,7 +630,7 @@ const discountTotal = simulationResults.reduce(
         }
       }
 
-// Crear pagos
+      // Crear pagos
       let currentBalance = Number(cashRegister.currentBalance);
 
       for (const paymentDto of createSaleDto.payments) {
@@ -417,7 +648,7 @@ const discountTotal = simulationResults.reduce(
 
         // Actualizar balance según método de pago
         const paymentAmount = Number(paymentDto.amount);
-        
+
         switch (paymentDto.method) {
           case 'CASH':
             currentBalance += paymentAmount;
@@ -464,10 +695,10 @@ const discountTotal = simulationResults.reduce(
       // ✅ Guardar cambios en caja DENTRO de la transacción
       await queryRunner.manager.save(cashRegister);
 
-      // Registrar movimientos de inventario
+      // Registrar movimientos de inventario con lot y seriales automáticos
       await this.salesInventory.registerSaleMovement(
         savedSale.id,
-        createSaleDto.items,
+        itemsWithAutoData,
         user
       );
 
