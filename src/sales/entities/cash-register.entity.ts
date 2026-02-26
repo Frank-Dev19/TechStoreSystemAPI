@@ -11,8 +11,13 @@ import {
 import { CashFlowTransaction } from './cash-flow-transaction.entity';
 import { Sale } from './sale.entity';
 
-
 export type CashRegisterStatus = 'CLOSED' | 'OPEN' | 'COUNTING';
+
+// ✅ Transformer reutilizable para todos los campos decimal
+const decimalTransformer = {
+    to: (value: number) => value,
+    from: (value: string) => (value !== null && value !== undefined ? parseFloat(value) : null),
+};
 
 @Entity({ name: 'cash_registers' })
 export class CashRegister {
@@ -34,6 +39,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     openingBalance: number;
 
@@ -43,15 +49,17 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     currentBalance: number;
 
-@Column({
+    @Column({
         name: 'expected_balance',
         type: 'decimal',
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     expectedBalance: number;
 
@@ -61,6 +69,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     totalCash: number;
 
@@ -70,6 +79,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     totalCard: number;
 
@@ -79,6 +89,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     totalTransfer: number;
 
@@ -88,6 +99,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     totalYape: number;
 
@@ -97,6 +109,7 @@ export class CashRegister {
         precision: 16,
         scale: 2,
         default: 0,
+        transformer: decimalTransformer, // ✅
     })
     totalPlin: number;
 
