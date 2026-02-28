@@ -91,6 +91,7 @@ export class CashFlowController {
         @Query('dateFrom') dateFrom?: string,
         @Query('dateTo') dateTo?: string,
         @Query('type') type?: string,
+        @Query('subtype') subtype?: string,
         @Query('cashRegisterId') cashRegisterId?: string,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
@@ -99,9 +100,10 @@ export class CashFlowController {
             dateFrom,
             dateTo,
             type,
+            subtype,
             cashRegisterId: cashRegisterId ? parseInt(cashRegisterId) : undefined,
             page: page ? parseInt(page) : 1,
-            limit: limit ? parseInt(limit) : 50,
+            limit: limit ? parseInt(limit) : 20,
         });
     }
 
@@ -148,4 +150,21 @@ export class CashFlowController {
             date,
         );
     }
+
+    // @Permissions('cashflow.read')
+    @Get('metrics')
+    getCashFlowMetrics(
+        @Query('companyId') companyId: string,
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+        @Query('cashRegisterId') cashRegisterId?: string,
+    ) {
+        return this.cashFlowService.getCashFlowMetrics(parseInt(companyId), {
+            dateFrom,
+            dateTo,
+            cashRegisterId: cashRegisterId ? parseInt(cashRegisterId) : undefined,
+        });
+    }
 }
+
+

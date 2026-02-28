@@ -769,11 +769,14 @@ export class SalesService {
     }
 
     if (dateFrom) {
-      query.andWhere('s.issueDate >= :dateFrom', { dateFrom });
+      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
-      query.andWhere('s.issueDate <= :dateTo', { dateTo });
+      const dateToPlusOne = new Date(dateTo);
+      dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
+      const dateToStr = dateToPlusOne.toISOString().split('T')[0];
+      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     if (search) {
@@ -961,13 +964,16 @@ export class SalesService {
         'SUM(s.taxAmount) as totalTax',
       ])
       .where('s.companyId = :companyId', { companyId });
-
+    
     if (dateFrom) {
-      query.andWhere('s.issueDate >= :dateFrom', { dateFrom });
+      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
-      query.andWhere('s.issueDate <= :dateTo', { dateTo });
+      const dateToPlusOne = new Date(dateTo);
+      dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
+      const dateToStr = dateToPlusOne.toISOString().split('T')[0];
+      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     if (status) {
@@ -1020,11 +1026,14 @@ export class SalesService {
     }
 
     if (dateFrom) {
-      query.andWhere('s.issueDate >= :dateFrom', { dateFrom });
+      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
-      query.andWhere('s.issueDate <= :dateTo', { dateTo });
+      const dateToPlusOne = new Date(dateTo);
+      dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
+      const dateToStr = dateToPlusOne.toISOString().split('T')[0];
+      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     const results = await query.getRawMany();

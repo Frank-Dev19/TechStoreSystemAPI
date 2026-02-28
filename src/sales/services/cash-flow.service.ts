@@ -253,6 +253,7 @@ register.openingBalance = openDto.openingBalance;
         dateFrom?: string;
         dateTo?: string;
         type?: string;
+        subtype?: string;
         cashRegisterId?: number;
         page?: number;
         limit?: number;
@@ -268,11 +269,17 @@ register.openingBalance = openDto.openingBalance;
         }
 
         if (filters.dateTo) {
-            query.andWhere('t.recordedAt <= :dateTo', { dateTo: filters.dateTo });
+            const dateToPlusOne = new Date(filters.dateTo);
+            dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
+            query.andWhere('t.recordedAt < :dateTo', { dateTo: dateToPlusOne.toISOString().split('T')[0] });
         }
 
         if (filters.type) {
             query.andWhere('t.type = :type', { type: filters.type });
+        }
+
+        if (filters.subtype) {
+            query.andWhere('t.subtype = :subtype', { subtype: filters.subtype });
         }
 
         if (filters.cashRegisterId) {
@@ -282,7 +289,7 @@ register.openingBalance = openDto.openingBalance;
         }
 
         const page = filters.page || 1;
-        const limit = filters.limit || 50;
+        const limit = filters.limit || 20;
 
         const [data, total] = await query
             .orderBy('t.recordedAt', 'DESC')
@@ -410,5 +417,72 @@ register.openingBalance = openDto.openingBalance;
                 cashRegister: t.cashRegister?.name,
             })),
         };
+    }
+
+    // =========================
+    // MÉTRICAS DE FLUJO DE CAJA
+    // =========================
+    async getCashFlowMetrics(companyId: number, filters: {
+        dateFrom?: string;
+        dateTo?: string;
+        cashRegisterId?: number;
+    }) {
+        const query = this.transactionRepo
+            .createQueryBuilder('t')
+            .leftJoinAndSelect('t.cashRegister', 'cr')
+            .where('cr.companyId = :companyId', { companyId });
+
+        if (filters.dateFrom) {
+            query.andWhere('t.recordedAt >= :dateFrom', { dateFrom: filters.dateFrom });
+        }
+
+        if (filters.dateTo) {
+            const dateToPlusOne = new Date(filters.dateTo);
+            dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
+            query.andWhere('t.recordedAt < :dateTo', { dateTo: dateToPlusOne.toISOString().split('T')[0] });
+        }
+
+        if (filters.cashRegisterId) {
+            query.andWhere('t.cashRegisterId = :cashRegisterId', {
+                cashRegisterId: filters.cashRegisterId
+            });
+        }
+
+        const transactions = await query.orderBy('t.recordedAt', 'DESC').getMany();
+
+        const metrics = {
+            total: 0,
+            cash: 0,
+            card: 0,
+            transfer: 0,
+            yape: 0,
+            plin: 0,
+        };
+
+        for (const t of transactions) {
+            if (t.type === 'SALE' || t.type === 'INCOME') {
+                metrics.total += Number(t.amount);
+                
+                switch (t.subtype) {
+                    case 'CASH':
+                        metrics.cash += Number(t.amount);
+                        break;
+                    case 'CARD':
+                        metrics.card += Number(t.amount);
+                        break;
+                    case 'TRANSFER':
+                        metrics.transfer += Number(t.amount);
+                        break;
+                    case 'YAPE':
+                        metrics.yape += Number(t.amount);
+                        break;
+                    case 'PLIN':
+                        metrics.plin += Number(t.amount);
+                        break;
+                }
+            }
+        }
+
+        return metrics;
     }
 }
