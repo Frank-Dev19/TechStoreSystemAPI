@@ -21,6 +21,7 @@ type FindAllQuery = {
   status?: string;
   companyId?: number | string;
   documentNumber?: string;
+  isClient?: string;
 }
 
 @Injectable()
@@ -127,6 +128,14 @@ export class BusinessPartnerService {
       );
     } else {
       where.push(baseCondition);
+    }
+
+    // Filter by isClient if provided
+    if (query.isClient !== undefined) {
+      const isClientValue = query.isClient.toLowerCase() === 'true';
+      const conditions = where.map(w => ({ ...w, isClient: isClientValue }));
+      where.length = 0;
+      where.push(...conditions);
     }
     
     const [data, total] = await this.businessPartnerRepository.findAndCount({

@@ -18,6 +18,8 @@ import { Combo } from 'src/pricing/entities/combo.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
 import { Stock } from 'src/inventory/entities/stock.entity';
+import { Movement } from 'src/inventory/entities/movement.entity';
+import { MovementSerial } from 'src/inventory/entities/movement-serial.entity';
 import { CashRegister } from '../entities/cash-register.entity';
 import { CashFlowTransaction } from '../entities/cash-flow-transaction.entity';
 
@@ -73,6 +75,10 @@ export class SalesService {
     private readonly cashRegisterRepo: Repository<CashRegister>,
     @InjectRepository(CashFlowTransaction)
     private readonly transactionRepo: Repository<CashFlowTransaction>,
+    @InjectRepository(Movement)
+    private readonly movementRepo: Repository<Movement>,
+    @InjectRepository(MovementSerial)
+    private readonly movementSerialRepo: Repository<MovementSerial>,
 
     private readonly salesPricing: SalesPricingService,
     private readonly salesInventory: SalesInventoryService,
@@ -538,7 +544,7 @@ export class SalesService {
           itemDto.serialIds
         );
 
-// Guardar para usar en el movimiento de inventario (cada lote es un movimiento separado)
+        // Guardar para usar en el movimiento de inventario (cada lote es un movimiento separado)
         for (const lotData of lotsData) {
           itemsWithAutoData.push({
             productId: itemDto.productId,
@@ -726,11 +732,12 @@ export class SalesService {
       status,
       documentType,
       saleType,
+      paymentType,
       dateFrom,
       dateTo,
       search,
       page = 1,
-      limit = 10,
+      limit = 20,
     } = filterDto;
 
     const query = this.saleRepo
@@ -738,6 +745,7 @@ export class SalesService {
       .leftJoinAndSelect('s.customer', 'c')
       .leftJoinAndSelect('s.items', 'i')
       .leftJoinAndSelect('i.product', 'p')
+      .leftJoinAndSelect('s.payments', 'pay')
       .where('s.companyId = :companyId', { companyId });
 
     if (customerId) {
@@ -754,6 +762,10 @@ export class SalesService {
 
     if (saleType) {
       query.andWhere('s.saleType = :saleType', { saleType });
+    }
+
+    if (paymentType) {
+      query.andWhere('pay.method = :paymentType', { paymentType });
     }
 
     if (dateFrom) {
@@ -809,6 +821,47 @@ export class SalesService {
 
     if (!sale) {
       throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+    }
+
+    // Obtener los seriales de cada item de venta
+    // Buscar movimientos relacionados con esta venta
+    const movements = await this.movementRepo.find({
+      where: {
+        sourceDocType: 'SALE',
+        sourceDocId: String(id),
+      },
+      relations: ['serial', 'lot'],
+    });
+
+    // Agrupar seriales por productId y lotId
+    const serialsByItem = new Map<string, Array<{ serialId: number; serialCode: string; lotCode?: string; expirationDate?: string }>>();
+
+    for (const movement of movements) {
+      // Buscar los MovementSerial relacionados a este movimiento
+      const movementSerials = await this.movementSerialRepo.find({
+        where: { movementId: movement.id },
+        relations: ['serial'],
+      });
+
+      for (const ms of movementSerials) {
+        const key = `${movement.productId}`;
+        if (!serialsByItem.has(key)) {
+          serialsByItem.set(key, []);
+        }
+        serialsByItem.get(key)!.push({
+          serialId: ms.serialId,
+          serialCode: ms.serial.serialCode,
+          lotCode: movement.lot?.lotCode || undefined,
+          expirationDate: movement.lot?.expirationDate ? new Date(movement.lot.expirationDate).toISOString().split('T')[0] : undefined,
+        });
+      }
+    }
+
+    // Agregar los seriales a cada item
+    for (const item of sale.items) {
+      const key = `${item.productId}`;
+      const itemSerials = serialsByItem.get(key) || [];
+      (item as any).serials = itemSerials;
     }
 
     return sale;
@@ -888,9 +941,17 @@ export class SalesService {
   // =========================
   // OBTENER MÉTRICAS
   // =========================
-  async getMetrics(companyId: number, dateFrom?: string, dateTo?: string) {
+  async getMetrics(
+    companyId: number,
+    dateFrom?: string,
+    dateTo?: string,
+    status?: string,
+    documentType?: string,
+    paymentType?: string,
+  ) {
     const query = this.saleRepo
       .createQueryBuilder('s')
+      .leftJoinAndSelect('s.payments', 'pay')
       .select([
         'COUNT(*) as totalSales',
         'SUM(CASE WHEN s.status = "CONFIRMED" THEN 1 ELSE 0 END) as confirmedSales',
@@ -907,6 +968,18 @@ export class SalesService {
 
     if (dateTo) {
       query.andWhere('s.issueDate <= :dateTo', { dateTo });
+    }
+
+    if (status) {
+      query.andWhere('s.status = :status', { status });
+    }
+
+    if (documentType) {
+      query.andWhere('s.documentType = :documentType', { documentType });
+    }
+
+    if (paymentType) {
+      query.andWhere('pay.method = :paymentType', { paymentType });
     }
 
     const result = await query.getRawOne();

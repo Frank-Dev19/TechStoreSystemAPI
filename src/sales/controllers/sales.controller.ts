@@ -41,11 +41,17 @@ export class SalesController {
         @Query('companyId') companyId: string,
         @Query('dateFrom') dateFrom?: string,
         @Query('dateTo') dateTo?: string,
+        @Query('status') status?: string,
+        @Query('documentType') documentType?: string,
+        @Query('paymentType') paymentType?: string,
     ) {
         return this.salesService.getMetrics(
             parseInt(companyId),
             dateFrom,
             dateTo,
+            status,
+            documentType,
+            paymentType,
         );
     }
 

@@ -21,6 +21,8 @@ import { BusinessPartner } from 'src/business-partner/entities/business-partner.
 import { Product } from 'src/inventory/entities/product.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
+import { Movement } from 'src/inventory/entities/movement.entity';
+import { MovementSerial } from 'src/inventory/entities/movement-serial.entity';
 import { Combo } from 'src/pricing/entities/combo.entity';
 import { DiscountRule } from 'src/pricing/entities/discount-rule.entity';
 import { PricingModule } from 'src/pricing/pricing.module';
@@ -42,6 +44,8 @@ import { BusinessPartnerModule } from 'src/business-partner/business-partner.mod
       Product,
       Lot,
       Serial,
+      Movement,
+      MovementSerial,
       Combo,
       DiscountRule,
     ]),

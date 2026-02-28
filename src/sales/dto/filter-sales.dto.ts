@@ -12,6 +12,7 @@ import { Type } from 'class-transformer'; // ✅ Importar Type
 import { SaleStatus } from '../enums/sale-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { SaleType } from '../enums/sale-type.enum';
+import { PaymentMethod } from '../enums/payment-method.enum';
 
 export class FilterSalesDto {
     @Type(() => Number) // ✅ Agregar transformación
@@ -36,6 +37,10 @@ export class FilterSalesDto {
     saleType?: SaleType;
 
     @IsOptional()
+    @IsEnum(PaymentMethod)
+    paymentType?: PaymentMethod;
+
+    @IsOptional()
     @IsDateString()
     dateFrom?: string;
 
@@ -58,5 +63,5 @@ export class FilterSalesDto {
     @IsInt()
     @Min(1)
     @Max(100)
-    limit?: number = 10;
+    limit?: number = 50;
 }
