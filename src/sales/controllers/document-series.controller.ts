@@ -26,7 +26,7 @@ export class DocumentSeriesController {
     create(@Body() createDto: CreateDocumentSeriesDto, @Request() req: any) {
         // Agregar información del usuario si no viene en el DTO
         if (!createDto.createdBy) {
-            createDto.createdBy = req.user?.username || 'system';
+            createDto.createdBy = req.user?.name || 'system';
         }
         return this.documentSeriesService.create(createDto);
     }
@@ -86,7 +86,7 @@ export class DocumentSeriesController {
     ) {
         // Agregar información del usuario si no viene en el DTO
         if (!updateDto.updatedBy) {
-            updateDto.updatedBy = req.user?.username || 'system';
+            updateDto.updatedBy = req.user?.name || 'system';
         }
         return this.documentSeriesService.update(+id, updateDto);
     }

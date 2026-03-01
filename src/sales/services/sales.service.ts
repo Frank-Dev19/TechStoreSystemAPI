@@ -769,14 +769,14 @@ export class SalesService {
     }
 
     if (dateFrom) {
-      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
+      query.andWhere('DATE(s.createdAt) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
       const dateToPlusOne = new Date(dateTo);
       dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
       const dateToStr = dateToPlusOne.toISOString().split('T')[0];
-      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
+      query.andWhere('DATE(s.createdAt) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     if (search) {
@@ -966,14 +966,14 @@ export class SalesService {
       .where('s.companyId = :companyId', { companyId });
     
     if (dateFrom) {
-      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
+      query.andWhere('DATE(s.createdAt) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
       const dateToPlusOne = new Date(dateTo);
       dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
       const dateToStr = dateToPlusOne.toISOString().split('T')[0];
-      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
+      query.andWhere('DATE(s.createdAt) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     if (status) {
@@ -1026,14 +1026,14 @@ export class SalesService {
     }
 
     if (dateFrom) {
-      query.andWhere('DATE(s.issueDate) >= DATE(:dateFrom)', { dateFrom });
+      query.andWhere('DATE(s.createdAt) >= DATE(:dateFrom)', { dateFrom });
     }
 
     if (dateTo) {
       const dateToPlusOne = new Date(dateTo);
       dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
       const dateToStr = dateToPlusOne.toISOString().split('T')[0];
-      query.andWhere('DATE(s.issueDate) < DATE(:dateTo)', { dateTo: dateToStr });
+      query.andWhere('DATE(s.createdAt) < DATE(:dateTo)', { dateTo: dateToStr });
     }
 
     const results = await query.getRawMany();

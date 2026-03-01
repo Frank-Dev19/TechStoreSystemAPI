@@ -41,12 +41,25 @@ export class CashFlowService {
     }
 
     // Admin: list all registers for a company
-    async getAllRegisters(companyId: number) {
-        return this.cashRegisterRepo.find({
+    async getAllRegisters(companyId: number, pagination?: { page?: number; limit?: number }) {
+        const page = pagination?.page || 1;
+        const limit = pagination?.limit || 10;
+
+        const [data, total] = await this.cashRegisterRepo.findAndCount({
             where: { companyId },
             relations: ['transactions'],
             order: { createdAt: 'DESC' },
+            skip: (page - 1) * limit,
+            take: limit,
         });
+
+        return {
+            data,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        };
     }
 
     // Admin: get the currently open register for a company
@@ -86,6 +99,12 @@ export class CashFlowService {
 
         if (register.status === 'OPEN') {
             throw new BadRequestException('La caja ya está abierta');
+        }
+
+        if (register.status === 'CLOSED') {
+            throw new BadRequestException(
+                `La caja ${register.name} ya fue cerrada el ${register.closedAt ? new Date(register.closedAt).toLocaleDateString() : 'anteriormente'}. No se puede reopen una caja cerrada. Cree una nueva caja.`
+            );
         }
 
 register.openingBalance = openDto.openingBalance;

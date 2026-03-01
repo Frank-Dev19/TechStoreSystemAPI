@@ -87,7 +87,7 @@ export class SalesController {
     // @Permissions('sales.create')
     @Post()
     create(@Body() createSaleDto: CreateSaleDto, @Req() req: any) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
         return this.salesService.create(createSaleDto, user);
     }
 
@@ -98,7 +98,7 @@ export class SalesController {
         @Body() updateSaleDto: UpdateSaleDto,
         @Req() req: any,
     ) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
         return this.salesService.update(+id, updateSaleDto, user);
     }
 
@@ -109,7 +109,7 @@ export class SalesController {
         @Body() cancelDto: CancelSaleDto,
         @Req() req: any,
     ) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
         return this.salesService.cancel(+id, cancelDto, user);
     }
 }

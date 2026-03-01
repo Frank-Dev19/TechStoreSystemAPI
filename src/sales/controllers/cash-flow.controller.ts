@@ -40,8 +40,15 @@ export class CashFlowController {
 
     // Admin: list all registers
     @Get('registers')
-    getRegisters(@Query('companyId') companyId: string) {
-        return this.cashFlowService.getAllRegisters(parseInt(companyId));
+    getRegisters(
+        @Query('companyId') companyId: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        return this.cashFlowService.getAllRegisters(parseInt(companyId), {
+            page: page ? parseInt(page) : 1,
+            limit: limit ? parseInt(limit) : 10,
+        });
     }
 
     // Admin: get currently open register
@@ -58,7 +65,7 @@ export class CashFlowController {
         @Query('code') code: string,
         @Req() req: any,
     ) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
         return this.cashFlowService.openCashRegister(
             parseInt(companyId),
             code,
@@ -75,7 +82,7 @@ export class CashFlowController {
         @Query('code') code: string,
         @Req() req: any,
     ) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
         return this.cashFlowService.closeCashRegister(
             parseInt(companyId),
             code,
@@ -116,7 +123,7 @@ export class CashFlowController {
         @Query('cashRegisterId') cashRegisterId?: string,
 
     ) {
-        const user = req.user?.username || 'System';
+        const user = req.user?.name || 'System';
 
         // Obtener caja activa si no se especifica
         let registerId: number | undefined;
