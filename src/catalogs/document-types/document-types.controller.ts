@@ -33,7 +33,7 @@ export class DocumentTypesController {
     return this.documentTypesService.findOne(+id);
   }
 
-  @Permissions('document-type.bulk-restore')
+  @Permissions('document-type.restore')
   @Patch('bulk-restore')
   bulkRestore(@Body() bulkOperationsDto: BulkOperationsDto) {
     return this.documentTypesService.bulkRestore(bulkOperationsDto.ids);
@@ -45,7 +45,7 @@ export class DocumentTypesController {
     return this.documentTypesService.update(+id, updateDocumentTypeDto);
   }
 
-  @Permissions('document-type.bulk-delete')
+  @Permissions('document-type.delete')
   @Delete('bulk-delete')
   bulkSoftDelete(@Body() bulkOperationsDto: BulkOperationsDto) {
     return this.documentTypesService.bulkSoftDelete(bulkOperationsDto.ids);

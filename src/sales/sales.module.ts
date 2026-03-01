@@ -17,7 +17,7 @@ import { SaleComboItem } from './entities/sale-combo-item.entity';
 import { DocumentSeries } from './entities/document-series.entity';
 import { CashRegister } from './entities/cash-register.entity';
 import { CashFlowTransaction } from './entities/cash-flow-transaction.entity';
-import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
+import { Client } from 'src/clients/entities/client.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
@@ -27,7 +27,7 @@ import { Combo } from 'src/pricing/entities/combo.entity';
 import { DiscountRule } from 'src/pricing/entities/discount-rule.entity';
 import { PricingModule } from 'src/pricing/pricing.module';
 import { InventoryModule } from 'src/inventory/inventory.module';
-import { BusinessPartnerModule } from 'src/business-partner/business-partner.module';
+import { ClientModule } from 'src/clients/client.module';
 
 @Module({
   imports: [
@@ -40,7 +40,7 @@ import { BusinessPartnerModule } from 'src/business-partner/business-partner.mod
       DocumentSeries,
       CashRegister,
       CashFlowTransaction,
-      BusinessPartner,
+      Client,
       Product,
       Lot,
       Serial,
@@ -51,7 +51,7 @@ import { BusinessPartnerModule } from 'src/business-partner/business-partner.mod
     ]),
     PricingModule,
     InventoryModule,
-    BusinessPartnerModule,
+    ClientModule,
   ],
   controllers: [SalesController, CashFlowController, DocumentSeriesController],
   providers: [

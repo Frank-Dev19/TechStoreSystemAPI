@@ -7,7 +7,7 @@ import { TicketItem } from './entities/ticket-item.entity';
 import { TechnicianMetrics } from './entities/technician-metrics.entity';
 import { TicketItemCycle } from './entities/ticket-item-cycle.entity';
 import { TicketItemEvent } from './entities/ticket-item-event.entity';
-import { BusinessPartner } from '../business-partner/entities/business-partner.entity';
+import { Client } from '../clients/entities/client.entity';
 import { User } from '../users/entities/user.entity';
 import { TicketItemService } from './services/ticket-item.service';
 import { TicketItemController } from './controllers/ticket-item.controller';
@@ -21,7 +21,7 @@ import { TicketItemExpirationService } from './services/ticket-item-expiration.s
     TypeOrmModule.forFeature([
       Ticket,
       TicketItem,
-      BusinessPartner,
+      Client,
       User,
       TicketItemDiagnosis,
       TechnicianMetrics,

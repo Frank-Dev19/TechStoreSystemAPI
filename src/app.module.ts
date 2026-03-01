@@ -19,7 +19,7 @@ import { DocumentTypesModule } from './catalogs/document-types/document-types.mo
 import { BootstrapModule } from './bootstrap/bootstrap.module';
 import { UserPermissionsModule } from './users/user-permissions.module';
 import { MailerModule } from './mailer/mailer.module';
-import { BusinessPartnerModule } from './business-partner/business-partner.module';
+import { ClientModule } from './clients/client.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { PricingModule } from './pricing/pricing.module';
@@ -27,6 +27,7 @@ import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { TicketModule } from './ticket/ticket.module';
 import { QuotesModule } from './ticket/quotes/quotes.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { SupplierModule } from './suppliers/supplier.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -84,7 +85,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     MailerModule,
     UserPermissionsModule,
     DocumentTypesModule,
-    BusinessPartnerModule,
+    ClientModule,
+    SupplierModule,
     InventoryModule,
     ServiceCatalogModule,
     TicketModule,

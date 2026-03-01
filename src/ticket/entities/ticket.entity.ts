@@ -9,7 +9,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { BusinessPartner } from '../../business-partner/entities/business-partner.entity';
+import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
 import { TicketStatus, TicketPriority, PaymentStatus } from '../enums';
 import { TicketItem } from './ticket-item.entity';
@@ -39,12 +39,12 @@ export class Ticket {
   priority: TicketPriority;
 
   // ==================== RELACIONES CON PERSONAS ====================
-  @ManyToOne(() => BusinessPartner, { eager: false, nullable: false, onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'business_partner_id' })
-  businessPartner: BusinessPartner;
+  @ManyToOne(() => Client, { eager: false, nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'client_id' })
+  client: Client;
 
-  @Column({ name: 'business_partner_id', type: 'bigint', unsigned: true })
-  businessPartnerId: number;
+  @Column({ name: 'client_id', type: 'bigint', unsigned: true })
+  clientId: number;
 
   @ManyToOne(() => User, { eager: false, nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'created_by' })
