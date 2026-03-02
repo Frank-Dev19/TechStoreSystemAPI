@@ -9,6 +9,7 @@ import {
     Query,
     UseGuards,
     Req,
+    BadRequestException,
 } from '@nestjs/common';
 import { CashFlowService } from '../services/cash-flow.service';
 import { OpenCashRegisterDto } from '../dto/open-cash-register.dto';
@@ -116,7 +117,7 @@ export class CashFlowController {
 
     // @Permissions('cashflow.manage')
     @Post('transactions')
-    createTransaction(
+    async createTransaction(
         @Body() transactionDto: CashFlowTransactionDto,
         @Query('companyId') companyId: string,
         @Req() req: any,
@@ -129,17 +130,20 @@ export class CashFlowController {
         let registerId: number | undefined;
         if (cashRegisterId) {
             registerId = parseInt(cashRegisterId);
+        } else if (transactionDto.type === 'RETURN' || transactionDto.type === 'INCOME') {
+            // Para devoluciones e ingresos, obtener la caja abierta actual
+            const openRegister = await this.cashFlowService.getOpenRegister(parseInt(companyId));
+            if (!openRegister) {
+                throw new BadRequestException('No hay una caja abierta');
+            }
+            registerId = openRegister.id;
         }
-
-        // TODO: Obtener balance actual
-        const currentBalance = 0; // Implementar lógica para obtener balance
 
         return this.cashFlowService.registerTransaction({
             cashRegisterId: registerId,
             type: transactionDto.type,
             description: transactionDto.description,
             amount: transactionDto.amount,
-            balanceAfter: currentBalance + transactionDto.amount,
             recordedBy: user,
             reference: transactionDto.reference,
             observations: transactionDto.observations,

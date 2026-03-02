@@ -113,6 +113,16 @@ export class CashRegister {
     })
     totalPlin: number;
 
+    @Column({
+        name: 'total_returns',
+        type: 'decimal',
+        precision: 16,
+        scale: 2,
+        default: 0,
+        transformer: decimalTransformer,
+    })
+    totalReturns: number;
+
     @Column({ name: 'status', length: 16, default: 'CLOSED' })
     status: CashRegisterStatus;
 

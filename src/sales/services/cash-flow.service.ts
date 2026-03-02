@@ -107,17 +107,17 @@ export class CashFlowService {
             );
         }
 
-register.openingBalance = openDto.openingBalance;
+        register.openingBalance = openDto.openingBalance;
         register.currentBalance = openDto.openingBalance;
         register.expectedBalance = openDto.openingBalance;
-        
+
         // Inicializar totales por método de pago
         register.totalCash = 0;
         register.totalCard = 0;
         register.totalTransfer = 0;
         register.totalYape = 0;
         register.totalPlin = 0;
-        
+
         register.status = 'OPEN';
         register.openedBy = user;
         register.openedAt = new Date();
@@ -128,7 +128,7 @@ register.openingBalance = openDto.openingBalance;
         await this.registerTransaction({
             cashRegisterId: savedRegister.id,
             type: 'OPENING',
-            description: `Apertura de caja ${savedRegister.name}`,
+            description: `Apertura de ${savedRegister.name}`,
             amount: openDto.openingBalance,
             balanceAfter: savedRegister.currentBalance,
             recordedBy: user,
@@ -215,7 +215,7 @@ register.openingBalance = openDto.openingBalance;
         await this.registerTransaction({
             cashRegisterId: savedRegister.id,
             type: 'CLOSING',
-            description: `Cierre de caja ${savedRegister.name}`,
+            description: `Cierre de ${savedRegister.name}`,
             amount: 0,
             balanceAfter: savedRegister.currentBalance,
             recordedBy: user,
@@ -250,6 +250,34 @@ register.openingBalance = openDto.openingBalance;
         reference?: string;
         observations?: string;
     }) {
+        // Validar saldo suficiente para devoluciones
+        if (params.type === 'RETURN' && params.cashRegisterId) {
+            const box = await this.cashRegisterRepo.findOne({ where: { id: params.cashRegisterId } });
+            if (!box || box.status !== 'OPEN') {
+                throw new BadRequestException('La caja no está abierta');
+            }
+            if (Number(box.currentBalance) < params.amount) {
+                throw new BadRequestException(
+                    `No hay efectivo suficiente en la caja. Saldo actual: S/ ${Number(box.currentBalance).toFixed(2)}. Necesita: S/ ${params.amount.toFixed(2)}. Haga un ingreso primero.`
+                );
+            }
+            // Actualizar balance de la caja
+            box.currentBalance = Number(box.currentBalance) - params.amount;
+            box.totalReturns = Number(box.totalReturns || 0) + params.amount;
+            await this.cashRegisterRepo.save(box);
+            params.balanceAfter = box.currentBalance;
+        }
+
+        // Actualizar balance para ingresos
+        if (params.type === 'INCOME' && params.cashRegisterId) {
+            const box = await this.cashRegisterRepo.findOne({ where: { id: params.cashRegisterId } });
+            if (box && box.status === 'OPEN') {
+                box.currentBalance = Number(box.currentBalance) + params.amount;
+                await this.cashRegisterRepo.save(box);
+                params.balanceAfter = box.currentBalance;
+            }
+        }
+
         const transaction = this.transactionRepo.create({
             cashRegisterId: params.cashRegisterId,
             saleId: params.saleId,
@@ -476,12 +504,13 @@ register.openingBalance = openDto.openingBalance;
             transfer: 0,
             yape: 0,
             plin: 0,
+            returns: 0,
         };
 
         for (const t of transactions) {
             if (t.type === 'SALE' || t.type === 'INCOME') {
                 metrics.total += Number(t.amount);
-                
+
                 switch (t.subtype) {
                     case 'CASH':
                         metrics.cash += Number(t.amount);
@@ -498,6 +527,13 @@ register.openingBalance = openDto.openingBalance;
                     case 'PLIN':
                         metrics.plin += Number(t.amount);
                         break;
+                }
+            } else if (t.type === 'RETURN') {
+                metrics.returns += Number(t.amount);
+                metrics.total -= Number(t.amount);
+                
+                if (t.subtype === 'CASH') {
+                    metrics.cash -= Number(t.amount);
                 }
             }
         }
