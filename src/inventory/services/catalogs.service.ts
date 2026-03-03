@@ -8,6 +8,7 @@ import { CreateCategoryDto } from '../dto/create-category.dto';
 import { CreateUnitDto } from '../dto/create-unit.dto';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
+import { FilterProductDto } from '../dto/filter-product.dto';
 
 @Injectable()
 export class CatalogsService {
@@ -110,7 +111,24 @@ export class CatalogsService {
         return this.prodRepo.save(product);
     }
 
-    listProducts() { return this.prodRepo.find(); }
+    async listProducts(filter: FilterProductDto) {
+        const { search, categoryId, page = 1, limit = 20 } = filter;
+        const qb = this.prodRepo.createQueryBuilder('p')
+            .leftJoinAndSelect('p.category', 'category')
+            .leftJoinAndSelect('p.baseUnit', 'baseUnit');
+
+        if (search) {
+            qb.andWhere('(p.name LIKE :search OR p.sku LIKE :search)', { search: `%${search}%` });
+        }
+        if (categoryId) {
+            qb.andWhere('p.categoryId = :categoryId', { categoryId });
+        }
+
+        const total = await qb.getCount();
+        const data = await qb.skip((page - 1) * limit).take(limit).orderBy('p.id', 'DESC').getMany();
+
+        return { data, total, page, limit };
+    }
 
 
     async removeProduct(id: number) {

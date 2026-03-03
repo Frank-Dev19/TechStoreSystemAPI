@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { CatalogsService } from '../services/catalogs.service';
 import { CreateCategoryDto } from '../dto/create-category.dto';
 import { CreateUnitDto } from '../dto/create-unit.dto';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
+import { FilterProductDto } from '../dto/filter-product.dto';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 @UseGuards(JwtAccessGuard)
 @Controller('inventory/catalogs')
@@ -45,7 +46,7 @@ export class CatalogsController {
 
     // products (mapeos front incluidos)
     @Get('products')
-    listProducts() { return this.svc.listProducts(); }
+    async listProducts(@Query() filter: FilterProductDto) { return await this.svc.listProducts(filter); }
 
     @Post('products')
     createProduct(@Body() dto: CreateProductDto) { return this.svc.createProduct(dto); }
