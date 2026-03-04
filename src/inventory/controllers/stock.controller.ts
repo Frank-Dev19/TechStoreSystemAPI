@@ -1,9 +1,20 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { StockService } from '../services/stock.service';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { FilterStockDto } from '../dto/filter-stock.dto';
+
 @UseGuards(JwtAccessGuard)
 @Controller('inventory/stock')
 export class StockController {
     constructor(private readonly svc: StockService) { }
-    @Get() list() { return this.svc.listAll(); }
+
+    @Get()
+    list(@Query() q: FilterStockDto) {
+        return this.svc.listPaged(q);
+    }
+
+    @Get('metrics')
+    getMetrics(@Query() q: FilterStockDto) {
+        return this.svc.getMetrics(q);
+    }
 }
