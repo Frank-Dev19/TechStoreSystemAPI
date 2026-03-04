@@ -5,6 +5,8 @@ import { CreateUnitDto } from '../dto/create-unit.dto';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { FilterProductDto } from '../dto/filter-product.dto';
+import { FilterCategoryDto } from '../dto/filter-category.dto';
+import { FilterUnitDto } from '../dto/filter-unit.dto';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 @UseGuards(JwtAccessGuard)
 @Controller('inventory/catalogs')
@@ -13,7 +15,7 @@ export class CatalogsController {
 
     // categories
     @Get('categories')
-    listCats() { return this.svc.listCategories(); }
+    listCats(@Query() filter: FilterCategoryDto) { return this.svc.listCategories(filter); }
 
     @Post('categories')
     createCat(@Body() dto: CreateCategoryDto) { return this.svc.createCategory(dto); }
@@ -29,7 +31,7 @@ export class CatalogsController {
 
     // units
     @Get('units')
-    listUnits() { return this.svc.listUnits(); }
+    listUnits(@Query() filter: FilterUnitDto) { return this.svc.listUnits(filter); }
 
     @Post('units')
     createUnit(@Body() dto: CreateUnitDto) { return this.svc.createUnit(dto); }

@@ -9,6 +9,8 @@ import { CreateUnitDto } from '../dto/create-unit.dto';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { FilterProductDto } from '../dto/filter-product.dto';
+import { FilterCategoryDto } from '../dto/filter-category.dto';
+import { FilterUnitDto } from '../dto/filter-unit.dto';
 
 @Injectable()
 export class CatalogsService {
@@ -21,7 +23,19 @@ export class CatalogsService {
     // CATEGORIES
     createCategory(dto: CreateCategoryDto) { return this.catRepo.save(this.catRepo.create(dto)); }
 
-    listCategories() { return this.catRepo.find(); }
+    async listCategories(filter: FilterCategoryDto = {}) {
+        const { search, page = 1, limit = 20 } = filter;
+        const qb = this.catRepo.createQueryBuilder('c');
+
+        if (search) {
+            qb.andWhere('c.name LIKE :search', { search: `%${search}%` });
+        }
+
+        const total = await qb.getCount();
+        const data = await qb.skip((page - 1) * limit).take(limit).orderBy('c.id', 'DESC').getMany();
+
+        return { data, total, page, limit };
+    }
 
     async updateCategory(id: number, dto: Partial<CreateCategoryDto>) {
         const category = await this.catRepo.findOneBy({ id });
@@ -50,7 +64,20 @@ export class CatalogsService {
 
     // UNITS
     createUnit(dto: CreateUnitDto) { return this.unitRepo.save(this.unitRepo.create(dto)); }
-    listUnits() { return this.unitRepo.find(); }
+
+    async listUnits(filter: FilterUnitDto = {}) {
+        const { search, page = 1, limit = 20 } = filter;
+        const qb = this.unitRepo.createQueryBuilder('u');
+
+        if (search) {
+            qb.andWhere('u.name LIKE :search', { search: `%${search}%` });
+        }
+
+        const total = await qb.getCount();
+        const data = await qb.skip((page - 1) * limit).take(limit).orderBy('u.id', 'DESC').getMany();
+
+        return { data, total, page, limit };
+    }
     async updateUnit(id: number, dto: Partial<CreateUnitDto>) {
         const unit = await this.unitRepo.findOneBy({ id });
         if (!unit) {

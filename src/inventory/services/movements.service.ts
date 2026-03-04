@@ -228,12 +228,24 @@ export class MovementsService {
         });
     }
 
-    async listKardex(filters: { product_id?: number; reason_code?: string; date_from?: string; date_to?: string; }) {
+    async listKardex(filters: { product_id?: number; reason_code?: string; date_from?: string; date_to?: string; page?: number; limit?: number; }) {
         const qb = this.movRepo.createQueryBuilder('m').orderBy('m.occurredAt', 'DESC');
         if (filters.product_id) qb.andWhere('m.productId = :p', { p: filters.product_id });
         if (filters.reason_code) qb.andWhere('m.reasonCode = :r', { r: filters.reason_code });
-        if (filters.date_from) qb.andWhere('m.occurredAt >= :df', { df: filters.date_from });
-        if (filters.date_to) qb.andWhere('m.occurredAt <= :dt', { dt: filters.date_to });
-        return qb.getMany();
+        if (filters.date_from) qb.andWhere('m.occurredAt >= :df', { df: filters.date_from + ' 00:00:00' });
+        if (filters.date_to) qb.andWhere('m.occurredAt <= :dt', { dt: filters.date_to + ' 23:59:59' });
+
+        const page = filters.page || 1;
+        const limit = filters.limit || 20;
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await qb.skip(skip).take(limit).getManyAndCount();
+
+        return {
+            data,
+            total,
+            page,
+            limit
+        };
     }
 }
