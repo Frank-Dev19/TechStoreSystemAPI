@@ -50,6 +50,10 @@ export class CatalogsController {
     @Get('products')
     async listProducts(@Query() filter: FilterProductDto) { return await this.svc.listProducts(filter); }
 
+    // products all (sin paginación, para autocompletes)
+    @Get('products/all')
+    async listAllProducts() { return await this.svc.listAllProducts(); }
+
     @Post('products')
     createProduct(@Body() dto: CreateProductDto) { return this.svc.createProduct(dto); }
 

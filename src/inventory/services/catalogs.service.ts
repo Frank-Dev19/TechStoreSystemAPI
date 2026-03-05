@@ -157,6 +157,14 @@ export class CatalogsService {
         return { data, total, page, limit };
     }
 
+    async listAllProducts() {
+        const products = await this.prodRepo.find({
+            relations: ['category', 'baseUnit'],
+            order: { id: 'DESC' }
+        });
+        return products;
+    }
+
 
     async removeProduct(id: number) {
         const product = await this.prodRepo.findOneBy({ id });
