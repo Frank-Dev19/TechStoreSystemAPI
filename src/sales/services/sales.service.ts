@@ -12,7 +12,7 @@ import { SaleItem } from '../entities/sale-item.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
 import { SaleLineDiscount } from '../entities/sale-line-discount.entity';
 import { SaleComboItem } from '../entities/sale-combo-item.entity';
-import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
+import { Client } from 'src/clients/entities/client.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Combo } from 'src/pricing/entities/combo.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
@@ -59,8 +59,8 @@ export class SalesService {
     private readonly saleLineDiscountRepo: Repository<SaleLineDiscount>,
     @InjectRepository(SaleComboItem)
     private readonly saleComboItemRepo: Repository<SaleComboItem>,
-    @InjectRepository(BusinessPartner)
-    private readonly bpRepo: Repository<BusinessPartner>,
+    @InjectRepository(Client)
+    private readonly clientRepo: Repository<Client>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
     @InjectRepository(Combo)
@@ -92,12 +92,12 @@ export class SalesService {
   // =========================
 
   async simulate(simulateDto: SimulateSaleDto, userPermissions: string[] = []) {
-    const customer = await this.bpRepo.findOne({
-      where: { id: simulateDto.customerId, isClient: true },
+    const customer = await this.clientRepo.findOne({
+      where: { id: simulateDto.customerId },
     });
 
     if (!customer) {
-      throw new BadRequestException('Cliente no encontrado o no es cliente activo');
+      throw new BadRequestException('Cliente no encontrado');
     }
 
     // Simular cada producto
@@ -388,12 +388,12 @@ export class SalesService {
   // =========================
   async create(createSaleDto: CreateSaleDto, user: string) {
     // Validar cliente
-    const customer = await this.bpRepo.findOne({
-      where: { id: createSaleDto.customerId, isClient: true },
+    const customer = await this.clientRepo.findOne({
+      where: { id: createSaleDto.customerId },
     });
 
     if (!customer) {
-      throw new BadRequestException('Cliente no encontrado o no es cliente activo');
+      throw new BadRequestException('Cliente no encontrado');
     }
 
     // Obtener serie y número si no se especifican

@@ -10,7 +10,7 @@ import { CreateTicketDto } from '../dto/create-ticket.dto';
 import { UpdateTicketDto } from '../dto/update-ticket.dto';
 import { Ticket } from '../entities/ticket.entity';
 import { TicketItem } from '../entities/ticket-item.entity';
-import { BusinessPartner } from '../../business-partner/entities/business-partner.entity';
+import { Client } from '../../clients/entities/client.entity';
 import { TicketItemStatus, TicketPriority, TicketStatus } from '../enums';
 import { TicketItemService } from './ticket-item.service';
 import { User } from '../../users/entities/user.entity';
@@ -21,7 +21,7 @@ type FindAllTicketsQuery = {
   search?: string;
   status?: string;
   priority?: string;
-  businessPartnerId?: number | string;
+  clientId?: number | string;
   itemStatus?: string;
   withDeleted?: string;
   includeItems?: string | boolean;
@@ -36,15 +36,15 @@ export class TicketService {
     private readonly ticketRepository: Repository<Ticket>,
     @InjectRepository(TicketItem)
     private readonly ticketItemRepository: Repository<TicketItem>,
-    @InjectRepository(BusinessPartner)
-    private readonly businessPartnerRepository: Repository<BusinessPartner>,
+    @InjectRepository(Client)
+    private readonly clientRepository: Repository<Client>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly ticketItemService: TicketItemService,
   ) {}
 
   async create(dto: CreateTicketDto, creatorId: number): Promise<Ticket> {
-    const partner = await this.ensureBusinessPartner(dto.businessPartnerId);
+    const client = await this.ensureClient(dto.clientId);
     await this.ensureUser(creatorId);
 
     const maxRetries = 3;
@@ -62,12 +62,12 @@ export class TicketService {
 
         const ticketPartial: Partial<Ticket> = {
           code,
-          businessPartnerId: partner.id,
+          clientId: client.id,
           createdBy: creatorId,
           priority: dto.priority ?? TicketPriority.MEDIUM,
-          contactName: dto.contactName ?? partner.name,
-          contactPhone: dto.contactPhone ?? partner.phone ?? null,
-          contactEmail: dto.contactEmail ?? partner.email ?? null,
+          contactName: dto.contactName ?? client.name,
+          contactPhone: dto.contactPhone ?? client.phone ?? null,
+          contactEmail: dto.contactEmail ?? client.email ?? null,
           estimatedDeliveryDate: dto.estimatedDeliveryDate ? new Date(dto.estimatedDeliveryDate) : null,
           paymentStatus: dto.paymentStatus ?? undefined,
           currency: dto.currency ?? undefined,
@@ -86,7 +86,7 @@ export class TicketService {
         await this.ticketItemService.notifyTechnicianAssignmentsForTicket(
           savedTicket.code,
           items,
-          savedTicket.contactPhone ?? partner.phone ?? null,
+          savedTicket.contactPhone ?? client.phone ?? null,
         );
 
         return savedTicket;
@@ -154,13 +154,13 @@ export class TicketService {
       qb.andWhere('ticket.priority IN (:...priorities)', { priorities });
     }
 
-    if (query.businessPartnerId !== undefined) {
-      const businessPartnerId = this.parsePositiveNumber(
-        query.businessPartnerId,
+    if (query.clientId !== undefined) {
+      const clientId = this.parsePositiveNumber(
+        query.clientId,
         undefined,
-        'businessPartnerId',
+        'clientId',
       );
-      qb.andWhere('ticket.businessPartnerId = :businessPartnerId', { businessPartnerId });
+      qb.andWhere('ticket.clientId = :clientId', { clientId });
     }
 
     if (itemStatuses?.length) {
@@ -270,9 +270,9 @@ export class TicketService {
       throw new NotFoundException(`Ticket with id ${id} not found`);
     }
 
-    if (dto.businessPartnerId && dto.businessPartnerId !== ticket.businessPartnerId) {
-      await this.ensureBusinessPartner(dto.businessPartnerId);
-      ticket.businessPartnerId = dto.businessPartnerId;
+    if (dto.clientId && dto.clientId !== ticket.clientId) {
+      await this.ensureClient(dto.clientId);
+      ticket.clientId = dto.clientId;
     }
 
     if (dto.priority) {
@@ -419,16 +419,16 @@ export class TicketService {
     }
   }
 
-  private async ensureBusinessPartner(id: number): Promise<BusinessPartner> {
-    const partner = await this.businessPartnerRepository.findOne({
+  private async ensureClient(id: number): Promise<Client> {
+    const client = await this.clientRepository.findOne({
       where: { id },
     });
 
-    if (!partner) {
-      throw new NotFoundException(`Business partner with id ${id} not found`);
+    if (!client) {
+      throw new NotFoundException(`Client with id ${id} not found`);
     }
 
-    return partner;
+    return client;
   }
 
   private async ensureUser(id: number): Promise<User> {

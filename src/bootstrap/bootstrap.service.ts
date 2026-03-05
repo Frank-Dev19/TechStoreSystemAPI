@@ -38,9 +38,9 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'keys', label: 'Claves de Operación', sortOrder: 15, icon: 'fas fa-key' },
       { moduleKey: 'users', label: 'Usuarios', sortOrder: 20, icon: 'fas fa-users' },
       { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
-      { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 30, icon: 'fas fa-truck' },
+      { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
+      { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
       { moduleKey: 'auditoria', label: 'Auditoría', sortOrder: 90, icon: 'fas fa-history' },
-      { moduleKey: 'business-partner', label: 'Socios de Comercio', sortOrder: 100, icon: 'fas fa-handshake' }, // ejemplo futuro
       { moduleKey: 'service-category', label: 'Categorías de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
       { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
       { moduleKey: 'ticket', label: 'Tickets', sortOrder: 115, icon: 'fas fa-ticket-alt' },
@@ -73,26 +73,25 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'document-type', actionKey: 'update', description: 'Actualizar tipos de documento', sortOrder: 30 },
       { moduleKey: 'document-type', actionKey: 'delete', description: 'Eliminar tipo de documento', sortOrder: 40 },
       { moduleKey: 'document-type', actionKey: 'restore', description: 'Restaurar tipo de documento', sortOrder: 50 },
-      { moduleKey: 'document-type', actionKey: 'bulk-delete', description: 'Eliminación masiva de tipos', sortOrder: 60 },
-      { moduleKey: 'document-type', actionKey: 'bulk-restore', description: 'Restauración masiva de tipos', sortOrder: 70 },
 
-      // Suppliers (ejemplo de los que ya tenías)
+      // Clients
+      { moduleKey: 'clients', actionKey: 'create', description: 'Crear clientes', sortOrder: 10 },
+      { moduleKey: 'clients', actionKey: 'read', description: 'Ver clientes', sortOrder: 20 },
+      { moduleKey: 'clients', actionKey: 'update', description: 'Actualizar clientes', sortOrder: 30 },
+      { moduleKey: 'clients', actionKey: 'delete', description: 'Eliminar un cliente', sortOrder: 60 },
+      { moduleKey: 'clients', actionKey: 'restore', description: 'Restaurar un cliente', sortOrder: 70 },
+
+      // Suppliers
       { moduleKey: 'suppliers', actionKey: 'create', description: 'Crear proveedores', sortOrder: 10 },
-      { moduleKey: 'suppliers', actionKey: 'view', description: 'Listar/ver proveedores', sortOrder: 20 },
+      { moduleKey: 'suppliers', actionKey: 'read', description: 'Ver proveedores', sortOrder: 20 },
+      { moduleKey: 'suppliers', actionKey: 'update', description: 'Actualizar proveedores', sortOrder: 30 },
+      { moduleKey: 'suppliers', actionKey: 'delete', description: 'Eliminar un proveedor', sortOrder: 60 },
+      { moduleKey: 'suppliers', actionKey: 'restore', description: 'Restaurar un proveedor', sortOrder: 70 },
 
       // Auditoría (demo; ajusta si lo implementas)
       { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoría', sortOrder: 10 },
       { moduleKey: 'auditoria', actionKey: 'delete', description: 'Eliminar eventos', sortOrder: 20 },
       { moduleKey: 'auditoria', actionKey: 'stream', description: 'Ver eventos en vivo', sortOrder: 30 },
-
-      //Business-partner (Socio de comercio)
-      { moduleKey: 'business-partner', actionKey: 'create', description: 'Crear socios', sortOrder: 10 },
-      { moduleKey: 'business-partner', actionKey: 'read', description: 'Ver socios', sortOrder: 20 },
-      { moduleKey: 'business-partner', actionKey: 'update', description: 'Actualizar socios', sortOrder: 30 },
-      { moduleKey: 'business-partner', actionKey: 'delete', description: 'Eliminar un socio', sortOrder: 60 },
-      { moduleKey: 'business-partner', actionKey: 'restore', description: 'Restaurar un socios', sortOrder: 70 },
-      { moduleKey: 'business-partner', actionKey: 'bulk-delete', description: 'Eliminar varios socios', sortOrder: 50 },
-      { moduleKey: 'business-partner', actionKey: 'bulk-restore', description: 'Restaurar varios socios', sortOrder: 40 },
 
       //Service Category (Categorías de servicios)
       { moduleKey: 'service-category', actionKey: 'create', description: 'Crear categorías de servicios', sortOrder: 10 },
@@ -148,6 +147,9 @@ export class BootstrapService implements OnModuleInit {
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE
     const allCodes = await this.syncCatalog(MODULES, PERMS);
+
+    // 3.1) Eliminar permisos legacy bulk-* que ya no forman parte del modelo RBAC.
+    await this.removeLegacyBulkPermissions();
 
     // 4) Asegurar rol admin y conceder todos los permisos del catálogo
     await this.ensureAdminRoleAndGrants(allCodes);
@@ -239,6 +241,42 @@ export class BootstrapService implements OnModuleInit {
       await this.serviceRepo.save(service);
       this.log.log(`Service "${serviceCode}" actualizado con precio ${price}.`);
     }
+  }
+
+  private async removeLegacyBulkPermissions() {
+    const legacyCodes = [
+      'document-type.bulk-delete',
+      'document-type.bulk-restore',
+      'clients.bulk-delete',
+      'clients.bulk-restore',
+      'suppliers.bulk-delete',
+      'suppliers.bulk-restore',
+    ];
+
+    const legacyPermissions = await this.permsRepo.find({
+      where: { code: In(legacyCodes) },
+    });
+
+    if (!legacyPermissions.length) {
+      return;
+    }
+
+    const legacySet = new Set(legacyPermissions.map((permission) => permission.code));
+    const roles = await this.rolesRepo.find({ relations: { permissions: true } });
+
+    for (const role of roles) {
+      const filteredPermissions = (role.permissions ?? []).filter(
+        (permission) => !legacySet.has(permission.code),
+      );
+
+      if (filteredPermissions.length !== (role.permissions ?? []).length) {
+        role.permissions = filteredPermissions;
+        await this.rolesRepo.save(role);
+      }
+    }
+
+    await this.permsRepo.remove(legacyPermissions);
+    this.log.log(`Permisos legacy eliminados: ${legacyCodes.join(', ')}`);
   }
 
   private async syncCatalog(MODULES: ModuleSeed[], PERMS: PermSeed[]) {

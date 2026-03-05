@@ -19,7 +19,7 @@ import { CreateTicketItemDto } from './create-ticket-item.dto';
 export class CreateTicketDto {
   @IsNumber()
   @IsPositive()
-  businessPartnerId: number;
+  clientId: number;
 
   @IsEnum(TicketPriority)
   @IsOptional()

@@ -361,7 +361,7 @@ export class TicketItemService {
       where: { id: itemId },
       relations: {
         ticket: {
-          businessPartner: true,
+          client: true,
         },
       },
     });
@@ -471,7 +471,7 @@ export class TicketItemService {
     }
 
     const contactPhone =
-      item.ticket?.contactPhone ?? item.ticket?.businessPartner?.phone ?? null;
+      item.ticket?.contactPhone ?? item.ticket?.client?.phone ?? null;
 
     if (!contactPhone) {
       return;

@@ -11,7 +11,7 @@ import {
     JoinColumn,
     Index,
 } from 'typeorm';
-import { BusinessPartner } from 'src/business-partner/entities/business-partner.entity';
+import { Client } from 'src/clients/entities/client.entity';
 import { SaleItem } from './sale-item.entity';
 import { SalePayment } from './sale-payment.entity';
 import { SaleLineDiscount } from './sale-line-discount.entity';
@@ -38,9 +38,9 @@ export class Sale {
     @Column({ name: 'customer_id', type: 'bigint', unsigned: true })
     customerId: number;
 
-    @ManyToOne(() => BusinessPartner, { eager: true, nullable: false })
+    @ManyToOne(() => Client, { eager: true, nullable: false })
     @JoinColumn({ name: 'customer_id' })
-    customer: BusinessPartner;
+    customer: Client;
 
     // Caja Registradora
     @Column({ name: 'cash_register_id', nullable: true })
