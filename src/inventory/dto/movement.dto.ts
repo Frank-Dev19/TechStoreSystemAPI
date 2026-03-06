@@ -11,6 +11,7 @@ export class MovementDto {
 
     @IsNumber() @IsOptional() unit_cost?: number;
     @IsInt() @IsOptional() lot_id?: number | null;
+    @IsInt() @IsOptional() supplier_id?: number | null;
 
     // NUEVO: soporte para múltiples seriales
     @IsArray() @IsInt({ each: true }) @IsOptional()

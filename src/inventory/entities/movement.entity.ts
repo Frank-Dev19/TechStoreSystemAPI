@@ -2,6 +2,7 @@ import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Index } from 'typeor
 import { Product } from './product.entity';
 import { Lot } from './lot.entity';
 import { Serial } from './serial.entity';
+import { Supplier } from '../../suppliers/entities/supplier.entity';
 
 export type MovementType = 'IN' | 'OUT' | 'ADJ' | 'TRANSFER';
 
@@ -20,6 +21,14 @@ export class Movement {
 
     @ManyToOne(() => Serial, { nullable: true }) serial?: Serial | null;
     @Column({ nullable: true }) serialId?: number | null;
+
+    @ManyToOne(() => Supplier, { nullable: true }) supplier?: Supplier | null;
+    @Column({
+        type: 'bigint',
+        unsigned: true,
+        nullable: true
+    })
+    supplierId?: number | null;
 
     @Column({ type: 'decimal', precision: 14, scale: 4 }) qty: number;        // siempre positiva en BE
     @Column({ type: 'decimal', precision: 14, scale: 4 }) unitCost: number;

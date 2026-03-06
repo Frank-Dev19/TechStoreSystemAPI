@@ -22,6 +22,7 @@ export class StockService {
         const qb = this.stockRepo.createQueryBuilder('stock')
             .leftJoinAndSelect('stock.product', 'product')
             .leftJoinAndSelect('stock.lot', 'lot')
+            .leftJoinAndSelect('lot.supplier', 'supplier')
             .where('stock.qtyOnHand > 0'); // por defecto solemos mostrar stock real, pero ajustaremos
 
         if (filters.search) {

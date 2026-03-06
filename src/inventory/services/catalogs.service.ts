@@ -44,7 +44,7 @@ export class CatalogsService {
         }
 
         Object.assign(category, {
-            code: dto.code ?? category.code,
+
             name: dto.name ?? category.name,
             description: dto.description ?? category.description,
         });
@@ -85,7 +85,7 @@ export class CatalogsService {
         }
 
         Object.assign(unit, {
-            code: dto.code ?? unit.code,
+
             name: dto.name ?? unit.name,
             abbreviation: dto.abbreviation ?? unit.abbreviation,
         });

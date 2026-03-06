@@ -11,7 +11,7 @@ export class LotsService {
         @InjectRepository(Product) private prodRepo: Repository<Product>,
     ) { }
 
-    async create(dto: { product_id: number; lot_code: string; expiration_date?: string | null }) {
+    async create(dto: { product_id: number; lot_code: string; expiration_date?: string | null; supplier_id?: number | null }) {
         const product = await this.prodRepo.findOneBy({ id: dto.product_id });
         if (!product) throw new BadRequestException('Producto inválido');
 
@@ -19,6 +19,7 @@ export class LotsService {
             productId: product.id,
             lotCode: dto.lot_code,
             expirationDate: dto.expiration_date ?? null,
+            supplierId: dto.supplier_id ?? null,
         });
         const saved = await this.lotRepo.save(lot);
         // Responder con nombres “front-friendly”
@@ -27,6 +28,7 @@ export class LotsService {
             product_id: saved.productId,
             lot_code: saved.lotCode,
             expiration_date: saved.expirationDate,
+            supplier_id: saved.supplierId,
         };
     }
 
@@ -38,6 +40,7 @@ export class LotsService {
             product_id: l.productId,
             lot_code: l.lotCode,
             expiration_date: l.expirationDate,
+            supplier_id: l.supplierId,
         }));
     }
 }

@@ -15,7 +15,7 @@ export class SerialsService {
         const where: any = { productId: params.product_id };
         if (params.lot_id !== undefined) where.lotId = params.lot_id ?? null;
         if (params.status) where.status = params.status;
-        return this.serialRepo.find({ where, order: { createdAt: 'DESC' } });
+        return this.serialRepo.find({ where, relations: ['supplier'], order: { createdAt: 'DESC' } });
     }
 
     async byMovement(movement_id: number) {

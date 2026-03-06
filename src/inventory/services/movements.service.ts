@@ -134,6 +134,7 @@ export class MovementsService {
                         productId: product.id,
                         serialCode: code,
                         lotId: dto.lot_id ?? null,
+                        supplierId: dto.supplier_id ?? null,
                         status: 'IN_STOCK',
                     }));
                     const created = toCreate.length ? await serialRepo.save(toCreate) : [];
@@ -190,6 +191,7 @@ export class MovementsService {
                 type: dto.type as MovementType,
                 productId: product.id,
                 lotId,
+                supplierId: dto.supplier_id ?? null,
                 serialId: null, // deprecado para múltiples
                 qty,
                 unitCost,
