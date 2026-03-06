@@ -43,10 +43,10 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'auditoria', label: 'Auditoría', sortOrder: 90, icon: 'fas fa-history' },
       { moduleKey: 'service-category', label: 'Categorías de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
       { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
-      { moduleKey: 'ticket', label: 'Tickets', sortOrder: 115, icon: 'fas fa-ticket-alt' },
-      { moduleKey: 'ticket-item', label: 'Items de Ticket', sortOrder: 116, icon: 'fas fa-tools' },
-      { moduleKey: 'diagnostic', label: 'Diagnósticos de Items de Ticket', sortOrder: 117, icon: 'fas fa-ticket-alt' },
-      { moduleKey: 'quote', label: 'Cotizaciones', sortOrder: 118, icon: 'fas fa-ticket-alt' },
+      { moduleKey: 'service-order', label: 'Órdenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
+      { moduleKey: 'service-order-item', label: 'Equipos en Orden de Servicio', sortOrder: 116, icon: 'fas fa-tools' },
+      { moduleKey: 'service-order-diagnosis', label: 'Diagnósticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
+      { moduleKey: 'service-order-quote', label: 'Cotizaciones de Orden de Servicio', sortOrder: 118, icon: 'fas fa-file-invoice-dollar' },
     ];
 
     // 2) Catálogo de permisos (fuente de verdad)
@@ -107,42 +107,39 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'service', actionKey: 'delete', description: 'Eliminar servicios', sortOrder: 60 },
       { moduleKey: 'service', actionKey: 'restore', description: 'Restaurar servicios', sortOrder: 70 },
 
-      // Tickets
-      { moduleKey: 'ticket', actionKey: 'create', description: 'Crear tickets', sortOrder: 10 },
-      { moduleKey: 'ticket', actionKey: 'read', description: 'Ver tickets', sortOrder: 20 },
-      { moduleKey: 'ticket', actionKey: 'update', description: 'Actualizar tickets', sortOrder: 30 },
-      { moduleKey: 'ticket', actionKey: 'delete', description: 'Eliminar tickets', sortOrder: 60 },
-      { moduleKey: 'ticket', actionKey: 'restore', description: 'Restaurar tickets', sortOrder: 70 },
+      // Service Orders
+      { moduleKey: 'service-order', actionKey: 'create', description: 'Crear órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order', actionKey: 'read', description: 'Ver órdenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order', actionKey: 'update', description: 'Actualizar órdenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order', actionKey: 'delete', description: 'Eliminar órdenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order', actionKey: 'restore', description: 'Restaurar órdenes de servicio', sortOrder: 70 },
 
-      // Ticket items
-      { moduleKey: 'ticket-item', actionKey: 'create', description: 'Crear items de ticket', sortOrder: 10 },
-      { moduleKey: 'ticket-item', actionKey: 'read', description: 'Ver items de ticket', sortOrder: 20 },
-      { moduleKey: 'ticket-item', actionKey: 'update', description: 'Actualizar items de ticket', sortOrder: 30 },
-      { moduleKey: 'ticket-item', actionKey: 'delete', description: 'Eliminar items de ticket', sortOrder: 60 },
-      { moduleKey: 'ticket-item', actionKey: 'restore', description: 'Restaurar items de ticket', sortOrder: 70 },
-      { moduleKey: 'ticket-item', actionKey: 'assign', description: 'Reasignar items de ticket', sortOrder: 80 },
-      { moduleKey: 'ticket-item', actionKey: 'assign-supervisor', description: 'Asignar supervisores a items de ticket', sortOrder: 85 },
-      { moduleKey: 'ticket-item', actionKey: 'update-status', description: 'Cambiar estado de items de tickets', sortOrder: 90 },
+      // Service Order Items
+      { moduleKey: 'service-order-item', actionKey: 'create', description: 'Crear equipos en órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-item', actionKey: 'read', description: 'Ver equipos en órdenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-item', actionKey: 'update', description: 'Actualizar equipos en órdenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-item', actionKey: 'delete', description: 'Eliminar equipos en órdenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order-item', actionKey: 'restore', description: 'Restaurar equipos en órdenes de servicio', sortOrder: 70 },
+      { moduleKey: 'service-order-item', actionKey: 'assign', description: 'Asignar o reasignar técnicos a equipos', sortOrder: 80 },
+      { moduleKey: 'service-order-item', actionKey: 'update-status', description: 'Cambiar estado de equipos en órdenes de servicio', sortOrder: 90 },
 
-      // Diagnostics
-      { moduleKey: 'diagnostic', actionKey: 'create', description: 'Crear diagnósticos', sortOrder: 10 },
-      { moduleKey: 'diagnostic', actionKey: 'read', description: 'Ver diagnósticos', sortOrder: 20 },
-      { moduleKey: 'diagnostic', actionKey: 'update', description: 'Actualizar diagnósticos', sortOrder: 30 },
-      { moduleKey: 'diagnostic', actionKey: 'delete', description: 'Eliminar diagnósticos', sortOrder: 60 },
-      { moduleKey: 'diagnostic', actionKey: 'restore', description: 'Restaurar diagnósticos', sortOrder: 70 },
+      // Service Order Diagnoses
+      { moduleKey: 'service-order-diagnosis', actionKey: 'create', description: 'Crear diagnósticos de órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'read', description: 'Ver diagnósticos de órdenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'update', description: 'Actualizar diagnósticos de órdenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'delete', description: 'Eliminar diagnósticos de órdenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'restore', description: 'Restaurar diagnósticos de órdenes de servicio', sortOrder: 70 },
 
-      // Quotes
-      { moduleKey: 'quote', actionKey: 'create', description: 'Crear cotizaciones', sortOrder: 10 },
-      { moduleKey: 'quote', actionKey: 'read', description: 'Ver cotizaciones', sortOrder: 20 },
-      { moduleKey: 'quote', actionKey: 'update', description: 'Actualizar cotizaciones', sortOrder: 30 },
-      { moduleKey: 'quote', actionKey: 'delete', description: 'Eliminar cotizaciones', sortOrder: 60 },
-      { moduleKey: 'quote', actionKey: 'restore', description: 'Restaurar cotizaciones', sortOrder: 70 },
-      { moduleKey: 'quote', actionKey: 'approve-supervisor', description: 'Aprobar cotizaciones como supervisor', sortOrder: 80 },
-      { moduleKey: 'quote', actionKey: 'reject-supervisor', description: 'Rechazar cotizaciones como supervisor', sortOrder: 90 },
-      { moduleKey: 'quote', actionKey: 'send-to-client', description: 'Enviar cotizaciones al cliente', sortOrder: 100 },
-      { moduleKey: 'quote', actionKey: 'approve-client', description: 'Marcar cotizaciones como aprobadas por cliente', sortOrder: 110 },
-      { moduleKey: 'quote', actionKey: 'reject-client', description: 'Marcar cotizaciones como rechazadas por cliente', sortOrder: 120 },
-      { moduleKey: 'quote', actionKey: 'resubmit', description: 'Reenviar cotizaciones con ajustes', sortOrder: 130 },
+      // Service Order Quotes
+      { moduleKey: 'service-order-quote', actionKey: 'create', description: 'Crear cotizaciones de órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-quote', actionKey: 'read', description: 'Ver cotizaciones de órdenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-quote', actionKey: 'update', description: 'Actualizar cotizaciones de órdenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-quote', actionKey: 'delete', description: 'Eliminar cotizaciones de órdenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order-quote', actionKey: 'restore', description: 'Restaurar cotizaciones de órdenes de servicio', sortOrder: 70 },
+      { moduleKey: 'service-order-quote', actionKey: 'send-to-client', description: 'Enviar cotizaciones al cliente', sortOrder: 80 },
+      { moduleKey: 'service-order-quote', actionKey: 'approve-client', description: 'Registrar aprobación de cotización por cliente', sortOrder: 90 },
+      { moduleKey: 'service-order-quote', actionKey: 'reject-client', description: 'Registrar rechazo de cotización por cliente', sortOrder: 100 },
+      { moduleKey: 'service-order-quote', actionKey: 'resubmit', description: 'Reenviar cotizaciones ajustadas', sortOrder: 110 },
     ];
 
     // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE
@@ -150,6 +147,9 @@ export class BootstrapService implements OnModuleInit {
 
     // 3.1) Eliminar permisos legacy bulk-* que ya no forman parte del modelo RBAC.
     await this.removeLegacyBulkPermissions();
+
+    // 3.2) Asegurar roles operativos y sus permisos base.
+    await this.ensureOperationalRolesAndGrants();
 
     // 4) Asegurar rol admin y conceder todos los permisos del catálogo
     await this.ensureAdminRoleAndGrants(allCodes);
@@ -202,7 +202,7 @@ export class BootstrapService implements OnModuleInit {
       category = this.serviceCategoryRepo.create({
         code: categoryCode,
         name: 'Diagnostico',
-        description: 'Servicios de diagnostico',
+        description: 'Servicios de diagnóstico',
         isActive: true,
       });
       await this.serviceCategoryRepo.save(category);
@@ -221,8 +221,8 @@ export class BootstrapService implements OnModuleInit {
     if (!service) {
       service = this.serviceRepo.create({
         code: serviceCode,
-        name: 'Servicio de Diagnostico',
-        description: 'Costo base por diagnostico',
+        name: 'Servicio de Diagnóstico',
+        description: 'Costo base por diagnóstico',
         categoryId: category.id,
         price,
         estimatedDurationMinutes: 60,
@@ -251,6 +251,36 @@ export class BootstrapService implements OnModuleInit {
       'clients.bulk-restore',
       'suppliers.bulk-delete',
       'suppliers.bulk-restore',
+      'ticket.create',
+      'ticket.read',
+      'ticket.update',
+      'ticket.delete',
+      'ticket.restore',
+      'ticket-item.create',
+      'ticket-item.read',
+      'ticket-item.update',
+      'ticket-item.delete',
+      'ticket-item.restore',
+      'ticket-item.assign',
+      'ticket-item.assign-supervisor',
+      'ticket-item.update-status',
+      'diagnostic.create',
+      'diagnostic.read',
+      'diagnostic.update',
+      'diagnostic.delete',
+      'diagnostic.restore',
+      'quote.create',
+      'quote.read',
+      'quote.update',
+      'quote.delete',
+      'quote.restore',
+      'quote.send-to-client',
+      'quote.approve-client',
+      'quote.reject-client',
+      'quote.resubmit',
+      'service-order-item.assign-supervisor',
+      'service-order-quote.approve-supervisor',
+      'service-order-quote.reject-supervisor',
     ];
 
     const legacyPermissions = await this.permsRepo.find({
@@ -379,6 +409,71 @@ export class BootstrapService implements OnModuleInit {
         await this.rolesRepo.save(adminRole);
         this.log.log('Rol "admin" creado sin permisos nuevos que añadir.');
       }
+    }
+  }
+
+  private async ensureOperationalRolesAndGrants() {
+    const roleSeeds: Array<{ name: string; permissionCodes: string[] }> = [
+      {
+        name: 'recepcionist',
+        permissionCodes: [
+          'service-order.create',
+          'service-order.read',
+          'service-order.update',
+          'service-order-item.read',
+          'service-order-item.assign',
+          'service-order-item.update-status',
+          'service-order-diagnosis.read',
+          'service-order-quote.create',
+          'service-order-quote.read',
+          'service-order-quote.update',
+          'service-order-quote.send-to-client',
+          'service-order-quote.approve-client',
+          'service-order-quote.reject-client',
+          'service-order-quote.resubmit',
+        ],
+      },
+      {
+        name: 'technician',
+        permissionCodes: [
+          'service-order-item.read',
+          'service-order-item.update-status',
+          'service-order-diagnosis.create',
+          'service-order-diagnosis.read',
+          'service-order-diagnosis.update',
+          'service-order-quote.read',
+        ],
+      },
+      {
+        name: 'supervisor',
+        permissionCodes: [
+          'service-order.read',
+          'service-order-item.read',
+          'service-order-diagnosis.read',
+          'service-order-quote.read',
+        ],
+      },
+    ];
+
+    for (const seed of roleSeeds) {
+      let role = await this.rolesRepo.findOne({
+        where: { name: seed.name },
+        relations: { permissions: true },
+      });
+
+      if (!role) {
+        role = this.rolesRepo.create({ name: seed.name, permissions: [] });
+      }
+
+      const grantedCodes = new Set((role.permissions ?? []).map((permission) => permission.code));
+      const missingCodes = seed.permissionCodes.filter((code) => !grantedCodes.has(code));
+
+      if (missingCodes.length) {
+        const permissions = await this.permsRepo.find({ where: { code: In(missingCodes) } });
+        role.permissions = [...(role.permissions ?? []), ...permissions];
+      }
+
+      await this.rolesRepo.save(role);
     }
   }
 

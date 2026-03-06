@@ -1,4 +1,0 @@
-export enum ServiceType {
-    DIAGNOSIS = 'DIAGNOSIS',
-    STANDARD_SERVICE = 'STANDARD_SERVICE'
-}

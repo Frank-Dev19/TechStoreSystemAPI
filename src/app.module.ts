@@ -24,8 +24,8 @@ import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { PricingModule } from './pricing/pricing.module';
 import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
-import { TicketModule } from './ticket/ticket.module';
-import { QuotesModule } from './ticket/quotes/quotes.module';
+import { ServiceOrdersModule } from './service-orders/service-orders.module';
+import { ServiceOrderQuotesModule } from './service-orders/service-quotes/service-quotes.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SupplierModule } from './suppliers/supplier.module';
 @Module({
@@ -53,7 +53,10 @@ import { SupplierModule } from './suppliers/supplier.module';
             ...common,
             url,
             // Algunos proveedores requieren SSL; ajusta según tu servicio:
-            ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+            ssl:
+              process.env.DB_SSL === 'true'
+                ? { rejectUnauthorized: false }
+                : undefined,
             synchronize: false, // NUNCA en prod
           };
         }
@@ -70,7 +73,6 @@ import { SupplierModule } from './suppliers/supplier.module';
       },
     }),
     ScheduleModule.forRoot(),
-
 
     // Tus módulos
     AuthModule,
@@ -89,10 +91,10 @@ import { SupplierModule } from './suppliers/supplier.module';
     SupplierModule,
     InventoryModule,
     ServiceCatalogModule,
-    TicketModule,
-    QuotesModule,
+    ServiceOrdersModule,
+    ServiceOrderQuotesModule,
     PricingModule,
     SalesModule,
   ],
 })
-export class AppModule { }
+export class AppModule {}

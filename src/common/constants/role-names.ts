@@ -1,4 +1,4 @@
-export const RECEPTIONIST_ROLE_NAMES = ['receptionist', 'recepcionista'] as const;
+export const RECEPTIONIST_ROLE_NAMES = ['receptionist', 'recepcionista', 'recepcionist'] as const;
 export const TECHNICIAN_ROLE_NAMES = ['technician', 'tecnico'] as const;
 export const SUPERVISOR_ROLE_NAMES = ['supervisor'] as const;
 
