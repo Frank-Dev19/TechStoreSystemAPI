@@ -15,15 +15,21 @@ export class SerialsService {
         const where: any = { productId: params.product_id };
         if (params.lot_id !== undefined) where.lotId = params.lot_id ?? null;
         if (params.status) where.status = params.status;
-        return this.serialRepo.find({ where, relations: ['supplier'], order: { createdAt: 'DESC' } });
+        return this.serialRepo.find({ where, relations: ['supplier', 'lot'], order: { createdAt: 'DESC' } });
     }
 
     async byMovement(movement_id: number) {
-        const rows = await this.movSerRepo.find({ where: { movementId: movement_id }, order: { linkedAt: 'ASC' } });
+        const rows = await this.movSerRepo.find({
+            where: { movementId: movement_id },
+            order: { linkedAt: 'ASC' },
+            relations: ['serial', 'serial.supplier', 'serial.lot']
+        });
         return rows.map(r => ({
             serial_id: r.serialId,
-            serial_code: r.serial.serialCode,
-            lot_id: r.serial.lotId ?? null,
+            serial_code: r.serial?.serialCode,
+            lot_id: r.serial?.lotId ?? null,
+            lot_code: r.serial?.lot?.lotCode ?? null,
+            supplier_name: r.serial?.supplier?.name ?? null
         }));
     }
 
