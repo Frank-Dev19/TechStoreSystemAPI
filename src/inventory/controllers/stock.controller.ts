@@ -13,6 +13,11 @@ export class StockController {
         return this.svc.listPaged(q);
     }
 
+    @Get('all')
+    listAll() {
+        return this.svc.listAll();
+    }
+
     @Get('current/:productId')
     getCurrentStock(@Param('productId') productId: number) {
         return this.svc.getCurrentStock(Number(productId));
