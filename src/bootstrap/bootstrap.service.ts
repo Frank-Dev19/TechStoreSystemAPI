@@ -44,7 +44,6 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'service-category', label: 'Categorías de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
       { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
       { moduleKey: 'service-order', label: 'Órdenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
-      { moduleKey: 'service-order-item', label: 'Equipos en Orden de Servicio', sortOrder: 116, icon: 'fas fa-tools' },
       { moduleKey: 'service-order-diagnosis', label: 'Diagnósticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
       { moduleKey: 'service-order-quote', label: 'Cotizaciones de Orden de Servicio', sortOrder: 118, icon: 'fas fa-file-invoice-dollar' },
     ];
@@ -114,15 +113,6 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'service-order', actionKey: 'delete', description: 'Eliminar órdenes de servicio', sortOrder: 60 },
       { moduleKey: 'service-order', actionKey: 'restore', description: 'Restaurar órdenes de servicio', sortOrder: 70 },
 
-      // Service Order Items
-      { moduleKey: 'service-order-item', actionKey: 'create', description: 'Crear equipos en órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-item', actionKey: 'read', description: 'Ver equipos en órdenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-item', actionKey: 'update', description: 'Actualizar equipos en órdenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-item', actionKey: 'delete', description: 'Eliminar equipos en órdenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order-item', actionKey: 'restore', description: 'Restaurar equipos en órdenes de servicio', sortOrder: 70 },
-      { moduleKey: 'service-order-item', actionKey: 'assign', description: 'Asignar o reasignar técnicos a equipos', sortOrder: 80 },
-      { moduleKey: 'service-order-item', actionKey: 'update-status', description: 'Cambiar estado de equipos en órdenes de servicio', sortOrder: 90 },
-
       // Service Order Diagnoses
       { moduleKey: 'service-order-diagnosis', actionKey: 'create', description: 'Crear diagnósticos de órdenes de servicio', sortOrder: 10 },
       { moduleKey: 'service-order-diagnosis', actionKey: 'read', description: 'Ver diagnósticos de órdenes de servicio', sortOrder: 20 },
@@ -154,8 +144,9 @@ export class BootstrapService implements OnModuleInit {
     // 4) Asegurar rol admin y conceder todos los permisos del catálogo
     await this.ensureAdminRoleAndGrants(allCodes);
 
-    // 5) Crear usuario admin si no hay usuarios
-    await this.ensureDefaultAdminUser();
+    // 5) Crear/asegurar usuarios base
+    await this.ensureDefaultUsers();
+    await this.ensureOperationalUsers();
 
     // 6) Asegurar servicio de diagnóstico
     await this.ensureDiagnosticServiceCatalog();
@@ -278,6 +269,13 @@ export class BootstrapService implements OnModuleInit {
       'quote.approve-client',
       'quote.reject-client',
       'quote.resubmit',
+      'service-order-item.create',
+      'service-order-item.read',
+      'service-order-item.update',
+      'service-order-item.delete',
+      'service-order-item.restore',
+      'service-order-item.assign',
+      'service-order-item.update-status',
       'service-order-item.assign-supervisor',
       'service-order-quote.approve-supervisor',
       'service-order-quote.reject-supervisor',
@@ -307,6 +305,15 @@ export class BootstrapService implements OnModuleInit {
 
     await this.permsRepo.remove(legacyPermissions);
     this.log.log(`Permisos legacy eliminados: ${legacyCodes.join(', ')}`);
+
+    const legacyModule = await this.permModulesRepo.findOne({
+      where: { moduleKey: 'service-order-item' },
+    });
+
+    if (legacyModule) {
+      await this.permModulesRepo.remove(legacyModule);
+      this.log.log('Módulo legacy eliminado: service-order-item');
+    }
   }
 
   private async syncCatalog(MODULES: ModuleSeed[], PERMS: PermSeed[]) {
@@ -420,9 +427,11 @@ export class BootstrapService implements OnModuleInit {
           'service-order.create',
           'service-order.read',
           'service-order.update',
-          'service-order-item.read',
-          'service-order-item.assign',
-          'service-order-item.update-status',
+          'clients.read',
+          'clients.create',
+          'clients.update',
+          'service-category.read',
+          'service.read',
           'service-order-diagnosis.read',
           'service-order-quote.create',
           'service-order-quote.read',
@@ -436,8 +445,8 @@ export class BootstrapService implements OnModuleInit {
       {
         name: 'technician',
         permissionCodes: [
-          'service-order-item.read',
-          'service-order-item.update-status',
+          'service-order.read',
+          'service-order.update',
           'service-order-diagnosis.create',
           'service-order-diagnosis.read',
           'service-order-diagnosis.update',
@@ -448,7 +457,6 @@ export class BootstrapService implements OnModuleInit {
         name: 'supervisor',
         permissionCodes: [
           'service-order.read',
-          'service-order-item.read',
           'service-order-diagnosis.read',
           'service-order-quote.read',
         ],
@@ -477,7 +485,7 @@ export class BootstrapService implements OnModuleInit {
     }
   }
 
-  private async ensureDefaultAdminUser() {
+  private async ensureDefaultUsers() {
     const usersCount = await this.usersRepo.count();
     if (usersCount > 0) {
       this.log.log('Usuarios existentes: no se creará usuario por defecto.');
@@ -511,5 +519,70 @@ export class BootstrapService implements OnModuleInit {
 
     await this.usersRepo.save(adminUser);
     this.log.log(`Usuario inicial creado → ${email} / ${plainPwd}`);
+  }
+  private async ensureOperationalUsers() {
+    const defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
+    if (!defaultDt) {
+      return;
+    }
+
+    const userSeeds = [
+      {
+        email: 'recepcionist@test.com',
+        name: 'Recepcionista',
+        password: 'Recepcion123',
+        roleName: 'recepcionist',
+        documentNumber: '00000001',
+        phone: '999999991',
+      },
+      {
+        email: 'technician@test.com',
+        name: 'Tecnico',
+        password: 'Technician123',
+        roleName: 'technician',
+        documentNumber: '00000002',
+        phone: '999999992',
+      },
+      {
+        email: 'supervisor@test.com',
+        name: 'Supervisor',
+        password: 'Supervisor123',
+        roleName: 'supervisor',
+        documentNumber: '00000003',
+        phone: '999999993',
+      },
+    ];
+
+    for (const seed of userSeeds) {
+      const existingUser = await this.usersRepo.findOne({
+        where: { email: seed.email },
+        withDeleted: true,
+      });
+
+      if (existingUser) {
+        continue;
+      }
+
+      const role = await this.rolesRepo.findOne({ where: { name: seed.roleName } });
+      if (!role) {
+        this.log.warn(`No se pudo crear usuario ${seed.email}: rol ${seed.roleName} no encontrado.`);
+        continue;
+      }
+
+      const passwordHash = await bcrypt.hash(seed.password, 10);
+      const user = this.usersRepo.create({
+        email: seed.email,
+        name: seed.name,
+        passwordHash,
+        roles: [role],
+        isActive: true,
+        documentType: defaultDt,
+        documentNumber: seed.documentNumber,
+        phone: seed.phone,
+      });
+
+      await this.usersRepo.save(user);
+      this.log.log(`Usuario base creado -> ${seed.email} / ${seed.password}`);
+    }
   }
 }

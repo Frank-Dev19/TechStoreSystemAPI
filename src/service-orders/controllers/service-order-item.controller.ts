@@ -33,13 +33,13 @@ import {
 export class ServiceOrderItemController {
   constructor(private readonly serviceOrderItemService: ServiceOrderItemService) {}
 
-  @Permissions('service-order-item.read')
+  @Permissions('service-order.read')
   @Get()
   findAll(@Query() query: any, @CurrentUser() userId?: number) {
     return this.serviceOrderItemService.findAll(query, userId);
   }
 
-  @Permissions('service-order-item.read')
+  @Permissions('service-order.read')
   @Get(':id')
   findOne(
     @Param('id', ParseIntPipe) id: number,
@@ -48,31 +48,31 @@ export class ServiceOrderItemController {
     return this.serviceOrderItemService.findOne(id, withDeleted === 'true');
   }
 
-  @Permissions('service-order-item.delete')
+  @Permissions('service-order.delete')
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.serviceOrderItemService.softDelete(id);
   }
 
-  @Permissions('service-order-item.restore')
+  @Permissions('service-order.restore')
   @Patch(':id/restore')
   restore(@Param('id', ParseIntPipe) id: number) {
     return this.serviceOrderItemService.restore(id);
   }
 
-  @Permissions('service-order-item.delete')
+  @Permissions('service-order.delete')
   @Post('bulk-delete')
   bulkDelete(@Body() dto: BulkOperationsDto) {
     return this.serviceOrderItemService.bulkSoftDelete(dto.ids);
   }
 
-  @Permissions('service-order-item.restore')
+  @Permissions('service-order.restore')
   @Post('bulk-restore')
   bulkRestore(@Body() dto: BulkOperationsDto) {
     return this.serviceOrderItemService.bulkRestore(dto.ids);
   }
 
-  @Permissions('service-order-item.assign')
+  @Permissions('service-order.update')
   @Patch(':itemId/assign-technician')
   assignTechnician(
     @Param('itemId', ParseIntPipe) itemId: number,
@@ -81,7 +81,7 @@ export class ServiceOrderItemController {
     return this.serviceOrderItemService.assignTechnician(itemId, dto.technicianId);
   }
 
-  @Permissions('service-order-item.update-status')
+  @Permissions('service-order.update')
   @Patch(':itemId/status/:status')
   changeStatus(
     @Param('itemId', ParseIntPipe) itemId: number,
@@ -91,7 +91,7 @@ export class ServiceOrderItemController {
     return this.serviceOrderItemService.changeStatus(itemId, status, userId);
   }
 
-  @Permissions('service-order-item.update-status')
+  @Permissions('service-order.update')
   @Patch(':itemId/request-rediagnosis')
   requestRediagnosis(
     @Param('itemId', ParseIntPipe) itemId: number,

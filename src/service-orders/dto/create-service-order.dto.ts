@@ -1,5 +1,6 @@
 import {
   ArrayMinSize,
+  ArrayMaxSize,
   IsArray,
   IsDateString,
   IsEnum,
@@ -39,6 +40,7 @@ export class CreateServiceOrderDto {
 
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(1)
   @ValidateNested({ each: true })
   @Type(() => CreateServiceOrderItemDto)
   items: CreateServiceOrderItemDto[];

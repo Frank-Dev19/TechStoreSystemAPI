@@ -18,6 +18,7 @@ export const serviceOrderItemStateMachine: TransitionMap = {
   // Flujo de diagnóstico - solo para DIAGNOSIS
   [ServiceOrderItemStatus.IN_DIAGNOSIS]: [
     ServiceOrderItemStatus.DIAGNOSED,
+    ServiceOrderItemStatus.CLIENT_APPROVED,
     ServiceOrderItemStatus.CANCELLED,
   ],
 
@@ -138,6 +139,30 @@ export const canTransitionServiceOrderItem = (
       if (current === ServiceOrderItemStatus.QUOTED && next === ServiceOrderItemStatus.CLIENT_APPROVED) {
         return false;
       }
+      if (current === ServiceOrderItemStatus.IN_DIAGNOSIS && next === ServiceOrderItemStatus.CLIENT_APPROVED) {
+        return false;
+      }
+      if (current === ServiceOrderItemStatus.ASSIGNED && next === ServiceOrderItemStatus.IN_REPAIR) {
+        return false;
+      }
+    }
+
+    if (serviceType === ServiceType.WARRANTY_SERVICE) {
+      const forbiddenStates = [
+        ServiceOrderItemStatus.DIAGNOSED,
+        ServiceOrderItemStatus.QUOTED,
+        ServiceOrderItemStatus.SENT_TO_CLIENT,
+        ServiceOrderItemStatus.AWAITING_CLIENT_RESPONSE,
+        ServiceOrderItemStatus.CLIENT_REJECTED,
+        ServiceOrderItemStatus.CLOSED_REJECTED_CLIENT,
+        ServiceOrderItemStatus.QUOTE_EXPIRED,
+        ServiceOrderItemStatus.READY_FOR_REPAIR,
+      ];
+
+      if (forbiddenStates.includes(next)) {
+        return false;
+      }
+
       if (current === ServiceOrderItemStatus.ASSIGNED && next === ServiceOrderItemStatus.IN_REPAIR) {
         return false;
       }

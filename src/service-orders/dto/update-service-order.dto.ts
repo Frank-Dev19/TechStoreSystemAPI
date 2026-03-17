@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, MaxLength, IsEmail } from 'class-validator';
+import { IsOptional, IsString, MaxLength, IsEmail, IsBoolean } from 'class-validator';
 import { CreateServiceOrderDto } from './create-service-order.dto';
 
 export class UpdateServiceOrderDto extends PartialType(CreateServiceOrderDto) {
@@ -21,4 +21,8 @@ export class UpdateServiceOrderDto extends PartialType(CreateServiceOrderDto) {
   @MaxLength(20)
   @IsOptional()
   contactPhone?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isPaid?: boolean;
 }

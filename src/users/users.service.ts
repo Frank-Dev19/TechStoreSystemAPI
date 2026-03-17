@@ -1,5 +1,5 @@
 // src/users/users.service.ts
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -24,6 +24,22 @@ export class UsersService {
         return dt;
     }
 
+    private normalizeAndValidateDocumentNumber(documentNumber: string, documentType: DocumentType) {
+        const normalized = String(documentNumber ?? '').trim().toUpperCase();
+
+        if (!/^[A-Z0-9-]+$/.test(normalized)) {
+            throw new BadRequestException('El numero de documento solo puede contener letras, numeros y guion');
+        }
+
+        if (documentType.digits && normalized.length !== documentType.digits) {
+            throw new BadRequestException(
+                `El numero de documento debe tener exactamente ${documentType.digits} caracteres para ${documentType.name}`,
+            );
+        }
+
+        return normalized;
+    }
+
     private async ensureEmailUnique(email: string, ignoreId?: number) {
         const exists = await this.usersRepo.findOne({ where: { email }, select: ['id'] });
         if (exists && exists.id !== ignoreId) throw new ConflictException('Email ya esta en uso');
@@ -36,15 +52,18 @@ export class UsersService {
 
     // ---------- CRUD ----------
     async create(dto: CreateUserDto) {
+        const documentType = await this.ensureDocumentType(dto.documentTypeId);
+        const normalizedDocumentNumber = this.normalizeAndValidateDocumentNumber(dto.documentNumber, documentType);
+
         await this.ensureEmailUnique(dto.email);
-        await this.ensureDocNumberUnique(dto.documentNumber);
+        await this.ensureDocNumberUnique(normalizedDocumentNumber);
 
         const user = new User();
         user.email = dto.email;
         user.name = dto.name;
         user.phone = dto.phone ?? null;
-        user.documentType = await this.ensureDocumentType(dto.documentTypeId);
-        user.documentNumber = dto.documentNumber;
+        user.documentType = documentType;
+        user.documentNumber = normalizedDocumentNumber;
         user.passwordHash = await bcrypt.hash(dto.password, 10);
 
         if (dto.roleIds?.length) {
@@ -70,7 +89,11 @@ export class UsersService {
     }
 
     async findOne(id: number) {
-        const u = await this.usersRepo.findOne({ where: { id }, withDeleted: true });
+        const u = await this.usersRepo.findOne({
+            where: { id },
+            withDeleted: true,
+            relations: { documentType: true, roles: true },
+        });
         if (!u) throw new NotFoundException('Usuario no encontrado');
         return u;
     }
@@ -79,12 +102,23 @@ export class UsersService {
         const u = await this.findOne(id);
 
         if (dto.email) await this.ensureEmailUnique(dto.email, id);
-        if (dto.documentNumber) await this.ensureDocNumberUnique(dto.documentNumber, id);
+        let documentType = u.documentType;
+
+        if (dto.documentTypeId !== undefined) {
+            documentType = await this.ensureDocumentType(dto.documentTypeId);
+        }
+
+        if (dto.documentNumber !== undefined) {
+            dto.documentNumber = this.normalizeAndValidateDocumentNumber(dto.documentNumber, documentType);
+            await this.ensureDocNumberUnique(dto.documentNumber, id);
+        } else if (dto.documentTypeId !== undefined && u.documentNumber) {
+            this.normalizeAndValidateDocumentNumber(u.documentNumber, documentType);
+        }
 
         if (dto.name !== undefined) u.name = dto.name;
         if (dto.phone !== undefined) u.phone = dto.phone ?? null;
         if (dto.documentTypeId !== undefined) {
-            u.documentType = await this.ensureDocumentType(dto.documentTypeId);
+            u.documentType = documentType;
         }
         if (dto.documentNumber !== undefined) u.documentNumber = dto.documentNumber;
 

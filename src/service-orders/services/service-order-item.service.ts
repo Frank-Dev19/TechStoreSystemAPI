@@ -7,7 +7,7 @@ import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderItemEvent } from '../entities/service-order-item-event.entity';
 import { TechnicianAssignmentBalance } from '../entities/technician-assignment-balance.entity';
 import { CreateServiceOrderItemDto } from '../dto/create-service-order-item.dto';
-import { ServiceOrderItemStatus, ServiceOrderStatus, ServiceType } from '../enums';
+import { EquipmentType, ServiceOrderItemStatus, ServiceOrderStatus, ServiceType } from '../enums';
 import { canTransitionServiceOrderItem } from '../state-machines/service-order-item.state-machine';
 import { User } from '../../users/entities/user.entity';
 import { hasRoleName, TECHNICIAN_ROLE_NAMES } from '../../common/constants/role-names';
@@ -109,6 +109,7 @@ export class ServiceOrderItemService {
     const partial: DeepPartial<ServiceOrderItem> = {
       itemNumber,
       equipmentType: dto.equipmentType,
+      equipmentTypeOther: dto.equipmentType === EquipmentType.OTHER ? dto.equipmentTypeOther?.trim() ?? null : null,
       brand: dto.brand ?? null,
       model: dto.model ?? null,
       serialNumber: dto.serialNumber ?? null,
@@ -219,6 +220,7 @@ export class ServiceOrderItemService {
             .orWhere('LOWER(serviceOrderItem.model) LIKE :search')
             .orWhere('LOWER(serviceOrderItem.brand) LIKE :search')
             .orWhere('LOWER(serviceOrderItem.initialIssue) LIKE :search')
+            .orWhere('LOWER(serviceOrderItem.equipmentTypeOther) LIKE :search')
             .orWhere('LOWER(serviceOrder.code) LIKE :search');
         }),
       ).setParameter('search', normalized);

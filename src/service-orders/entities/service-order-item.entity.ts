@@ -31,6 +31,9 @@ export class ServiceOrderItem {
   @Column({ name: 'equipment_type', type: 'enum', enum: EquipmentType })
   equipmentType: EquipmentType;
 
+  @Column({ name: 'equipment_type_other', type: 'varchar', length: 120, nullable: true })
+  equipmentTypeOther: string | null;
+
   @Column({ name: 'brand', type: 'varchar', length: 100, nullable: true })
   brand: string | null;
 

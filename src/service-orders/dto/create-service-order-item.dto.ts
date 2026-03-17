@@ -6,12 +6,19 @@ import {
   IsPositive,
   IsString,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { EquipmentType, ServiceType } from '../enums';
 
 export class CreateServiceOrderItemDto {
   @IsEnum(EquipmentType)
   equipmentType: EquipmentType;
+
+  @ValidateIf((dto: CreateServiceOrderItemDto) => dto.equipmentType === EquipmentType.OTHER)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  equipmentTypeOther?: string;
 
   @IsString()
   @IsOptional()

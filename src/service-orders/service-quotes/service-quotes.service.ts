@@ -28,6 +28,19 @@ type FindQuotesQuery = {
   withDeleted?: string;
 };
 
+type TechnicianRevenueRankingRow = {
+  technicianId: number;
+  technicianName: string;
+  itemsCount: number;
+  totalRevenue: number;
+  productRevenue: number;
+  serviceRevenue: number;
+  diagnosisRevenue: number;
+  standardRevenue: number;
+  diagnosisItemsCount: number;
+  standardItemsCount: number;
+};
+
 @Injectable()
 export class ServiceOrderQuotesService {
   private static readonly DIAGNOSTIC_SERVICE_CODE = 'DIAGNOSIS_FEE';
@@ -91,8 +104,103 @@ export class ServiceOrderQuotesService {
     return this.normalizeQuoteStatus(quote);
   }
 
+  async getTechnicianRevenueRankings() {
+    const quotes = await this.quoteRepository.find({
+      relations: [
+        'serviceOrderItem',
+        'serviceOrderItem.assignedTechnician',
+        'productItems',
+        'serviceItems',
+      ],
+      order: {
+        serviceOrderItemId: 'ASC',
+        sequenceNumber: 'DESC',
+      },
+    });
+
+    const allowedTypes = new Set([ServiceType.DIAGNOSIS, ServiceType.STANDARD_SERVICE]);
+    const grouped = new Map<number, ServiceOrderQuote[]>();
+
+    for (const quote of quotes) {
+      const item = quote.serviceOrderItem;
+      if (!item || item.deletedAt || !item.assignedToTechnicianId || !allowedTypes.has(item.serviceType)) {
+        continue;
+      }
+      const existing = grouped.get(item.id) ?? [];
+      existing.push(this.normalizeQuoteStatus(quote));
+      grouped.set(item.id, existing);
+    }
+
+    const rankingMap = new Map<number, TechnicianRevenueRankingRow>();
+
+    for (const itemQuotes of grouped.values()) {
+      const effectiveQuote = this.pickEffectiveQuote(itemQuotes);
+      if (!effectiveQuote) continue;
+
+      const item = effectiveQuote.serviceOrderItem;
+      if (!item?.assignedToTechnicianId) continue;
+
+      const technicianId = Number(item.assignedToTechnicianId);
+      const technicianName = item.assignedTechnician?.name ?? item.assignedToTechnicianName ?? `Tecnico #${technicianId}`;
+      const productRevenue = (effectiveQuote.productItems ?? []).reduce(
+        (acc, product) => acc + Number(product.lineTotal ?? 0),
+        0,
+      );
+      const serviceRevenue = (effectiveQuote.serviceItems ?? []).reduce(
+        (acc, service) => acc + Number(service.lineTotal ?? 0),
+        0,
+      );
+      const totalRevenue = Number((productRevenue + serviceRevenue).toFixed(2));
+
+      const current = rankingMap.get(technicianId) ?? {
+        technicianId,
+        technicianName,
+        itemsCount: 0,
+        totalRevenue: 0,
+        productRevenue: 0,
+        serviceRevenue: 0,
+        diagnosisRevenue: 0,
+        standardRevenue: 0,
+        diagnosisItemsCount: 0,
+        standardItemsCount: 0,
+      };
+
+      current.itemsCount += 1;
+      current.totalRevenue = Number((current.totalRevenue + totalRevenue).toFixed(2));
+      current.productRevenue = Number((current.productRevenue + productRevenue).toFixed(2));
+      current.serviceRevenue = Number((current.serviceRevenue + serviceRevenue).toFixed(2));
+
+      if (item.serviceType === ServiceType.DIAGNOSIS) {
+        current.diagnosisRevenue = Number((current.diagnosisRevenue + totalRevenue).toFixed(2));
+        current.diagnosisItemsCount += 1;
+      } else if (item.serviceType === ServiceType.STANDARD_SERVICE) {
+        current.standardRevenue = Number((current.standardRevenue + totalRevenue).toFixed(2));
+        current.standardItemsCount += 1;
+      }
+
+      rankingMap.set(technicianId, current);
+    }
+
+    const rows = Array.from(rankingMap.values()).sort((a, b) => {
+      if (b.totalRevenue !== a.totalRevenue) return b.totalRevenue - a.totalRevenue;
+      if (b.serviceRevenue !== a.serviceRevenue) return b.serviceRevenue - a.serviceRevenue;
+      return a.technicianName.localeCompare(b.technicianName);
+    });
+
+    return {
+      generatedAt: new Date(),
+      technicians: rows.map((row, index) => ({
+        ...row,
+        rank: index + 1,
+      })),
+    };
+  }
+
   async create(dto: CreateServiceOrderQuoteDto) {
     const serviceOrderItem = await this.ensureServiceOrderItem(dto.serviceOrderItemId);
+    if (serviceOrderItem.serviceType === ServiceType.WARRANTY_SERVICE) {
+      throw new BadRequestException('Warranty service orders do not use quotations');
+    }
     const diagnosis = dto.diagnosisId ? await this.ensureDiagnosis(dto.diagnosisId) : null;
     if (diagnosis && diagnosis.serviceOrderItemId !== serviceOrderItem.id) {
       throw new BadRequestException('Diagnosis does not belong to the provided service order item');
@@ -540,7 +648,19 @@ export class ServiceOrderQuotesService {
   }
 
   private shouldAutoApproveClientQuote(serviceType: ServiceType): boolean {
-    return [ServiceType.STANDARD_SERVICE, ServiceType.WARRANTY_SERVICE].includes(serviceType);
+    return serviceType === ServiceType.STANDARD_SERVICE;
+  }
+
+  private pickEffectiveQuote(quotes: ServiceOrderQuote[]): ServiceOrderQuote | null {
+    if (!quotes.length) return null;
+
+    const approved = quotes.find((quote) => quote.status === ServiceOrderQuoteStatus.CLIENT_APPROVED || !!quote.clientApprovedAt);
+    if (approved) return approved;
+
+    const current = quotes.find((quote) => quote.status === ServiceOrderQuoteStatus.CURRENT);
+    if (current) return current;
+
+    return [...quotes].sort((a, b) => Number(b.sequenceNumber ?? 0) - Number(a.sequenceNumber ?? 0))[0] ?? null;
   }
 
   private async transitionItemStatus(

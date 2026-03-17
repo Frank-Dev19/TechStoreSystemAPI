@@ -92,6 +92,12 @@ export class ServiceOrder {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ name: 'is_paid', type: 'boolean', default: false })
+  isPaid: boolean;
+
+  @Column({ name: 'paid_at', type: 'datetime', nullable: true })
+  paidAt: Date | null;
+
   @Column({ name: 'items_count', type: 'int', unsigned: true, default: 0 })
   itemsCount: number;
 

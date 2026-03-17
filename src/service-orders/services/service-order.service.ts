@@ -281,6 +281,11 @@ export class ServiceOrderService {
       serviceOrder.notes = dto.notes;
     }
 
+    if (dto.isPaid !== undefined) {
+      serviceOrder.isPaid = dto.isPaid;
+      serviceOrder.paidAt = dto.isPaid ? new Date() : null;
+    }
+
     if (dto.contactName !== undefined) {
       serviceOrder.clientSnapshotName = this.normalizeOptionalSnapshotValue(dto.contactName, 150);
     }
@@ -294,6 +299,9 @@ export class ServiceOrderService {
     }
 
     if (dto.items?.length) {
+      if ((serviceOrder.items?.length ?? 0) >= 1) {
+        throw new BadRequestException('Cada orden de servicio solo puede tener un equipo. Edita el equipo existente.');
+      }
       const startingNumber = serviceOrder.items?.length
         ? Math.max(...serviceOrder.items.map((item) => item.itemNumber))
         : 0;

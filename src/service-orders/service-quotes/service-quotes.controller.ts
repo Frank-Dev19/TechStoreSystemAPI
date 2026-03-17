@@ -38,6 +38,12 @@ export class ServiceOrderQuotesController {
   }
 
   @Permissions('service-order-quote.read')
+  @Get('technician-rankings')
+  getTechnicianRevenueRankings() {
+    return this.serviceOrderQuotesService.getTechnicianRevenueRankings();
+  }
+
+  @Permissions('service-order-quote.read')
   @Get(':id')
   findOne(
     @Param('id', ParseIntPipe) id: number,
