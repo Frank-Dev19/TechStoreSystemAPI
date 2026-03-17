@@ -17,6 +17,22 @@ export class StockService {
         return this.stockRepo.find({ relations: ['product', 'lot'] });
     }
 
+    async getCurrentStock(productId: number) {
+        const stockLines = await this.stockRepo.find({
+            where: { productId, qtyOnHand: MoreThan(0) }
+        });
+
+        const total_qty = stockLines.reduce((sum, s) => sum + Number(s.qtyOnHand), 0);
+        const total_cost = stockLines.reduce((sum, s) => sum + Number(s.totalCost), 0);
+        const avg_cost = total_qty > 0 ? total_cost / total_qty : 0;
+
+        return {
+            product_id: productId,
+            total_qty,
+            avg_cost
+        };
+    }
+
     async listPaged(filters: any = {}) {
         // Obtenemos todo el stock relacionando el producto y lote
         const qb = this.stockRepo.createQueryBuilder('stock')

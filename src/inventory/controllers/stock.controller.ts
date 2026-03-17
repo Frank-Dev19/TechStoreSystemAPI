@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { StockService } from '../services/stock.service';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { FilterStockDto } from '../dto/filter-stock.dto';
@@ -11,6 +11,16 @@ export class StockController {
     @Get()
     list(@Query() q: FilterStockDto) {
         return this.svc.listPaged(q);
+    }
+
+    @Get('all')
+    listAll() {
+        return this.svc.listAll();
+    }
+
+    @Get('current/:productId')
+    getCurrentStock(@Param('productId') productId: number) {
+        return this.svc.getCurrentStock(Number(productId));
     }
 
     @Get('metrics')
