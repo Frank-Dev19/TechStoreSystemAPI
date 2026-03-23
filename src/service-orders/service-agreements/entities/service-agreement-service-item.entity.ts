@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   DeleteDateColumn,
@@ -8,20 +8,20 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ServiceOrderQuote } from './service-quote.entity';
+import { ServiceOrderAgreement } from './service-agreement.entity';
 import { Service } from '../../../service-catalog/entities/service.entity';
 
-@Entity('service_order_quote_services')
-export class ServiceOrderQuoteServiceItem {
+@Entity('service_order_agreement_services')
+export class ServiceOrderAgreementServiceItem {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 
-  @ManyToOne(() => ServiceOrderQuote, (quote) => quote.serviceItems, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'service_order_quote_id' })
-  serviceOrderQuote: ServiceOrderQuote;
+  @ManyToOne(() => ServiceOrderAgreement, (quote) => quote.serviceItems, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'service_order_agreement_id' })
+  serviceOrderAgreement: ServiceOrderAgreement;
 
-  @Column({ name: 'service_order_quote_id', type: 'bigint', unsigned: true })
-  serviceOrderQuoteId: number;
+  @Column({ name: 'service_order_agreement_id', type: 'bigint', unsigned: true })
+  serviceOrderAgreementId: number;
 
   @ManyToOne(() => Service, { eager: true, nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'service_id' })
@@ -60,3 +60,5 @@ export class ServiceOrderQuoteServiceItem {
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt: Date | null;
 }
+
+

@@ -1,6 +1,6 @@
-import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+﻿import { IsBoolean, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
 
-export class ServiceOrderQuoteProductItemDto {
+export class ServiceOrderAgreementProductItemDto {
   @IsNumber()
   @IsPositive()
   productId: number;
@@ -23,3 +23,4 @@ export class ServiceOrderQuoteProductItemDto {
   @MaxLength(255)
   notes?: string;
 }
+

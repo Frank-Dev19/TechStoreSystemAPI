@@ -5,26 +5,35 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository } from 'typeorm';
+import { Brackets, Repository } from 'typeorm';
+import { Client } from '../../clients/entities/client.entity';
+import { User } from '../../users/entities/user.entity';
+import {
+  EquipmentType,
+  RequestOrigin,
+  ServiceOrderPaymentStatus,
+  ServiceOrderPriority,
+  ServiceOrderStatus,
+  ServiceOrderWorkflowStatus,
+  ServiceType,
+} from '../enums';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { ServiceOrderItem } from '../entities/service-order-item.entity';
-import { Client } from '../../clients/entities/client.entity';
-import { RequestOrigin, ServiceOrderItemStatus, ServiceOrderPriority, ServiceOrderStatus } from '../enums';
-import { ServiceOrderItemService } from './service-order-item.service';
-import { User } from '../../users/entities/user.entity';
+import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
 type FindAllServiceOrdersQuery = {
   page?: number | string;
   limit?: number | string;
   search?: string;
   status?: string;
+  workflowStatus?: string;
+  itemStatus?: string;
+  paymentStatus?: string;
   priority?: string;
   clientId?: number | string;
-  itemStatus?: string;
+  technicianId?: number | string;
   withDeleted?: string;
-  includeItems?: string | boolean;
   from?: string;
   to?: string;
 };
@@ -34,183 +43,125 @@ export class ServiceOrderService {
   constructor(
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
-    @InjectRepository(ServiceOrderItem)
-    private readonly serviceOrderItemRepository: Repository<ServiceOrderItem>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    private readonly serviceOrderItemService: ServiceOrderItemService,
+    private readonly workflowService: ServiceOrderWorkflowService,
   ) {}
 
   async create(dto: CreateServiceOrderDto, creatorId: number): Promise<ServiceOrder> {
     await this.ensureUser(creatorId);
     const requestOrigin = dto.requestOrigin ?? RequestOrigin.CLIENT;
     const client = await this.resolveClientForRequest(dto.clientId, requestOrigin);
+    const code = await this.generateUniqueCode();
+    const now = new Date();
+    const assignedToTechnicianId = await this.resolveAssignedTechnicianId(
+      dto.assignedToTechnicianId,
+      dto.serviceType ?? ServiceType.DIAGNOSIS,
+    );
 
-    const maxRetries = 3;
+    const workflowStatus = this.getInitialWorkflowStatus(dto.serviceType ?? ServiceType.DIAGNOSIS);
+    const status =
+      workflowStatus === ServiceOrderWorkflowStatus.APPROVED_FOR_WORK
+        ? ServiceOrderStatus.ACTIVE
+        : ServiceOrderStatus.OPEN;
 
-    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-      try {
-        const code = await this.generateNextServiceOrderCode();
-        const now = new Date();
-        const items = await this.serviceOrderItemService.createItemsWithAutoAssignment(
-          dto.items,
-          0,
-          now,
-        );
+    const serviceOrder = this.serviceOrderRepository.create({
+      code,
+      requestOrigin,
+      clientId: client?.id ?? null,
+      createdBy: creatorId,
+      priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
+      status,
+      workflowStatus,
+      paymentStatus: ServiceOrderPaymentStatus.UNPAID,
+      assignedToTechnicianId,
+      assignedAt: assignedToTechnicianId ? now : null,
+      equipmentType: dto.equipmentType,
+      equipmentTypeOther:
+        dto.equipmentType === EquipmentType.OTHER ? dto.equipmentTypeOther?.trim() ?? null : null,
+      brand: dto.brand ?? null,
+      model: dto.model ?? null,
+      serialNumber: dto.serialNumber ?? null,
+      accessories: dto.accessories ?? null,
+      serviceType: dto.serviceType ?? ServiceType.DIAGNOSIS,
+      initialIssue: dto.initialIssue,
+      estimatedRepairHours: dto.estimatedRepairHours ?? null,
+      receivedAt: now,
+      estimatedDeliveryDate: dto.estimatedDeliveryDate ? new Date(dto.estimatedDeliveryDate) : null,
+      notes: dto.notes ?? null,
+    });
 
-        const serviceOrder = this.serviceOrderRepository.create({
-          code,
-          clientId: client?.id ?? null,
-          createdBy: creatorId,
-          priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
-          requestOrigin,
-          estimatedDeliveryDate: dto.estimatedDeliveryDate ? new Date(dto.estimatedDeliveryDate) : null,
-          notes: dto.notes ?? null,
-          items,
-        });
-        this.applyClientSnapshot(serviceOrder, client);
-
-        this.serviceOrderItemService.applyAggregates(serviceOrder);
-
-        const savedServiceOrder = await this.serviceOrderRepository.save(serviceOrder);
-        await this.serviceOrderItemService.registerAutoAssignments(items);
-
-        await this.serviceOrderItemService.notifyTechnicianAssignmentsForServiceOrder(
-          savedServiceOrder.code,
-          items,
-          client?.phone ?? null,
-        );
-
-        return savedServiceOrder;
-      } catch (error: any) {
-        if (error instanceof ConflictException || error instanceof BadRequestException) {
-          throw error;
-        }
-
-        const isDuplicate =
-          error?.code === 'ER_DUP_ENTRY' ||
-          error?.code === '23505' ||
-          error?.message?.includes('duplicate') ||
-          error?.message?.includes('unique');
-
-        if (!isDuplicate || attempt === maxRetries - 1) {
-          throw error;
-        }
-      }
-    }
-
-    throw new ConflictException('Could not generate a unique service order code');
+    this.applyClientSnapshot(serviceOrder, client);
+    const saved = await this.serviceOrderRepository.save(serviceOrder);
+    await this.workflowService.registerInitialAssignment(saved, creatorId);
+    return this.findOne(saved.id);
   }
 
   async findAll(query: FindAllServiceOrdersQuery) {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const includeDeleted = query.withDeleted === 'true';
-    const includeItems = query.includeItems === true || query.includeItems === 'true';
 
     const statuses = this.parseEnumList<ServiceOrderStatus>(query.status, ServiceOrderStatus, 'status');
-    const priorities = this.parseEnumList<ServiceOrderPriority>(query.priority, ServiceOrderPriority, 'priority');
-    const itemStatuses = this.parseEnumList<ServiceOrderItemStatus>(
-      query.itemStatus,
-      ServiceOrderItemStatus,
-      'itemStatus',
+    const workflowStatuses = this.parseEnumList<ServiceOrderWorkflowStatus>(
+      query.workflowStatus ?? query.itemStatus,
+      ServiceOrderWorkflowStatus,
+      'workflowStatus',
     );
+    const paymentStatuses = this.parseEnumList<ServiceOrderPaymentStatus>(
+      query.paymentStatus,
+      ServiceOrderPaymentStatus,
+      'paymentStatus',
+    );
+    const priorities = this.parseEnumList<ServiceOrderPriority>(query.priority, ServiceOrderPriority, 'priority');
 
-    const qb = this.serviceOrderRepository.createQueryBuilder('serviceOrder');
-    const searchTerm = query.search?.trim();
-    const shouldJoinItems = includeItems || Boolean(itemStatuses?.length) || Boolean(searchTerm);
-    const itemJoinCondition = includeDeleted ? undefined : 'serviceOrderItem.deletedAt IS NULL';
-
-    if (shouldJoinItems) {
-      if (includeItems) {
-        qb.leftJoinAndSelect('serviceOrder.items', 'serviceOrderItem', itemJoinCondition)
-          .leftJoinAndSelect('serviceOrderItem.assignedTechnician', 'assignedTechnician');
-      } else {
-        qb.leftJoin('serviceOrder.items', 'serviceOrderItem', itemJoinCondition);
-      }
-    }
+    const qb = this.serviceOrderRepository
+      .createQueryBuilder('serviceOrder')
+      .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
+      .leftJoinAndSelect('serviceOrder.client', 'client');
 
     if (includeDeleted) {
       qb.withDeleted();
     }
-
     if (statuses?.length) {
       qb.andWhere('serviceOrder.status IN (:...statuses)', { statuses });
     }
-
+    if (workflowStatuses?.length) {
+      qb.andWhere('serviceOrder.workflowStatus IN (:...workflowStatuses)', { workflowStatuses });
+    }
+    if (paymentStatuses?.length) {
+      qb.andWhere('serviceOrder.paymentStatus IN (:...paymentStatuses)', { paymentStatuses });
+    }
     if (priorities?.length) {
       qb.andWhere('serviceOrder.priority IN (:...priorities)', { priorities });
     }
-
     if (query.clientId !== undefined) {
       const clientId = this.parsePositiveNumber(query.clientId, undefined, 'clientId');
       qb.andWhere('serviceOrder.clientId = :clientId', { clientId });
     }
-
-    if (itemStatuses?.length) {
-      qb.andWhere('serviceOrderItem.status IN (:...itemStatuses)', { itemStatuses });
+    if (query.technicianId !== undefined) {
+      const technicianId = this.parsePositiveNumber(query.technicianId, undefined, 'technicianId');
+      qb.andWhere('serviceOrder.assignedToTechnicianId = :technicianId', { technicianId });
     }
 
+    const searchTerm = query.search?.trim();
     if (searchTerm) {
-      const normalizedSearch = `%${searchTerm.toLowerCase()}%`;
+      const normalized = `%${searchTerm.toLowerCase()}%`;
       qb.andWhere(
         new Brackets((expr) => {
           expr
             .where('LOWER(serviceOrder.code) LIKE :search')
-            .orWhere('LOWER(serviceOrderItem.serialNumber) LIKE :search')
-            .orWhere('LOWER(serviceOrderItem.initialIssue) LIKE :search')
-            .orWhere('LOWER(serviceOrderItem.brand) LIKE :search')
-            .orWhere('LOWER(serviceOrderItem.model) LIKE :search');
+            .orWhere('LOWER(serviceOrder.serialNumber) LIKE :search')
+            .orWhere('LOWER(serviceOrder.initialIssue) LIKE :search')
+            .orWhere('LOWER(serviceOrder.brand) LIKE :search')
+            .orWhere('LOWER(serviceOrder.model) LIKE :search')
+            .orWhere('LOWER(serviceOrder.clientSnapshotName) LIKE :search')
+            .orWhere('LOWER(serviceOrder.equipmentTypeOther) LIKE :search');
         }),
-      ).setParameter('search', normalizedSearch);
+      ).setParameter('search', normalized);
     }
-
-    qb.loadRelationCountAndMap(
-      'serviceOrder.pendingQuoteItemsCount',
-      'serviceOrder.items',
-      'pendingItems',
-      (countQb) => {
-        if (!includeDeleted) {
-          countQb.andWhere('pendingItems.deletedAt IS NULL');
-        }
-        return countQb.andWhere('pendingItems.status = :pendingStatus', {
-          pendingStatus: ServiceOrderItemStatus.DIAGNOSED,
-        });
-      },
-    );
-
-    qb.loadRelationCountAndMap(
-      'serviceOrder.rejectedQuoteItemsCount',
-      'serviceOrder.items',
-      'rejectedItems',
-      (countQb) => {
-        if (!includeDeleted) {
-          countQb.andWhere('rejectedItems.deletedAt IS NULL');
-        }
-        return countQb.andWhere('rejectedItems.status IN (:...rejectedStatuses)', {
-          rejectedStatuses: [
-            ServiceOrderItemStatus.CLIENT_REJECTED,
-            ServiceOrderItemStatus.CLOSED_REJECTED_CLIENT,
-          ],
-        });
-      },
-    );
-
-    qb.loadRelationCountAndMap(
-      'serviceOrder.pendingDeliveryItemsCount',
-      'serviceOrder.items',
-      'deliveryItems',
-      (countQb) => {
-        if (!includeDeleted) {
-          countQb.andWhere('deliveryItems.deletedAt IS NULL');
-        }
-        return countQb.andWhere('deliveryItems.status = :deliveryStatus', {
-          deliveryStatus: ServiceOrderItemStatus.REPAIRED,
-        });
-      },
-    );
 
     const fromDate = this.parseDate(query.from, 'from');
     if (fromDate) {
@@ -223,7 +174,6 @@ export class ServiceOrderService {
     }
 
     qb.orderBy('serviceOrder.createdAt', 'DESC').skip((page - 1) * limit).take(limit);
-
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
@@ -231,7 +181,7 @@ export class ServiceOrderService {
   async findOne(id: number, withDeleted = false): Promise<ServiceOrder> {
     const serviceOrder = await this.serviceOrderRepository.findOne({
       where: { id },
-      relations: ['items', 'items.assignedTechnician'],
+      relations: ['assignedTechnician', 'client'],
       withDeleted,
     });
 
@@ -243,22 +193,11 @@ export class ServiceOrderService {
   }
 
   async update(id: number, dto: UpdateServiceOrderDto): Promise<ServiceOrder> {
-    const serviceOrder = await this.serviceOrderRepository.findOne({
-      where: { id },
-      relations: ['items'],
-    });
+    const serviceOrder = await this.findOne(id, true);
 
-    if (!serviceOrder) {
-      throw new NotFoundException(`ServiceOrder with id ${id} not found`);
-    }
-
-    const requestOrigin = dto.requestOrigin ?? serviceOrder.requestOrigin ?? RequestOrigin.CLIENT;
-
-    if (dto.requestOrigin !== undefined) {
+    if (dto.requestOrigin !== undefined || dto.clientId !== undefined) {
+      const requestOrigin = dto.requestOrigin ?? serviceOrder.requestOrigin ?? RequestOrigin.CLIENT;
       serviceOrder.requestOrigin = requestOrigin;
-    }
-
-    if (dto.clientId !== undefined || dto.requestOrigin !== undefined) {
       const client = await this.resolveClientForRequest(
         dto.clientId ?? serviceOrder.clientId ?? undefined,
         requestOrigin,
@@ -267,147 +206,97 @@ export class ServiceOrderService {
       this.applyClientSnapshot(serviceOrder, client);
     }
 
-    if (dto.priority) {
-      serviceOrder.priority = dto.priority;
-    }
-
+    if (dto.priority !== undefined) serviceOrder.priority = dto.priority;
+    if (dto.equipmentType !== undefined) serviceOrder.equipmentType = dto.equipmentType;
+    if (dto.equipmentTypeOther !== undefined) serviceOrder.equipmentTypeOther = dto.equipmentTypeOther ?? null;
+    if (dto.brand !== undefined) serviceOrder.brand = dto.brand ?? null;
+    if (dto.model !== undefined) serviceOrder.model = dto.model ?? null;
+    if (dto.serialNumber !== undefined) serviceOrder.serialNumber = dto.serialNumber ?? null;
+    if (dto.accessories !== undefined) serviceOrder.accessories = dto.accessories ?? null;
+    if (dto.serviceType !== undefined) serviceOrder.serviceType = dto.serviceType;
+    if (dto.initialIssue !== undefined) serviceOrder.initialIssue = dto.initialIssue;
+    if (dto.estimatedRepairHours !== undefined) serviceOrder.estimatedRepairHours = dto.estimatedRepairHours ?? null;
     if (dto.estimatedDeliveryDate !== undefined) {
       serviceOrder.estimatedDeliveryDate = dto.estimatedDeliveryDate
         ? new Date(dto.estimatedDeliveryDate)
         : null;
     }
-
-    if (dto.notes !== undefined) {
-      serviceOrder.notes = dto.notes;
-    }
+    if (dto.notes !== undefined) serviceOrder.notes = dto.notes ?? null;
+    if (dto.cancellationReason !== undefined) serviceOrder.cancellationReason = dto.cancellationReason ?? null;
+    if (dto.status !== undefined) serviceOrder.status = dto.status;
+    if (dto.workflowStatus !== undefined) serviceOrder.workflowStatus = dto.workflowStatus;
+    if (dto.paymentStatus !== undefined) serviceOrder.paymentStatus = dto.paymentStatus;
 
     if (dto.isPaid !== undefined) {
       serviceOrder.isPaid = dto.isPaid;
+      serviceOrder.paymentStatus = dto.isPaid ? ServiceOrderPaymentStatus.PAID : ServiceOrderPaymentStatus.UNPAID;
       serviceOrder.paidAt = dto.isPaid ? new Date() : null;
     }
 
     if (dto.contactName !== undefined) {
-      serviceOrder.clientSnapshotName = this.normalizeOptionalSnapshotValue(dto.contactName, 150);
+      serviceOrder.clientSnapshotName = this.normalizeOptionalValue(dto.contactName, 150);
     }
-
     if (dto.contactEmail !== undefined) {
-      serviceOrder.clientSnapshotEmail = this.normalizeOptionalSnapshotValue(dto.contactEmail, 150);
+      serviceOrder.clientSnapshotEmail = this.normalizeOptionalValue(dto.contactEmail, 150);
     }
-
     if (dto.contactPhone !== undefined) {
-      serviceOrder.clientSnapshotPhone = this.normalizeOptionalSnapshotValue(dto.contactPhone, 20);
+      serviceOrder.clientSnapshotPhone = this.normalizeOptionalValue(dto.contactPhone, 20);
     }
 
-    if (dto.items?.length) {
-      if ((serviceOrder.items?.length ?? 0) >= 1) {
-        throw new BadRequestException('Cada orden de servicio solo puede tener un equipo. Edita el equipo existente.');
-      }
-      const startingNumber = serviceOrder.items?.length
-        ? Math.max(...serviceOrder.items.map((item) => item.itemNumber))
-        : 0;
-      const now = new Date();
-      const newItems = await this.serviceOrderItemService.createItemsWithAutoAssignment(
-        dto.items,
-        startingNumber,
-        now,
-      );
-      serviceOrder.items = [...(serviceOrder.items ?? []), ...newItems];
-      await this.serviceOrderItemService.registerAutoAssignments(newItems);
-    }
-
-    this.serviceOrderItemService.applyAggregates(serviceOrder);
     return this.serviceOrderRepository.save(serviceOrder);
   }
 
   async softDelete(id: number) {
-    await this.ensureServiceOrderExists(id);
+    await this.ensureExists(id);
     await this.serviceOrderRepository.softDelete(id);
-    await this.serviceOrderItemRepository
-      .createQueryBuilder()
-      .softDelete()
-      .where('service_order_id = :id', { id })
-      .execute();
-
     return { ok: true, message: `ServiceOrder with id ${id} deleted successfully` };
   }
 
   async restore(id: number) {
-    const serviceOrder = await this.serviceOrderRepository.findOne({
-      where: { id },
-      withDeleted: true,
-    });
-
+    const serviceOrder = await this.serviceOrderRepository.findOne({ where: { id }, withDeleted: true });
     if (!serviceOrder) {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);
     }
-
     if (!serviceOrder.deletedAt) {
       return { ok: true, message: 'ServiceOrder already active' };
     }
-
     await this.serviceOrderRepository.restore(id);
-    await this.serviceOrderItemRepository
-      .createQueryBuilder()
-      .restore()
-      .where('service_order_id = :id', { id })
-      .execute();
-
     return { ok: true, message: `ServiceOrder with id ${id} restored successfully` };
   }
 
   async bulkSoftDelete(ids: number[]) {
     this.ensureIds(ids);
-
-    const existing = await this.serviceOrderRepository.find({
-      where: { id: In(ids) },
-      select: ['id'],
-    });
-
-    if (!existing.length) {
-      throw new NotFoundException('No service orders found for provided ids');
-    }
-
-    const existingIds = existing.map((serviceOrder) => serviceOrder.id);
-    await this.serviceOrderRepository.softDelete(existingIds);
-    await this.serviceOrderItemRepository
-      .createQueryBuilder()
-      .softDelete()
-      .where('service_order_id IN (:...ids)', { ids: existingIds })
-      .execute();
-
-    return { ok: true, message: `${existingIds.length} service orders deleted successfully` };
+    await this.serviceOrderRepository.softDelete(ids);
+    return { ok: true, message: `${ids.length} service orders deleted successfully` };
   }
 
   async bulkRestore(ids: number[]) {
     this.ensureIds(ids);
-
-    const existing = await this.serviceOrderRepository.find({
-      where: { id: In(ids) },
-      withDeleted: true,
-      select: ['id', 'deletedAt'],
-    });
-
-    if (!existing.length) {
-      throw new NotFoundException('No service orders found for provided ids');
-    }
-
-    const toRestore = existing.filter((serviceOrder) => serviceOrder.deletedAt);
-    if (!toRestore.length) {
-      return { ok: true, message: 'Service orders already active' };
-    }
-
-    const idsToRestore = toRestore.map((serviceOrder) => serviceOrder.id);
-    await this.serviceOrderRepository.restore(idsToRestore);
-    await this.serviceOrderItemRepository
-      .createQueryBuilder()
-      .restore()
-      .where('service_order_id IN (:...ids)', { ids: idsToRestore })
-      .execute();
-
-    return { ok: true, message: `${idsToRestore.length} service orders restored successfully` };
+    await this.serviceOrderRepository.restore(ids);
+    return { ok: true, message: `${ids.length} service orders restored successfully` };
   }
 
-  private async ensureServiceOrderExists(id: number) {
+  private getInitialWorkflowStatus(serviceType: ServiceType): ServiceOrderWorkflowStatus {
+    if ([ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(serviceType)) {
+      return ServiceOrderWorkflowStatus.APPROVED_FOR_WORK;
+    }
+    return ServiceOrderWorkflowStatus.ASSIGNED;
+  }
+
+  private async resolveAssignedTechnicianId(
+    preferredTechnicianId: number | undefined,
+    serviceType: ServiceType,
+  ): Promise<number> {
+    if (preferredTechnicianId) {
+      await this.workflowService.ensureTechnicianAvailable(preferredTechnicianId);
+      return preferredTechnicianId;
+    }
+
+    const suggestion = await this.workflowService.getAssignmentSuggestion(serviceType);
+    return suggestion.suggestedTechnicianId;
+  }
+
+  private async ensureExists(id: number) {
     const exists = await this.serviceOrderRepository.findOne({ where: { id } });
     if (!exists) {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);
@@ -429,11 +318,9 @@ export class ServiceOrderService {
     if (requestOrigin === RequestOrigin.INTERNAL) {
       return null;
     }
-
     if (!clientId) {
       throw new BadRequestException('clientId is required for client-origin service orders');
     }
-
     return this.ensureClient(clientId);
   }
 
@@ -454,14 +341,10 @@ export class ServiceOrderService {
     serviceOrder.clientSnapshotEmail = client.email ?? null;
   }
 
-  private normalizeOptionalSnapshotValue(value: string | null | undefined, maxLength: number): string | null {
-    if (value === undefined || value === null) {
-      return null;
-    }
+  private normalizeOptionalValue(value: string | null | undefined, maxLength: number): string | null {
+    if (value === undefined || value === null) return null;
     const normalized = String(value).trim();
-    if (!normalized) {
-      return null;
-    }
+    if (!normalized) return null;
     return normalized.slice(0, maxLength);
   }
 
@@ -512,35 +395,33 @@ export class ServiceOrderService {
     enumObject: Record<string, string>,
     field: string,
   ): T[] | undefined {
-    if (!value) {
-      return undefined;
-    }
-
-    const values = value
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean) as T[];
-
+    if (!value) return undefined;
+    const values = value.split(',').map((entry) => entry.trim()).filter(Boolean) as T[];
     const allowed = Object.values(enumObject);
     const invalid = values.filter((entry) => !allowed.includes(entry));
     if (invalid.length) {
       throw new BadRequestException(`${field} contains invalid values: ${invalid.join(', ')}`);
     }
-
     return values;
   }
 
   private parseDate(value: string | undefined, field: string): Date | undefined {
-    if (!value) {
-      return undefined;
-    }
-
+    if (!value) return undefined;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException(`${field} must be a valid date`);
     }
-
     return date;
+  }
+
+  private async generateUniqueCode(): Promise<string> {
+    const maxRetries = 3;
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      const code = await this.generateNextServiceOrderCode();
+      const existing = await this.serviceOrderRepository.findOne({ where: { code }, withDeleted: true });
+      if (!existing) return code;
+    }
+    throw new ConflictException('Could not generate a unique service order code');
   }
 
   private async generateNextServiceOrderCode(): Promise<string> {

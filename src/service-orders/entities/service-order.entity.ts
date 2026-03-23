@@ -1,18 +1,25 @@
 import {
+  AfterLoad,
   Column,
   CreateDateColumn,
   DeleteDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
-  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
-import { RequestOrigin, ServiceOrderPriority, ServiceOrderStatus } from '../enums';
-import { ServiceOrderItem } from './service-order-item.entity';
+import {
+  EquipmentType,
+  RequestOrigin,
+  ServiceOrderPaymentStatus,
+  ServiceOrderPriority,
+  ServiceOrderStatus,
+  ServiceOrderWorkflowStatus,
+  ServiceType,
+} from '../enums';
 
 @Entity('service_orders')
 export class ServiceOrder {
@@ -30,6 +37,22 @@ export class ServiceOrder {
   status: ServiceOrderStatus;
 
   @Column({
+    name: 'workflow_status',
+    type: 'enum',
+    enum: ServiceOrderWorkflowStatus,
+    default: ServiceOrderWorkflowStatus.ASSIGNED,
+  })
+  workflowStatus: ServiceOrderWorkflowStatus;
+
+  @Column({
+    name: 'payment_status',
+    type: 'enum',
+    enum: ServiceOrderPaymentStatus,
+    default: ServiceOrderPaymentStatus.UNPAID,
+  })
+  paymentStatus: ServiceOrderPaymentStatus;
+
+  @Column({
     type: 'enum',
     enum: ServiceOrderPriority,
     default: ServiceOrderPriority.MEDIUM,
@@ -43,6 +66,49 @@ export class ServiceOrder {
     default: RequestOrigin.CLIENT,
   })
   requestOrigin: RequestOrigin;
+
+  @Column({ name: 'equipment_type', type: 'enum', enum: EquipmentType })
+  equipmentType: EquipmentType;
+
+  @Column({ name: 'equipment_type_other', type: 'varchar', length: 120, nullable: true })
+  equipmentTypeOther: string | null;
+
+  @Column({ name: 'brand', type: 'varchar', length: 100, nullable: true })
+  brand: string | null;
+
+  @Column({ name: 'model', type: 'varchar', length: 150, nullable: true })
+  model: string | null;
+
+  @Column({ name: 'serial_number', type: 'varchar', length: 100, nullable: true })
+  serialNumber: string | null;
+
+  @Column({ name: 'accessories', type: 'text', nullable: true })
+  accessories: string | null;
+
+  @Column({ name: 'service_type', type: 'enum', enum: ServiceType, default: ServiceType.DIAGNOSIS })
+  serviceType: ServiceType;
+
+  @Column({ name: 'initial_issue', type: 'text' })
+  initialIssue: string;
+
+  @Column({
+    name: 'estimated_repair_hours',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  estimatedRepairHours: number | null;
+
+  @ManyToOne(() => User, { eager: false, nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'assigned_to_technician_id' })
+  assignedTechnician: User | null;
+
+  @Column({ name: 'assigned_to_technician_id', type: 'int', nullable: true })
+  assignedToTechnicianId: number | null;
+
+  @Column({ name: 'assigned_at', type: 'datetime', nullable: true })
+  assignedAt: Date | null;
 
   @ManyToOne(() => Client, { eager: false, nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'client_id' })
@@ -80,14 +146,42 @@ export class ServiceOrder {
   @Column({ name: 'closed_by', type: 'int', nullable: true })
   closedBy: number | null;
 
+  @ManyToOne(() => User, { eager: false, nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'cancelled_by' })
+  canceller: User | null;
+
+  @Column({ name: 'cancelled_by', type: 'int', nullable: true })
+  cancelledBy: number | null;
+
   @Column({ name: 'estimated_delivery_date', type: 'datetime', nullable: true })
   estimatedDeliveryDate: Date | null;
+
+  @Column({ name: 'received_at', type: 'datetime' })
+  receivedAt: Date;
+
+  @Column({ name: 'review_started_at', type: 'datetime', nullable: true })
+  reviewStartedAt: Date | null;
+
+  @Column({ name: 'service_started_at', type: 'datetime', nullable: true })
+  serviceStartedAt: Date | null;
+
+  @Column({ name: 'service_completed_at', type: 'datetime', nullable: true })
+  serviceCompletedAt: Date | null;
+
+  @Column({ name: 'ready_for_pickup_at', type: 'datetime', nullable: true })
+  readyForPickupAt: Date | null;
 
   @Column({ name: 'resolved_at', type: 'datetime', nullable: true })
   resolvedAt: Date | null;
 
+  @Column({ name: 'delivered_at', type: 'datetime', nullable: true })
+  deliveredAt: Date | null;
+
   @Column({ name: 'closed_at', type: 'datetime', nullable: true })
   closedAt: Date | null;
+
+  @Column({ name: 'cancelled_at', type: 'datetime', nullable: true })
+  cancelledAt: Date | null;
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
@@ -98,11 +192,20 @@ export class ServiceOrder {
   @Column({ name: 'paid_at', type: 'datetime', nullable: true })
   paidAt: Date | null;
 
-  @Column({ name: 'items_count', type: 'int', unsigned: true, default: 0 })
-  itemsCount: number;
+  @Column({ name: 'discount', type: 'decimal', precision: 10, scale: 2, default: 0 })
+  discount: number;
 
-  @Column({ name: 'completed_items_count', type: 'int', unsigned: true, default: 0 })
-  completedItemsCount: number;
+  @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
+  cancellationReason: string | null;
+
+  @Column({ name: 'rating', type: 'tinyint', unsigned: true, nullable: true })
+  rating: number | null;
+
+  @Column({ name: 'rating_comment', type: 'text', nullable: true })
+  ratingComment: string | null;
+
+  @Column({ name: 'rated_at', type: 'datetime', nullable: true })
+  ratedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
@@ -113,10 +216,10 @@ export class ServiceOrder {
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt: Date | null;
 
-  @OneToMany(() => ServiceOrderItem, (item) => item.serviceOrder, { cascade: true })
-  items: ServiceOrderItem[];
+  assignedToTechnicianName?: string | null;
 
-  pendingQuoteItemsCount?: number;
-  rejectedQuoteItemsCount?: number;
-  pendingDeliveryItemsCount?: number;
+  @AfterLoad()
+  populateVirtualFields(): void {
+    this.assignedToTechnicianName = this.assignedTechnician?.name ?? null;
+  }
 }

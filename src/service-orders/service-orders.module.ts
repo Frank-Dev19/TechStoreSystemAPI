@@ -1,34 +1,56 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ServiceOrderService } from './services/service-order.service';
-import { ServiceOrderController } from './controllers/service-order.controller';
-import { ServiceOrder } from './entities/service-order.entity';
-import { ServiceOrderItem } from './entities/service-order-item.entity';
-import { ServiceOrderItemEvent } from './entities/service-order-item-event.entity';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../users/entities/user.entity';
-import { ServiceOrderItemService } from './services/service-order-item.service';
-import { ServiceOrderItemController } from './controllers/service-order-item.controller';
+import { ServiceOrderController } from './controllers/service-order.controller';
+import { ServiceOrderPaymentController } from './controllers/service-order-payment.controller';
 import { ServiceOrderDiagnosisController } from './diagnoses/service-order-diagnosis.controller';
-import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
 import { ServiceOrderDiagnosis } from './diagnoses/entities/service-order-diagnosis.entity';
-import { ServiceOrderItemExpirationService } from './services/service-order-item-expiration.service';
+import { NotificationDeliveryAttempt } from './entities/notification-delivery-attempt.entity';
+import { NotificationMessage } from './entities/notification-message.entity';
+import { ServiceOrderEvent } from './entities/service-order-event.entity';
+import { ServiceOrderPayment } from './entities/service-order-payment.entity';
+import { ServiceOrder } from './entities/service-order.entity';
+import { ServiceOrderAgreement } from './service-agreements/entities/service-agreement.entity';
 import { TechnicianAssignmentBalance } from './entities/technician-assignment-balance.entity';
+import { Service } from '../service-catalog/entities/service.entity';
+import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
+import { ServiceOrderNotificationService } from './services/service-order-notification.service';
+import { ServiceOrderPaymentService } from './services/service-order-payment.service';
+import { ServiceOrderService } from './services/service-order.service';
+import { ServiceOrderWorkflowService } from './services/service-order-workflow.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       ServiceOrder,
-      ServiceOrderItem,
+      ServiceOrderAgreement,
+      Service,
       Client,
       User,
       ServiceOrderDiagnosis,
-      ServiceOrderItemEvent,
+      ServiceOrderEvent,
+      ServiceOrderPayment,
       TechnicianAssignmentBalance,
+      NotificationMessage,
+      NotificationDeliveryAttempt,
     ]),
   ],
-  controllers: [ServiceOrderItemController, ServiceOrderController, ServiceOrderDiagnosisController],
-  providers: [ServiceOrderService, ServiceOrderItemService, ServiceOrderDiagnosisService, ServiceOrderItemExpirationService],
-  exports: [ServiceOrderService, ServiceOrderItemService, ServiceOrderDiagnosisService],
+  controllers: [ServiceOrderController, ServiceOrderDiagnosisController, ServiceOrderPaymentController],
+  providers: [
+    ServiceOrderService,
+    ServiceOrderWorkflowService,
+    ServiceOrderDiagnosisService,
+    ServiceOrderPaymentService,
+    ServiceOrderNotificationService,
+  ],
+  exports: [
+    ServiceOrderService,
+    ServiceOrderWorkflowService,
+    ServiceOrderDiagnosisService,
+    ServiceOrderPaymentService,
+    ServiceOrderNotificationService,
+  ],
 })
 export class ServiceOrdersModule {}
+

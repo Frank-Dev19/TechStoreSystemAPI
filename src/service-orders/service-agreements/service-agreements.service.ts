@@ -1,0 +1,674 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
+import { Product } from '../../inventory/entities/product.entity';
+import { Service } from '../../service-catalog/entities/service.entity';
+import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
+import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderStatus, ServiceOrderWorkflowStatus, ServiceType } from '../enums';
+import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
+import { CreateServiceOrderAgreementDto } from './dto/create-service-agreement.dto';
+import { ServiceOrderAgreementProductItemDto } from './dto/service-agreement-product-item.dto';
+import { ServiceOrderAgreementServiceItemDto } from './dto/service-agreement-service-item.dto';
+import { UpdateServiceOrderAgreementDto } from './dto/update-service-agreement.dto';
+import { ServiceOrderAgreementSource } from './service-agreement-source.enum';
+import { ServiceOrderAgreementProduct } from './entities/service-agreement-product.entity';
+import { ServiceOrderAgreementServiceItem } from './entities/service-agreement-service-item.entity';
+import { ServiceOrderAgreement } from './entities/service-agreement.entity';
+import { ServiceOrderAgreementStatus } from './service-agreement-status.enum';
+
+type FindAgreementsQuery = {
+  page?: number | string;
+  limit?: number | string;
+  serviceOrderId?: number | string;
+  status?: string;
+  withDeleted?: string;
+};
+
+type TechnicianRevenueRankingRow = {
+  technicianId: number;
+  technicianName: string;
+  itemsCount: number;
+  totalRevenue: number;
+  productRevenue: number;
+  serviceRevenue: number;
+  diagnosisRevenue: number;
+  standardRevenue: number;
+  diagnosisItemsCount: number;
+  standardItemsCount: number;
+};
+
+@Injectable()
+export class ServiceOrderAgreementsService {
+  constructor(
+    @InjectRepository(ServiceOrderAgreement)
+    private readonly agreementRepository: Repository<ServiceOrderAgreement>,
+    @InjectRepository(ServiceOrderAgreementProduct)
+    private readonly agreementProductRepository: Repository<ServiceOrderAgreementProduct>,
+    @InjectRepository(ServiceOrderAgreementServiceItem)
+    private readonly agreementServiceItemRepository: Repository<ServiceOrderAgreementServiceItem>,
+    @InjectRepository(ServiceOrder)
+    private readonly serviceOrderRepository: Repository<ServiceOrder>,
+    @InjectRepository(ServiceOrderDiagnosis)
+    private readonly diagnosisRepository: Repository<ServiceOrderDiagnosis>,
+    @InjectRepository(Service)
+    private readonly catalogServiceRepository: Repository<Service>,
+    private readonly workflowService: ServiceOrderWorkflowService,
+  ) {}
+
+  async findAll(query: FindAgreementsQuery) {
+    const page = this.parsePositiveNumber(query.page, 1, 'page');
+    const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
+    const statuses = this.parseEnumList<ServiceOrderAgreementStatus>(query.status, ServiceOrderAgreementStatus, 'status');
+    const qb = this.agreementRepository
+      .createQueryBuilder('agreement')
+      .leftJoinAndSelect('agreement.productItems', 'productItems')
+      .leftJoinAndSelect('productItems.product', 'product')
+      .leftJoinAndSelect('agreement.serviceItems', 'serviceItems')
+      .leftJoinAndSelect('serviceItems.service', 'service')
+      .leftJoinAndSelect('agreement.serviceOrder', 'serviceOrder')
+      .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
+      .orderBy('agreement.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.withDeleted === 'true') qb.withDeleted();
+    if (query.serviceOrderId !== undefined) {
+      qb.andWhere('agreement.serviceOrderId = :serviceOrderId', {
+        serviceOrderId: this.parsePositiveNumber(query.serviceOrderId, undefined, 'serviceOrderId'),
+      });
+    }
+    if (statuses?.length) qb.andWhere('agreement.status IN (:...statuses)', { statuses });
+
+    const [data, total] = await qb.getManyAndCount();
+    return { data, total, page, limit };
+  }
+
+  async findOne(id: number, withDeleted = false) {
+    const agreement = await this.agreementRepository.findOne({
+      where: { id },
+      relations: [
+        'serviceOrder',
+        'serviceOrder.assignedTechnician',
+        'productItems',
+        'productItems.product',
+        'serviceItems',
+        'serviceItems.service',
+      ],
+      withDeleted,
+    });
+    if (!agreement) throw new NotFoundException(`ServiceOrderAgreement with id ${id} not found`);
+    return agreement;
+  }
+
+  async getTechnicianRevenueRankings() {
+    const agreements = await this.agreementRepository.find({
+      relations: ['serviceOrder', 'serviceOrder.assignedTechnician', 'productItems', 'serviceItems'],
+      order: { serviceOrderId: 'ASC', sequenceNumber: 'DESC' },
+    });
+
+    const allowedTypes = new Set([ServiceType.DIAGNOSIS, ServiceType.STANDARD_SERVICE]);
+    const grouped = new Map<number, ServiceOrderAgreement[]>();
+
+    for (const agreement of agreements) {
+      const order = agreement.serviceOrder;
+      if (
+        !order ||
+        order.deletedAt ||
+        !order.assignedToTechnicianId ||
+        !allowedTypes.has(order.serviceType) ||
+        agreement.status !== ServiceOrderAgreementStatus.CONFIRMED
+      ) {
+        continue;
+      }
+      const existing = grouped.get(order.id) ?? [];
+      existing.push(agreement);
+      grouped.set(order.id, existing);
+    }
+
+    const rankingMap = new Map<number, TechnicianRevenueRankingRow>();
+
+    for (const orderAgreements of grouped.values()) {
+      const effectiveAgreement = this.pickEffectiveAgreement(orderAgreements);
+      if (!effectiveAgreement) continue;
+
+      const order = effectiveAgreement.serviceOrder;
+      if (!order?.assignedToTechnicianId) continue;
+
+      const technicianId = Number(order.assignedToTechnicianId);
+      const technicianName =
+        order.assignedTechnician?.name ?? order.assignedToTechnicianName ?? `Tecnico #${technicianId}`;
+      const productRevenue = (effectiveAgreement.productItems ?? []).reduce(
+        (acc, product) => acc + Number(product.lineTotal ?? 0),
+        0,
+      );
+      const serviceRevenue = (effectiveAgreement.serviceItems ?? []).reduce(
+        (acc, service) => acc + Number(service.lineTotal ?? 0),
+        0,
+      );
+      const totalRevenue = Number((productRevenue + serviceRevenue).toFixed(2));
+
+      const current = rankingMap.get(technicianId) ?? {
+        technicianId,
+        technicianName,
+        itemsCount: 0,
+        totalRevenue: 0,
+        productRevenue: 0,
+        serviceRevenue: 0,
+        diagnosisRevenue: 0,
+        standardRevenue: 0,
+        diagnosisItemsCount: 0,
+        standardItemsCount: 0,
+      };
+
+      current.itemsCount += 1;
+      current.totalRevenue = Number((current.totalRevenue + totalRevenue).toFixed(2));
+      current.productRevenue = Number((current.productRevenue + productRevenue).toFixed(2));
+      current.serviceRevenue = Number((current.serviceRevenue + serviceRevenue).toFixed(2));
+
+      if (order.serviceType === ServiceType.DIAGNOSIS) {
+        current.diagnosisRevenue = Number((current.diagnosisRevenue + totalRevenue).toFixed(2));
+        current.diagnosisItemsCount += 1;
+      } else if (order.serviceType === ServiceType.STANDARD_SERVICE) {
+        current.standardRevenue = Number((current.standardRevenue + totalRevenue).toFixed(2));
+        current.standardItemsCount += 1;
+      }
+
+      rankingMap.set(technicianId, current);
+    }
+
+    const rows = Array.from(rankingMap.values()).sort((a, b) => {
+      if (b.totalRevenue !== a.totalRevenue) return b.totalRevenue - a.totalRevenue;
+      if (b.serviceRevenue !== a.serviceRevenue) return b.serviceRevenue - a.serviceRevenue;
+      return a.technicianName.localeCompare(b.technicianName);
+    });
+
+    return {
+      generatedAt: new Date(),
+      technicians: rows.map((row, index) => ({
+        ...row,
+        rank: index + 1,
+      })),
+    };
+  }
+
+  async create(dto: CreateServiceOrderAgreementDto) {
+    const serviceOrder = await this.ensureServiceOrder(dto.serviceOrderId);
+    if (serviceOrder.serviceType === ServiceType.WARRANTY_SERVICE) {
+      throw new BadRequestException('Warranty service orders do not use agreements');
+    }
+
+    const diagnosis = dto.diagnosisId ? await this.ensureDiagnosis(dto.diagnosisId) : null;
+    if (diagnosis && diagnosis.serviceOrderId !== serviceOrder.id) {
+      throw new BadRequestException('Diagnosis does not belong to the provided service order');
+    }
+
+    const targetStatus = dto.status ?? ServiceOrderAgreementStatus.DRAFT;
+    const targetSource = dto.source ?? ServiceOrderAgreementSource.TECHNICIAN_COORDINATION;
+
+    const agreement = await this.agreementRepository.manager.transaction(async (manager) => {
+      const productItems = await this.buildProductItems(dto.products, manager, serviceOrder.serviceType);
+      const serviceItems = await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType);
+
+      await this.supersedePrevious(manager, serviceOrder.id, targetStatus);
+
+      const saved = await manager.getRepository(ServiceOrderAgreement).save({
+        serviceOrderId: serviceOrder.id,
+        diagnosisId: diagnosis?.id ?? null,
+        sequenceNumber: dto.sequenceNumber ?? (await this.resolveNextSequence(manager, serviceOrder.id)),
+        status: targetStatus,
+        source: targetSource,
+        totalAmount: this.calculateTotalAmount(productItems, serviceItems),
+        notes: dto.notes ?? null,
+        agreedAt: targetStatus === ServiceOrderAgreementStatus.CONFIRMED ? new Date() : null,
+        agreedByUserId: null,
+      });
+
+      await this.persistProductItems(manager, saved.id, productItems);
+      await this.persistServiceItems(manager, saved.id, serviceItems);
+      return saved;
+    });
+
+    await this.syncWorkflowAfterAgreementCreate(serviceOrder.id, targetStatus, serviceOrder.serviceType);
+    return this.findOne(agreement.id);
+  }
+
+  async update(id: number, dto: UpdateServiceOrderAgreementDto) {
+    const agreement = await this.agreementRepository.findOne({
+      where: { id },
+      relations: ['serviceOrder'],
+    });
+    if (!agreement) throw new NotFoundException(`ServiceOrderAgreement with id ${id} not found`);
+    if (agreement.deletedAt) throw new BadRequestException('Cannot update a deleted agreement');
+    if (agreement.status !== ServiceOrderAgreementStatus.DRAFT) {
+      throw new BadRequestException('Only draft agreements can be updated directly');
+    }
+
+    const serviceOrder = dto.serviceOrderId
+      ? await this.ensureServiceOrder(dto.serviceOrderId)
+      : agreement.serviceOrder;
+
+    const diagnosis = dto.diagnosisId ? await this.ensureDiagnosis(dto.diagnosisId) : null;
+    if (dto.diagnosisId && diagnosis && diagnosis.serviceOrderId !== serviceOrder.id) {
+      throw new BadRequestException('Diagnosis does not belong to the provided service order');
+    }
+
+    return this.agreementRepository.manager.transaction(async (manager) => {
+      if (dto.products) {
+        await manager.getRepository(ServiceOrderAgreementProduct).delete({ serviceOrderAgreementId: agreement.id });
+        await this.persistProductItems(
+          manager,
+          agreement.id,
+          await this.buildProductItems(dto.products, manager, serviceOrder.serviceType),
+        );
+      }
+      if (dto.services) {
+        await manager.getRepository(ServiceOrderAgreementServiceItem).delete({ serviceOrderAgreementId: agreement.id });
+        await this.persistServiceItems(
+          manager,
+          agreement.id,
+          await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType),
+        );
+      }
+
+      await manager.getRepository(ServiceOrderAgreement).update(agreement.id, {
+        serviceOrderId: serviceOrder.id,
+        diagnosisId: dto.diagnosisId !== undefined ? diagnosis?.id ?? null : agreement.diagnosisId,
+        sequenceNumber: dto.sequenceNumber ?? agreement.sequenceNumber,
+        notes: dto.notes ?? agreement.notes,
+        source: dto.source ?? agreement.source,
+        totalAmount: this.calculateTotalAmount(
+          dto.products
+            ? await this.buildProductItems(dto.products, manager, serviceOrder.serviceType)
+            : await this.loadCurrentProductItems(manager, agreement.id),
+          dto.services
+            ? await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType)
+            : await this.loadCurrentServiceItems(manager, agreement.id),
+        ),
+      });
+
+      return this.findOne(agreement.id);
+    });
+  }
+
+  async confirm(id: number) {
+    const agreement = await this.findEditableAgreement(id, ['serviceOrder']);
+    if (agreement.status === ServiceOrderAgreementStatus.CONFIRMED) {
+      return this.findOne(id);
+    }
+    if (agreement.status !== ServiceOrderAgreementStatus.DRAFT) {
+      throw new BadRequestException('Only draft agreements can be confirmed');
+    }
+
+    await this.agreementRepository.manager.transaction(async (manager) => {
+      await manager
+        .getRepository(ServiceOrderAgreement)
+        .createQueryBuilder()
+        .update()
+        .set({ status: ServiceOrderAgreementStatus.SUPERSEDED })
+        .where('service_order_id = :serviceOrderId', { serviceOrderId: agreement.serviceOrderId })
+        .andWhere('id <> :id', { id: agreement.id })
+        .andWhere('status IN (:...statuses)', {
+          statuses: [ServiceOrderAgreementStatus.DRAFT, ServiceOrderAgreementStatus.CONFIRMED],
+        })
+        .execute();
+
+      await manager.getRepository(ServiceOrderAgreement).update(agreement.id, {
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        agreedAt: new Date(),
+      });
+    });
+
+    await this.workflowService.changeWorkflowStatus(
+      agreement.serviceOrderId,
+      ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
+    );
+    return this.findOne(id);
+  }
+
+  async void(id: number, notes?: string) {
+    const agreement = await this.findEditableAgreement(id);
+    if (agreement.status === ServiceOrderAgreementStatus.VOIDED) {
+      return this.findOne(id);
+    }
+
+    await this.agreementRepository.update(id, {
+      status: ServiceOrderAgreementStatus.VOIDED,
+      notes: notes ?? agreement.notes,
+    });
+    return this.findOne(id);
+  }
+
+  async createDiagnosisFeeAgreement(serviceOrderId: number) {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    const diagnosticService = await this.catalogServiceRepository.findOne({
+      where: { code: 'DIAGNOSIS_FEE' },
+    });
+    if (!diagnosticService) {
+      throw new NotFoundException('Diagnostic fee service not found');
+    }
+
+    const agreement = await this.agreementRepository.manager.transaction(async (manager) => {
+      await this.supersedePrevious(manager, serviceOrder.id, ServiceOrderAgreementStatus.CONFIRMED);
+
+      const saved = await manager.getRepository(ServiceOrderAgreement).save({
+        serviceOrderId: serviceOrder.id,
+        diagnosisId: null,
+        sequenceNumber: await this.resolveNextSequence(manager, serviceOrder.id),
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        source: ServiceOrderAgreementSource.DIAGNOSIS_FEE_AUTO,
+        totalAmount: Number(diagnosticService.price ?? 0),
+        notes: 'Cobro automatico por diagnostico sin acuerdo comercial',
+        agreedAt: new Date(),
+        agreedByUserId: null,
+      });
+
+      const serviceItem = manager.getRepository(ServiceOrderAgreementServiceItem).create({
+        serviceOrderAgreementId: saved.id,
+        serviceId: diagnosticService.id,
+        serviceCodeSnapshot: diagnosticService.code ?? String(diagnosticService.id),
+        serviceNameSnapshot: diagnosticService.name ?? `Servicio ${diagnosticService.id}`,
+        serviceDescriptionSnapshot: diagnosticService.description ?? null,
+        estimatedHours: Number((((diagnosticService as any).estimatedDurationMinutes ?? 60) / 60).toFixed(2)),
+        unitPrice: Number(diagnosticService.price ?? 0),
+        lineTotal: Number(Number(diagnosticService.price ?? 0).toFixed(2)),
+        notes: 'Diagnostico no culminado con acuerdo de reparacion',
+      });
+      await manager.getRepository(ServiceOrderAgreementServiceItem).save(serviceItem);
+      return saved;
+    });
+
+    await this.workflowService.changeWorkflowStatus(serviceOrder.id, ServiceOrderWorkflowStatus.READY_FOR_PICKUP);
+    return this.findOne(agreement.id);
+  }
+
+  async softDelete(id: number) {
+    await this.ensureAgreement(id);
+    await this.agreementRepository.softDelete(id);
+    return { ok: true, message: `ServiceOrderAgreement ${id} deleted successfully` };
+  }
+
+  async bulkSoftDelete(ids: number[]) {
+    this.ensureIds(ids);
+    await this.agreementRepository.softDelete(ids);
+    return { ok: true, message: `${ids.length} service order agreements deleted successfully` };
+  }
+
+  async restore(id: number) {
+    const agreement = await this.agreementRepository.findOne({ where: { id }, withDeleted: true });
+    if (!agreement) throw new NotFoundException(`ServiceOrderAgreement with id ${id} not found`);
+    if (!agreement.deletedAt) return { ok: true, message: 'ServiceOrderAgreement already active' };
+    await this.agreementRepository.restore(id);
+    return { ok: true, message: `ServiceOrderAgreement ${id} restored successfully` };
+  }
+
+  async bulkRestore(ids: number[]) {
+    this.ensureIds(ids);
+    const existing = await this.agreementRepository.find({ where: { id: In(ids) }, withDeleted: true });
+    const toRestore = existing.filter((entry) => entry.deletedAt);
+    if (!toRestore.length) throw new NotFoundException('No service order agreements found to restore');
+    await this.agreementRepository.restore(toRestore.map((entry) => entry.id));
+    return { ok: true, message: `${toRestore.length} service order agreements restored successfully` };
+  }
+
+  private async syncWorkflowAfterAgreementCreate(
+    serviceOrderId: number,
+    status: ServiceOrderAgreementStatus,
+    serviceType: ServiceType,
+  ) {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    const currentWorkflowStatus = serviceOrder.workflowStatus;
+
+    if (status === ServiceOrderAgreementStatus.CONFIRMED) {
+      if (
+        [
+          ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
+          ServiceOrderWorkflowStatus.IN_SERVICE,
+          ServiceOrderWorkflowStatus.WAITING_PARTS,
+          ServiceOrderWorkflowStatus.SERVICE_DONE,
+          ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
+          ServiceOrderWorkflowStatus.CANCELLED,
+        ].includes(currentWorkflowStatus)
+      ) {
+        return;
+      }
+
+      await this.workflowService.changeWorkflowStatus(serviceOrderId, ServiceOrderWorkflowStatus.APPROVED_FOR_WORK);
+      return;
+    }
+
+    if (
+      serviceType === ServiceType.DIAGNOSIS &&
+      currentWorkflowStatus === ServiceOrderWorkflowStatus.DIAGNOSIS_READY
+    ) {
+      await this.workflowService.changeWorkflowStatus(serviceOrderId, ServiceOrderWorkflowStatus.UNDER_COORDINATION);
+    }
+  }
+
+  private async supersedePrevious(
+    manager: EntityManager,
+    serviceOrderId: number,
+    incomingStatus: ServiceOrderAgreementStatus,
+  ) {
+    const statusesToSupersede =
+      incomingStatus === ServiceOrderAgreementStatus.CONFIRMED
+        ? [ServiceOrderAgreementStatus.DRAFT, ServiceOrderAgreementStatus.CONFIRMED]
+        : [ServiceOrderAgreementStatus.DRAFT];
+
+    await manager
+      .getRepository(ServiceOrderAgreement)
+      .createQueryBuilder()
+      .update()
+      .set({ status: ServiceOrderAgreementStatus.SUPERSEDED })
+      .where('service_order_id = :serviceOrderId', { serviceOrderId })
+      .andWhere('status IN (:...statuses)', { statuses: statusesToSupersede })
+      .execute();
+  }
+
+  private async findEditableAgreement(id: number, relations?: string[]) {
+    const agreement = await this.agreementRepository.findOne({ where: { id }, relations });
+    if (!agreement) throw new NotFoundException(`ServiceOrderAgreement with id ${id} not found`);
+    if (agreement.deletedAt) throw new BadRequestException('Cannot operate on a deleted agreement');
+    return agreement;
+  }
+
+  private async ensureServiceOrder(id: number) {
+    const serviceOrder = await this.serviceOrderRepository.findOne({ where: { id } });
+    if (!serviceOrder) throw new NotFoundException(`ServiceOrder with id ${id} not found`);
+    return serviceOrder;
+  }
+
+  private async ensureDiagnosis(id: number) {
+    const diagnosis = await this.diagnosisRepository.findOne({ where: { id } });
+    if (!diagnosis) throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
+    return diagnosis;
+  }
+
+  private async ensureAgreement(id: number) {
+    const agreement = await this.agreementRepository.findOne({ where: { id } });
+    if (!agreement) throw new NotFoundException(`ServiceOrderAgreement with id ${id} not found`);
+  }
+
+  private async resolveNextSequence(manager: EntityManager, serviceOrderId: number) {
+    const raw = await manager
+      .getRepository(ServiceOrderAgreement)
+      .createQueryBuilder('agreement')
+      .select('MAX(agreement.sequenceNumber)', 'max')
+      .where('agreement.serviceOrderId = :serviceOrderId', { serviceOrderId })
+      .withDeleted()
+      .getRawOne<{ max: string | null } | undefined>();
+    return (Number(raw?.max ?? null) || 0) + 1;
+  }
+
+  private async buildProductItems(
+    items: ServiceOrderAgreementProductItemDto[] | undefined,
+    manager: EntityManager,
+    serviceType?: ServiceType,
+  ) {
+    if (!items?.length) return [];
+    const products = await manager.getRepository(Product).find({
+      where: { id: In([...new Set(items.map((item) => Number(item.productId)))]) },
+    });
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    return items.map((item) => {
+      const product = productMap.get(Number(item.productId));
+      if (!product) throw new NotFoundException(`Product with id ${item.productId} not found`);
+      const quantity = Number(item.quantity ?? 1);
+      const isZeroBillingProduct = serviceType === ServiceType.WARRANTY_SERVICE;
+      const unitPrice = isZeroBillingProduct ? 0 : Number(item.unitPrice ?? (product as any).salePrice ?? 0);
+      return manager.getRepository(ServiceOrderAgreementProduct).create({
+        productId: product.id,
+        productCodeSnapshot: (product as any).code ?? String(product.id),
+        productNameSnapshot: (product as any).name ?? `Producto ${product.id}`,
+        productDescriptionSnapshot: (product as any).description ?? null,
+        quantity,
+        unitPrice,
+        lineTotal: Number((quantity * unitPrice).toFixed(2)),
+        requiresPurchase: item.requiresPurchase ?? false,
+        notes: item.notes ?? null,
+      });
+    });
+  }
+
+  private async buildServiceItems(
+    items: ServiceOrderAgreementServiceItemDto[] | undefined,
+    manager: EntityManager,
+    serviceType?: ServiceType,
+  ) {
+    if (!items?.length) return [];
+    const services = await manager.getRepository(Service).find({
+      where: { id: In([...new Set(items.map((item) => Number(item.serviceId)))]) },
+    });
+    const serviceMap = new Map(services.map((service) => [service.id, service]));
+    return items.map((item) => {
+      const service = serviceMap.get(Number(item.serviceId));
+      if (!service) throw new NotFoundException(`Service with id ${item.serviceId} not found`);
+      const estimatedHours = Number((((service as any).estimatedDurationMinutes ?? 60) / 60).toFixed(2));
+      const isZeroBillingService =
+        serviceType === ServiceType.CUSTOMER_SERVICE || serviceType === ServiceType.WARRANTY_SERVICE;
+      const unitPrice = isZeroBillingService ? 0 : Number((service as any).price ?? 0);
+      return manager.getRepository(ServiceOrderAgreementServiceItem).create({
+        serviceId: service.id,
+        serviceCodeSnapshot: (service as any).code ?? String(service.id),
+        serviceNameSnapshot: (service as any).name ?? `Servicio ${service.id}`,
+        serviceDescriptionSnapshot: (service as any).description ?? null,
+        estimatedHours,
+        unitPrice,
+        lineTotal: Number(unitPrice.toFixed(2)),
+        notes: item.notes ?? null,
+      });
+    });
+  }
+
+  private async loadCurrentProductItems(manager: EntityManager, agreementId: number) {
+    return manager.getRepository(ServiceOrderAgreementProduct).find({ where: { serviceOrderAgreementId: agreementId } });
+  }
+
+  private async loadCurrentServiceItems(manager: EntityManager, agreementId: number) {
+    return manager.getRepository(ServiceOrderAgreementServiceItem).find({ where: { serviceOrderAgreementId: agreementId } });
+  }
+
+  private async persistProductItems(manager: EntityManager, agreementId: number, items: ServiceOrderAgreementProduct[]) {
+    if (!items.length) return;
+    await manager.getRepository(ServiceOrderAgreementProduct).insert(
+      items.map((item) => ({
+        productId: item.productId,
+        productCodeSnapshot: item.productCodeSnapshot,
+        productNameSnapshot: item.productNameSnapshot,
+        productDescriptionSnapshot: item.productDescriptionSnapshot,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: item.lineTotal,
+        requiresPurchase: item.requiresPurchase,
+        notes: item.notes,
+        serviceOrderAgreementId: agreementId,
+      })),
+    );
+  }
+
+  private async persistServiceItems(
+    manager: EntityManager,
+    agreementId: number,
+    items: ServiceOrderAgreementServiceItem[],
+  ) {
+    if (!items.length) return;
+    await manager.getRepository(ServiceOrderAgreementServiceItem).insert(
+      items.map((item) => ({
+        serviceId: item.serviceId,
+        serviceCodeSnapshot: item.serviceCodeSnapshot,
+        serviceNameSnapshot: item.serviceNameSnapshot,
+        serviceDescriptionSnapshot: item.serviceDescriptionSnapshot,
+        estimatedHours: item.estimatedHours,
+        unitPrice: item.unitPrice,
+        lineTotal: item.lineTotal,
+        notes: item.notes,
+        serviceOrderAgreementId: agreementId,
+      })),
+    );
+  }
+
+  private calculateTotalAmount(
+    productItems: ServiceOrderAgreementProduct[] | undefined,
+    serviceItems: ServiceOrderAgreementServiceItem[] | undefined,
+  ) {
+    const productTotal = (productItems ?? []).reduce((acc, item) => acc + Number(item.lineTotal ?? 0), 0);
+    const serviceTotal = (serviceItems ?? []).reduce((acc, item) => acc + Number(item.lineTotal ?? 0), 0);
+    return Number((productTotal + serviceTotal).toFixed(2));
+  }
+
+  private pickEffectiveAgreement(agreements: ServiceOrderAgreement[]): ServiceOrderAgreement | null {
+    const confirmed = agreements.find((agreement) => agreement.status === ServiceOrderAgreementStatus.CONFIRMED);
+    if (confirmed) return confirmed;
+    const draft = agreements.find((agreement) => agreement.status === ServiceOrderAgreementStatus.DRAFT);
+    if (draft) return draft;
+    return agreements[0] ?? null;
+  }
+
+  private parsePositiveNumber(
+    value: number | string | undefined,
+    fallback: number | undefined,
+    field: string,
+    max?: number,
+  ): number {
+    if (value === undefined || value === null || value === '') {
+      return fallback ?? (() => {
+        throw new BadRequestException(`${field} is required`);
+      })();
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new BadRequestException(`${field} must be a positive number`);
+    }
+
+    const normalized = Math.floor(parsed);
+    if (max && normalized > max) {
+      return max;
+    }
+
+    return normalized;
+  }
+
+  private parseEnumList<T extends string>(
+    value: string | undefined,
+    enumObject: Record<string, string>,
+    field: string,
+  ): T[] | undefined {
+    if (!value) return undefined;
+    const values = value.split(',').map((entry) => entry.trim()).filter(Boolean) as T[];
+    const allowed = Object.values(enumObject);
+    const invalid = values.filter((entry) => !allowed.includes(entry));
+    if (invalid.length) {
+      throw new BadRequestException(`${field} contains invalid values: ${invalid.join(', ')}`);
+    }
+    return values;
+  }
+
+  private ensureIds(ids: number[]) {
+    if (!ids?.length) {
+      throw new BadRequestException('No ids provided');
+    }
+  }
+}
+
+

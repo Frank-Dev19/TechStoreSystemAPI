@@ -32,23 +32,26 @@ export class BootstrapService implements OnModuleInit {
     // 0) Asegurar DocumentType por defecto (DNI) con soft delete considerado
     await this.ensureDefaultDocumentType();
 
-    // 1) Catálogo de módulos (fuente de verdad)
+    // 1) Catalogo de modulos (fuente de verdad)
     const MODULES: ModuleSeed[] = [
       { moduleKey: 'role', label: 'Roles', sortOrder: 10, icon: 'fas fa-shield-alt' },
-      { moduleKey: 'keys', label: 'Claves de Operación', sortOrder: 15, icon: 'fas fa-key' },
+      { moduleKey: 'keys', label: 'Claves de Operacion', sortOrder: 15, icon: 'fas fa-key' },
       { moduleKey: 'users', label: 'Usuarios', sortOrder: 20, icon: 'fas fa-users' },
       { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
       { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
       { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
-      { moduleKey: 'auditoria', label: 'Auditoría', sortOrder: 90, icon: 'fas fa-history' },
-      { moduleKey: 'service-category', label: 'Categorías de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
+      { moduleKey: 'auditoria', label: 'Auditoria', sortOrder: 90, icon: 'fas fa-history' },
+      { moduleKey: 'service-category', label: 'Categorias de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
       { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
-      { moduleKey: 'service-order', label: 'Órdenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
-      { moduleKey: 'service-order-diagnosis', label: 'Diagnósticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
-      { moduleKey: 'service-order-quote', label: 'Cotizaciones de Orden de Servicio', sortOrder: 118, icon: 'fas fa-file-invoice-dollar' },
+      { moduleKey: 'service-order', label: 'Ordenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
+      { moduleKey: 'service-order-diagnosis', label: 'Diagnosticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
+      { moduleKey: 'service-order-agreement', label: 'Acuerdos de Orden de Servicio', sortOrder: 118, icon: 'fas fa-handshake' },
+      { moduleKey: 'service-order-payment', label: 'Pagos de Orden de Servicio', sortOrder: 119, icon: 'fas fa-money-bill-wave' },
+      { moduleKey: 'service-order-event', label: 'Historial de Orden de Servicio', sortOrder: 120, icon: 'fas fa-stream' },
+      { moduleKey: 'service-order-inbox', label: 'Inbox de Orden de Servicio', sortOrder: 121, icon: 'fab fa-whatsapp' },
     ];
 
-    // 2) Catálogo de permisos (fuente de verdad)
+    // 2) Catalogo de permisos (fuente de verdad)
     const PERMS: PermSeed[] = [
       // Roles
       { moduleKey: 'role', actionKey: 'create', description: 'Crear roles', sortOrder: 10 },
@@ -57,16 +60,16 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'role', actionKey: 'delete', description: 'Eliminar roles', sortOrder: 40 },
 
       // Keys
-      { moduleKey: 'keys', actionKey: 'manage', description: 'Crear/rotar claves de operación', sortOrder: 10 },
-      { moduleKey: 'keys', actionKey: 'view', description: 'Ver claves de operación activas', sortOrder: 20 },
+      { moduleKey: 'keys', actionKey: 'manage', description: 'Crear/rotar claves de operacion', sortOrder: 10 },
+      { moduleKey: 'keys', actionKey: 'view', description: 'Ver claves de operacion activas', sortOrder: 20 },
 
-      // Users (si no los tenías antes en la tabla)
+      // Users (si no los tenias antes en la tabla)
       { moduleKey: 'users', actionKey: 'create', description: 'Crear usuarios', sortOrder: 10 },
       { moduleKey: 'users', actionKey: 'read', description: 'Ver usuarios', sortOrder: 20 },
       { moduleKey: 'users', actionKey: 'update', description: 'Actualizar usuarios', sortOrder: 30 },
       { moduleKey: 'users', actionKey: 'delete', description: 'Eliminar usuarios', sortOrder: 40 },
 
-      // DocumentTypes (según tu controller actual)
+      // DocumentTypes (segun tu controller actual)
       { moduleKey: 'document-type', actionKey: 'create', description: 'Crear tipos de documento', sortOrder: 10 },
       { moduleKey: 'document-type', actionKey: 'read', description: 'Ver tipos de documento', sortOrder: 20 },
       { moduleKey: 'document-type', actionKey: 'update', description: 'Actualizar tipos de documento', sortOrder: 30 },
@@ -87,17 +90,17 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'suppliers', actionKey: 'delete', description: 'Eliminar un proveedor', sortOrder: 60 },
       { moduleKey: 'suppliers', actionKey: 'restore', description: 'Restaurar un proveedor', sortOrder: 70 },
 
-      // Auditoría (demo; ajusta si lo implementas)
-      { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoría', sortOrder: 10 },
+      // Auditoria (demo; ajusta si lo implementas)
+      { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoria', sortOrder: 10 },
       { moduleKey: 'auditoria', actionKey: 'delete', description: 'Eliminar eventos', sortOrder: 20 },
       { moduleKey: 'auditoria', actionKey: 'stream', description: 'Ver eventos en vivo', sortOrder: 30 },
 
-      //Service Category (Categorías de servicios)
-      { moduleKey: 'service-category', actionKey: 'create', description: 'Crear categorías de servicios', sortOrder: 10 },
-      { moduleKey: 'service-category', actionKey: 'read', description: 'Ver categorías de servicios', sortOrder: 20 },
-      { moduleKey: 'service-category', actionKey: 'update', description: 'Actualizar categorías de servicios', sortOrder: 30 },
-      { moduleKey: 'service-category', actionKey: 'delete', description: 'Eliminar categorías de servicios', sortOrder: 60 },
-      { moduleKey: 'service-category', actionKey: 'restore', description: 'Restaurar categorías de servicios', sortOrder: 70 },
+      //Service Category (Categorias de servicios)
+      { moduleKey: 'service-category', actionKey: 'create', description: 'Crear categorias de servicios', sortOrder: 10 },
+      { moduleKey: 'service-category', actionKey: 'read', description: 'Ver categorias de servicios', sortOrder: 20 },
+      { moduleKey: 'service-category', actionKey: 'update', description: 'Actualizar categorias de servicios', sortOrder: 30 },
+      { moduleKey: 'service-category', actionKey: 'delete', description: 'Eliminar categorias de servicios', sortOrder: 60 },
+      { moduleKey: 'service-category', actionKey: 'restore', description: 'Restaurar categorias de servicios', sortOrder: 70 },
 
       //Service (Servicios)
       { moduleKey: 'service', actionKey: 'create', description: 'Crear servicios', sortOrder: 10 },
@@ -107,32 +110,45 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'service', actionKey: 'restore', description: 'Restaurar servicios', sortOrder: 70 },
 
       // Service Orders
-      { moduleKey: 'service-order', actionKey: 'create', description: 'Crear órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order', actionKey: 'read', description: 'Ver órdenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order', actionKey: 'update', description: 'Actualizar órdenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order', actionKey: 'delete', description: 'Eliminar órdenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order', actionKey: 'restore', description: 'Restaurar órdenes de servicio', sortOrder: 70 },
+      { moduleKey: 'service-order', actionKey: 'create', description: 'Crear ordenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order', actionKey: 'read', description: 'Ver ordenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order', actionKey: 'update', description: 'Actualizar ordenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order', actionKey: 'delete', description: 'Eliminar ordenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order', actionKey: 'restore', description: 'Restaurar ordenes de servicio', sortOrder: 70 },
 
       // Service Order Diagnoses
-      { moduleKey: 'service-order-diagnosis', actionKey: 'create', description: 'Crear diagnósticos de órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'read', description: 'Ver diagnósticos de órdenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'update', description: 'Actualizar diagnósticos de órdenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'delete', description: 'Eliminar diagnósticos de órdenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'restore', description: 'Restaurar diagnósticos de órdenes de servicio', sortOrder: 70 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'create', description: 'Crear diagnosticos de ordenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'read', description: 'Ver diagnosticos de ordenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'update', description: 'Actualizar diagnosticos de ordenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'delete', description: 'Eliminar diagnosticos de ordenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order-diagnosis', actionKey: 'restore', description: 'Restaurar diagnosticos de ordenes de servicio', sortOrder: 70 },
 
-      // Service Order Quotes
-      { moduleKey: 'service-order-quote', actionKey: 'create', description: 'Crear cotizaciones de órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-quote', actionKey: 'read', description: 'Ver cotizaciones de órdenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-quote', actionKey: 'update', description: 'Actualizar cotizaciones de órdenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-quote', actionKey: 'delete', description: 'Eliminar cotizaciones de órdenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order-quote', actionKey: 'restore', description: 'Restaurar cotizaciones de órdenes de servicio', sortOrder: 70 },
-      { moduleKey: 'service-order-quote', actionKey: 'send-to-client', description: 'Enviar cotizaciones al cliente', sortOrder: 80 },
-      { moduleKey: 'service-order-quote', actionKey: 'approve-client', description: 'Registrar aprobación de cotización por cliente', sortOrder: 90 },
-      { moduleKey: 'service-order-quote', actionKey: 'reject-client', description: 'Registrar rechazo de cotización por cliente', sortOrder: 100 },
-      { moduleKey: 'service-order-quote', actionKey: 'resubmit', description: 'Reenviar cotizaciones ajustadas', sortOrder: 110 },
+      // Service Order Agreements
+      { moduleKey: 'service-order-agreement', actionKey: 'create', description: 'Crear acuerdos de órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-agreement', actionKey: 'read', description: 'Ver acuerdos de órdenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-agreement', actionKey: 'update', description: 'Actualizar acuerdos de órdenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-agreement', actionKey: 'delete', description: 'Eliminar acuerdos de órdenes de servicio', sortOrder: 60 },
+      { moduleKey: 'service-order-agreement', actionKey: 'restore', description: 'Restaurar acuerdos de órdenes de servicio', sortOrder: 70 },
+      { moduleKey: 'service-order-agreement', actionKey: 'confirm', description: 'Confirmar acuerdos de órdenes de servicio', sortOrder: 80 },
+      { moduleKey: 'service-order-agreement', actionKey: 'void', description: 'Anular acuerdos de órdenes de servicio', sortOrder: 90 },
+
+      // Service Order Inbox
+      { moduleKey: 'service-order-inbox', actionKey: 'read', description: 'Ver inbox de órdenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-inbox', actionKey: 'send', description: 'Enviar mensajes en inbox de órdenes de servicio', sortOrder: 20 },
+
+      // Service Order Payments
+      { moduleKey: 'service-order-payment', actionKey: 'create', description: 'Registrar pagos de ordenes de servicio', sortOrder: 10 },
+      { moduleKey: 'service-order-payment', actionKey: 'read', description: 'Ver pagos de ordenes de servicio', sortOrder: 20 },
+      { moduleKey: 'service-order-payment', actionKey: 'update', description: 'Actualizar pagos de ordenes de servicio', sortOrder: 30 },
+      { moduleKey: 'service-order-payment', actionKey: 'delete', description: 'Eliminar pagos de ordenes de servicio', sortOrder: 40 },
+      { moduleKey: 'service-order-payment', actionKey: 'restore', description: 'Restaurar pagos de ordenes de servicio', sortOrder: 50 },
+      { moduleKey: 'service-order-payment', actionKey: 'confirm', description: 'Confirmar pagos de ordenes de servicio', sortOrder: 60 },
+
+      // Service Order Events
+      { moduleKey: 'service-order-event', actionKey: 'read', description: 'Ver historial de ordenes de servicio', sortOrder: 10 },
     ];
 
-    // 3) Sincronizar catálogo (módulos y permisos) SIEMPRE
+    // 3) Sincronizar catalogo (modulos y permisos) SIEMPRE
     const allCodes = await this.syncCatalog(MODULES, PERMS);
 
     // 3.1) Eliminar permisos legacy bulk-* que ya no forman parte del modelo RBAC.
@@ -141,17 +157,17 @@ export class BootstrapService implements OnModuleInit {
     // 3.2) Asegurar roles operativos y sus permisos base.
     await this.ensureOperationalRolesAndGrants();
 
-    // 4) Asegurar rol admin y conceder todos los permisos del catálogo
+    // 4) Asegurar rol admin y conceder todos los permisos del catalogo
     await this.ensureAdminRoleAndGrants(allCodes);
 
     // 5) Crear/asegurar usuarios base
     await this.ensureDefaultUsers();
     await this.ensureOperationalUsers();
 
-    // 6) Asegurar servicio de diagnóstico
+    // 6) Asegurar servicio de diagnostico
     await this.ensureDiagnosticServiceCatalog();
 
-    this.log.log('Bootstrap OK (catálogo sincronizado, admin con permisos, usuario inicial si hacía falta).');
+    this.log.log('Bootstrap OK (catalogo sincronizado, admin con permisos, usuario inicial si hacia falta).');
   }
 
   // ---------- helpers ----------
@@ -192,7 +208,7 @@ export class BootstrapService implements OnModuleInit {
     if (!category) {
       category = this.serviceCategoryRepo.create({
         code: categoryCode,
-        name: 'Diagnostico',
+        name: 'Diagnóstico',
         description: 'Servicios de diagnóstico',
         isActive: true,
       });
@@ -260,15 +276,6 @@ export class BootstrapService implements OnModuleInit {
       'diagnostic.update',
       'diagnostic.delete',
       'diagnostic.restore',
-      'quote.create',
-      'quote.read',
-      'quote.update',
-      'quote.delete',
-      'quote.restore',
-      'quote.send-to-client',
-      'quote.approve-client',
-      'quote.reject-client',
-      'quote.resubmit',
       'service-order-item.create',
       'service-order-item.read',
       'service-order-item.update',
@@ -277,6 +284,14 @@ export class BootstrapService implements OnModuleInit {
       'service-order-item.assign',
       'service-order-item.update-status',
       'service-order-item.assign-supervisor',
+      'service-order-quote.create',
+      'service-order-quote.read',
+      'service-order-quote.update',
+      'service-order-quote.delete',
+      'service-order-quote.restore',
+      'service-order-quote.approve-client',
+      'service-order-quote.reject-client',
+      'service-order-quote.resubmit',
       'service-order-quote.approve-supervisor',
       'service-order-quote.reject-supervisor',
     ];
@@ -312,7 +327,7 @@ export class BootstrapService implements OnModuleInit {
 
     if (legacyModule) {
       await this.permModulesRepo.remove(legacyModule);
-      this.log.log('Módulo legacy eliminado: service-order-item');
+      this.log.log('Modulo legacy eliminado: service-order-item');
     }
   }
 
@@ -321,7 +336,7 @@ export class BootstrapService implements OnModuleInit {
       const modRepo = em.getRepository(PermissionModule);
       const permRepo = em.getRepository(Permission);
 
-      // --- módulos ---
+      // --- modulos ---
       const existingMods = await modRepo.find();
       const byKey = new Map(existingMods.map(m => [m.moduleKey, m]));
 
@@ -336,7 +351,7 @@ export class BootstrapService implements OnModuleInit {
           });
           await modRepo.save(created);
           byKey.set(m.moduleKey, created);
-          this.log.log(`+ módulo creado: ${m.moduleKey}`);
+          this.log.log(`+ modulo creado: ${m.moduleKey}`);
         } else {
           let dirty = false;
           if (found.label !== m.label) { found.label = m.label; dirty = true; }
@@ -344,7 +359,7 @@ export class BootstrapService implements OnModuleInit {
           if ((found.icon ?? null) !== (m.icon ?? null)) { found.icon = m.icon ?? null; dirty = true; }
           if (dirty) {
             await modRepo.save(found);
-            this.log.log(`~ módulo actualizado: ${m.moduleKey}`);
+            this.log.log(`~ modulo actualizado: ${m.moduleKey}`);
           }
         }
       }
@@ -360,7 +375,7 @@ export class BootstrapService implements OnModuleInit {
 
         const mod = byKey.get(p.moduleKey);
         if (!mod) {
-          this.log.warn(`(omitido) No existe módulo "${p.moduleKey}" para crear permiso ${code}`);
+          this.log.warn(`(omitido) No existe modulo "${p.moduleKey}" para crear permiso ${code}`);
           continue;
         }
 
@@ -393,7 +408,7 @@ export class BootstrapService implements OnModuleInit {
   }
 
   private async ensureAdminRoleAndGrants(allCodes: string[]) {
-    // rol admin (en minúscula para matchear tu @RolesDec('admin'))
+    // rol admin (en minuscula para matchear tu @RolesDec('admin'))
     let adminRole = await this.rolesRepo.findOne({
       where: { name: 'admin' },
       relations: { permissions: true },
@@ -409,12 +424,12 @@ export class BootstrapService implements OnModuleInit {
       const newPerms = await this.permsRepo.find({ where: { code: In(toFetch) } });
       adminRole.permissions = [...(adminRole.permissions ?? []), ...newPerms];
       await this.rolesRepo.save(adminRole);
-      this.log.log(`~ admin recibió ${newPerms.length} permisos nuevos.`);
+      this.log.log(`~ admin recibio ${newPerms.length} permisos nuevos.`);
     } else {
-      // si el rol aún no existía, guardarlo
+      // si el rol aun no existia, guardarlo
       if (!adminRole.id) {
         await this.rolesRepo.save(adminRole);
-        this.log.log('Rol "admin" creado sin permisos nuevos que añadir.');
+        this.log.log('Rol "admin" creado sin permisos nuevos que anadir.');
       }
     }
   }
@@ -433,13 +448,15 @@ export class BootstrapService implements OnModuleInit {
           'service-category.read',
           'service.read',
           'service-order-diagnosis.read',
-          'service-order-quote.create',
-          'service-order-quote.read',
-          'service-order-quote.update',
-          'service-order-quote.send-to-client',
-          'service-order-quote.approve-client',
-          'service-order-quote.reject-client',
-          'service-order-quote.resubmit',
+          'service-order-agreement.create',
+          'service-order-agreement.read',
+          'service-order-agreement.update',
+          'service-order-agreement.confirm',
+          'service-order-agreement.void',
+          'service-order-inbox.read',
+          'service-order-inbox.send',
+          'service-order-payment.create',
+          'service-order-payment.read',
         ],
       },
       {
@@ -450,7 +467,12 @@ export class BootstrapService implements OnModuleInit {
           'service-order-diagnosis.create',
           'service-order-diagnosis.read',
           'service-order-diagnosis.update',
-          'service-order-quote.read',
+          'service-order-agreement.create',
+          'service-order-agreement.update',
+          'service-order-agreement.read',
+          'service-order-agreement.confirm',
+          'service-order-inbox.read',
+          'service-order-inbox.send',
         ],
       },
       {
@@ -458,7 +480,10 @@ export class BootstrapService implements OnModuleInit {
         permissionCodes: [
           'service-order.read',
           'service-order-diagnosis.read',
-          'service-order-quote.read',
+          'service-order-agreement.read',
+          'service-order-payment.read',
+          'service-order-event.read',
+          'service-order-inbox.read',
         ],
       },
     ];
@@ -488,7 +513,7 @@ export class BootstrapService implements OnModuleInit {
   private async ensureDefaultUsers() {
     const usersCount = await this.usersRepo.count();
     if (usersCount > 0) {
-      this.log.log('Usuarios existentes: no se creará usuario por defecto.');
+      this.log.log('Usuarios existentes: no se creara usuario por defecto.');
       return;
     }
 
@@ -518,7 +543,7 @@ export class BootstrapService implements OnModuleInit {
     });
 
     await this.usersRepo.save(adminUser);
-    this.log.log(`Usuario inicial creado → ${email} / ${plainPwd}`);
+    this.log.log(`Usuario inicial creado - ${email} / ${plainPwd}`);
   }
   private async ensureOperationalUsers() {
     const defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
@@ -586,3 +611,4 @@ export class BootstrapService implements OnModuleInit {
     }
   }
 }
+

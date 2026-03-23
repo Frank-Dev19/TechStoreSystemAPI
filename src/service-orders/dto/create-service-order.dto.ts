@@ -1,19 +1,14 @@
 import {
-  ArrayMinSize,
-  ArrayMaxSize,
-  IsArray,
   IsDateString,
   IsEnum,
   IsNumber,
   IsOptional,
   IsPositive,
   IsString,
+  MaxLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { RequestOrigin, ServiceOrderPriority } from '../enums';
-import { CreateServiceOrderItemDto } from './create-service-order-item.dto';
+import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
 
 export class CreateServiceOrderDto {
   @IsEnum(RequestOrigin)
@@ -30,6 +25,50 @@ export class CreateServiceOrderDto {
   @IsOptional()
   priority?: ServiceOrderPriority;
 
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  assignedToTechnicianId?: number;
+
+  @IsEnum(EquipmentType)
+  equipmentType: EquipmentType;
+
+  @ValidateIf((dto: CreateServiceOrderDto) => dto.equipmentType === EquipmentType.OTHER)
+  @IsString()
+  @MaxLength(120)
+  equipmentTypeOther?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  brand?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(150)
+  model?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  serialNumber?: string;
+
+  @IsString()
+  initialIssue: string;
+
+  @IsString()
+  @IsOptional()
+  accessories?: string;
+
+  @IsEnum(ServiceType)
+  @IsOptional()
+  serviceType?: ServiceType;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsOptional()
+  @IsPositive()
+  estimatedRepairHours?: number;
+
   @IsDateString()
   @IsOptional()
   estimatedDeliveryDate?: string;
@@ -37,11 +76,4 @@ export class CreateServiceOrderDto {
   @IsString()
   @IsOptional()
   notes?: string;
-
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => CreateServiceOrderItemDto)
-  items: CreateServiceOrderItemDto[];
 }

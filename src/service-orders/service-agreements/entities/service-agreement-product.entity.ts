@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   DeleteDateColumn,
@@ -8,20 +8,20 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ServiceOrderQuote } from './service-quote.entity';
+import { ServiceOrderAgreement } from './service-agreement.entity';
 import { Product } from '../../../inventory/entities/product.entity';
 
-@Entity('service_order_quote_products')
-export class ServiceOrderQuoteProduct {
+@Entity('service_order_agreement_products')
+export class ServiceOrderAgreementProduct {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 
-  @ManyToOne(() => ServiceOrderQuote, (quote) => quote.productItems, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'service_order_quote_id' })
-  serviceOrderQuote: ServiceOrderQuote;
+  @ManyToOne(() => ServiceOrderAgreement, (quote) => quote.productItems, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'service_order_agreement_id' })
+  serviceOrderAgreement: ServiceOrderAgreement;
 
-  @Column({ name: 'service_order_quote_id', type: 'bigint', unsigned: true })
-  serviceOrderQuoteId: number;
+  @Column({ name: 'service_order_agreement_id', type: 'bigint', unsigned: true })
+  serviceOrderAgreementId: number;
 
   @ManyToOne(() => Product, { eager: true, nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'product_id' })
@@ -63,3 +63,5 @@ export class ServiceOrderQuoteProduct {
   @DeleteDateColumn({ name: 'deleted_at', nullable: true })
   deletedAt: Date | null;
 }
+
+
