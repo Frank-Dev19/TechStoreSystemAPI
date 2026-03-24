@@ -7,6 +7,8 @@ import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { BulkSoftDeleteClientDto } from './bulk-soft-delete-client.dto';
 import { ClientService } from './client.service';
 import { CreateClientDto } from './create-client.dto';
+import { CommitClientImportDto } from './dto/commit-client-import.dto';
+import { ValidateClientImportDto } from './dto/validate-client-import.dto';
 import { UpdateClientDto } from './update-client.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
@@ -19,6 +21,18 @@ export class ClientController {
   @Post()
   create(@Body() createClientDto: CreateClientDto) {
     return this.clientService.create(createClientDto);
+  }
+
+  @Permissions('clients.import')
+  @Post('import/validate')
+  validateImport(@Body() dto: ValidateClientImportDto) {
+    return this.clientService.validateImport(dto);
+  }
+
+  @Permissions('clients.import')
+  @Post('import/commit')
+  commitImport(@Body() dto: CommitClientImportDto) {
+    return this.clientService.commitImport(dto);
   }
 
   @Permissions('clients.read')

@@ -29,8 +29,8 @@ export class BootstrapService implements OnModuleInit {
   ) { }
 
   async onModuleInit() {
-    // 0) Asegurar DocumentType por defecto (DNI) con soft delete considerado
-    await this.ensureDefaultDocumentType();
+    // 0) Asegurar tipos de documento por defecto con soft delete considerado
+    await this.ensureDefaultDocumentTypes();
 
     // 1) Catalogo de modulos (fuente de verdad)
     const MODULES: ModuleSeed[] = [
@@ -80,6 +80,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'clients', actionKey: 'create', description: 'Crear clientes', sortOrder: 10 },
       { moduleKey: 'clients', actionKey: 'read', description: 'Ver clientes', sortOrder: 20 },
       { moduleKey: 'clients', actionKey: 'update', description: 'Actualizar clientes', sortOrder: 30 },
+      { moduleKey: 'clients', actionKey: 'import', description: 'Importar clientes desde Excel', sortOrder: 40 },
       { moduleKey: 'clients', actionKey: 'delete', description: 'Eliminar un cliente', sortOrder: 60 },
       { moduleKey: 'clients', actionKey: 'restore', description: 'Restaurar un cliente', sortOrder: 70 },
 
@@ -172,27 +173,37 @@ export class BootstrapService implements OnModuleInit {
 
   // ---------- helpers ----------
 
-  /** Crea o restaura el DocumentType 'DNI' con los campos obligatorios actuales. */
-  private async ensureDefaultDocumentType() {
-    // Buscar incluyendo soft-deleted
-    let dt = await this.docTypesRepo.findOne({ where: { name: 'DNI' }, withDeleted: true });
+  private async ensureDefaultDocumentTypes() {
+    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad');
+    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes');
+  }
+
+  private async ensureDocumentType(name: string, digits: number, description: string) {
+    let dt = await this.docTypesRepo.findOne({ where: { name }, withDeleted: true });
     if (!dt) {
-      // Crear con campos requeridos
-      dt = this.docTypesRepo.create({
-        name: 'DNI',
-        digits: 8,
-        description: 'Documento Nacional de Identidad',
-      });
+      dt = this.docTypesRepo.create({ name, digits, description });
       await this.docTypesRepo.save(dt);
-      this.log.log('DocumentType "DNI" creado.');
+      this.log.log(`DocumentType "${name}" creado.`);
       return;
     }
 
-    // Si estaba soft-deleted, restaurar
+    let dirty = false;
     if (dt.deletedAt) {
       dt.deletedAt = null;
+      dirty = true;
+    }
+    if (dt.digits !== digits) {
+      dt.digits = digits;
+      dirty = true;
+    }
+    if (dt.description !== description) {
+      dt.description = description;
+      dirty = true;
+    }
+
+    if (dirty) {
       await this.docTypesRepo.save(dt);
-      this.log.log('DocumentType "DNI" restaurado (soft-delete).');
+      this.log.log(`DocumentType "${name}" actualizado/restaurado.`);
     }
   }
 
@@ -445,6 +456,7 @@ export class BootstrapService implements OnModuleInit {
           'clients.read',
           'clients.create',
           'clients.update',
+          'clients.import',
           'service-category.read',
           'service.read',
           'service-order-diagnosis.read',

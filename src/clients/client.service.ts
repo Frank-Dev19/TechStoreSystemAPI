@@ -11,6 +11,9 @@ import { FindOptionsWhere, ILike, In, IsNull, Not, Repository } from 'typeorm';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './create-client.dto';
+import { CommitClientImportDto } from './dto/commit-client-import.dto';
+import { ImportClientRowDto } from './dto/import-client-row.dto';
+import { ValidateClientImportDto } from './dto/validate-client-import.dto';
 import { UpdateClientDto } from './update-client.dto';
 
 type FindAllQuery = {
@@ -20,6 +23,27 @@ type FindAllQuery = {
   status?: string;
   companyId?: number | string;
   documentNumber?: string;
+  documentTypeId?: number | string;
+};
+
+type ImportValidationStatus = 'ready' | 'error' | 'duplicate';
+
+type NormalizedImportRow = {
+  rowNumber: number;
+  documentTypeId?: number;
+  documentNumber?: string;
+  name?: string;
+  tradeName?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  country?: string;
+};
+
+type ValidatedImportRow = NormalizedImportRow & {
+  status: ImportValidationStatus;
+  errors: string[];
+  duplicateExistingClientId?: number;
 };
 
 @Injectable()
@@ -30,6 +54,126 @@ export class ClientService {
     @InjectRepository(DocumentType)
     private readonly documentTypeRepository: Repository<DocumentType>,
   ) {}
+
+  private normalizeOptionalText(value: unknown): string | undefined {
+    const normalized = String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalized ? normalized : undefined;
+  }
+
+  private normalizeDocumentNumber(value: unknown): string | undefined {
+    const normalized = String(value ?? '')
+      .replace(/\s+/g, '')
+      .trim();
+    return normalized ? normalized : undefined;
+  }
+
+  private normalizeImportRow(row: ImportClientRowDto): NormalizedImportRow {
+    return {
+      rowNumber: Number(row.rowNumber),
+      documentTypeId: row.documentTypeId ? Number(row.documentTypeId) : undefined,
+      documentNumber: this.normalizeDocumentNumber(row.documentNumber),
+      name: this.normalizeOptionalText(row.name),
+      tradeName: this.normalizeOptionalText(row.tradeName),
+      phone: this.normalizeOptionalText(row.phone),
+      address: this.normalizeOptionalText(row.address),
+      city: this.normalizeOptionalText(row.city),
+      country: this.normalizeOptionalText(row.country),
+    };
+  }
+
+  private async buildExistingClientsMap(
+    companyId: number,
+    rows: NormalizedImportRow[],
+  ): Promise<Map<string, Client>> {
+    const candidateKeys = rows
+      .filter((row) => row.documentTypeId && row.documentNumber)
+      .map((row) => ({
+        companyId,
+        documentTypeId: Number(row.documentTypeId),
+        documentNumber: String(row.documentNumber),
+      }));
+
+    if (!candidateKeys.length) {
+      return new Map();
+    }
+
+    const existingClients = await this.clientRepository.find({
+      where: candidateKeys,
+      withDeleted: false,
+      select: ['id', 'companyId', 'documentTypeId', 'documentNumber', 'name'],
+    });
+
+    return new Map(
+      existingClients.map((client) => [
+        `${client.companyId}:${client.documentTypeId}:${client.documentNumber}`,
+        client,
+      ]),
+    );
+  }
+
+  private async validateImportRows(
+    companyId: number,
+    rows: ImportClientRowDto[],
+  ): Promise<ValidatedImportRow[]> {
+    const normalizedRows = rows.map((row) => this.normalizeImportRow(row));
+    const documentTypeIds = Array.from(
+      new Set(normalizedRows.map((row) => Number(row.documentTypeId)).filter((value) => value > 0)),
+    );
+
+    const documentTypes = documentTypeIds.length
+      ? await this.documentTypeRepository.find({ where: { id: In(documentTypeIds) } })
+      : [];
+
+    const documentTypesById = new Map(documentTypes.map((docType) => [Number(docType.id), docType]));
+    const existingClientsByKey = await this.buildExistingClientsMap(companyId, normalizedRows);
+
+    return normalizedRows.map((row) => {
+      const errors: string[] = [];
+      const docTypeId = row.documentTypeId ? Number(row.documentTypeId) : undefined;
+      const docType = docTypeId ? documentTypesById.get(docTypeId) : undefined;
+
+      if (!docTypeId) {
+        errors.push('Selecciona un tipo de documento.');
+      } else if (!docType) {
+        errors.push('El tipo de documento no existe.');
+      }
+
+      if (!row.documentNumber) {
+        errors.push('Completa el número de documento.');
+      } else if (!/^\d+$/.test(row.documentNumber)) {
+        errors.push('El documento solo puede contener dígitos.');
+      } else if (docType && row.documentNumber.length !== Number(docType.digits)) {
+        errors.push(`El documento debe tener ${docType.digits} dígitos.`);
+      }
+
+      if (!row.name) {
+        errors.push('Completa la razón social o nombre del cliente.');
+      }
+
+      const duplicateKey =
+        docTypeId && row.documentNumber
+          ? `${companyId}:${docTypeId}:${row.documentNumber}`
+          : undefined;
+      const duplicateExistingClient = duplicateKey ? existingClientsByKey.get(duplicateKey) : undefined;
+
+      if (duplicateExistingClient) {
+        errors.push('Ya existe un cliente con ese documento en la base de datos.');
+      }
+
+      return {
+        ...row,
+        status: duplicateExistingClient
+          ? 'duplicate'
+          : errors.length
+            ? 'error'
+            : 'ready',
+        errors,
+        duplicateExistingClientId: duplicateExistingClient?.id,
+      };
+    });
+  }
 
   private async validateDocumentLength(documentTypeId: number, documentNumber: string) {
     const dt = await this.documentTypeRepository.findOne({ where: { id: documentTypeId } });
@@ -92,6 +236,7 @@ export class ClientService {
     const normalizedStatus = (query.status ?? 'active').toString().toLowerCase();
     const showDeleted = normalizedStatus === 'deleted' || normalizedStatus === 'eliminados';
     const deletedCondition = showDeleted ? Not(IsNull()) : IsNull();
+    const documentTypeId = query.documentTypeId != null ? Number(query.documentTypeId) : undefined;
 
     const baseCondition: Pick<FindOptionsWhere<Client>, 'companyId' | 'deletedAt'> = {
       companyId,
@@ -103,6 +248,7 @@ export class ClientService {
       ...condition,
       companyId: baseCondition.companyId,
       deletedAt: baseCondition.deletedAt,
+      ...(documentTypeId && !Number.isNaN(documentTypeId) ? { documentTypeId } : {}),
     });
 
     const searchTerm = query.search?.trim();
@@ -118,6 +264,7 @@ export class ClientService {
       where.push(
         buildCondition({ name: ILike(`%${q}%`) }),
         buildCondition({ tradeName: ILike(`%${q}%`) }),
+        buildCondition({ documentNumber: ILike(`%${q}%`) }),
         buildCondition({ documentType: { name: ILike(`%${q}%`) } }),
         buildCondition({ email: ILike(`%${q}%`) }),
         buildCondition({ phone: ILike(`%${q}%`) }),
@@ -126,7 +273,10 @@ export class ClientService {
         buildCondition({ country: ILike(`%${q}%`) }),
       );
     } else {
-      where.push(baseCondition);
+      where.push({
+        ...baseCondition,
+        ...(documentTypeId && !Number.isNaN(documentTypeId) ? { documentTypeId } : {}),
+      });
     }
 
     const [data, total] = await this.clientRepository.findAndCount({
@@ -229,5 +379,92 @@ export class ClientService {
     }
 
     return { ok: true, message: `${count} clients restored successfully` };
+  }
+
+  async validateImport(dto: ValidateClientImportDto) {
+    const companyId = Number(dto.companyId);
+    if (!companyId || Number.isNaN(companyId)) {
+      throw new BadRequestException('Valid companyId is required to validate import rows');
+    }
+
+    const rows = await this.validateImportRows(companyId, dto.rows ?? []);
+    const summary = {
+      totalRows: rows.length,
+      readyRows: rows.filter((row) => row.status === 'ready').length,
+      duplicateRows: rows.filter((row) => row.status === 'duplicate').length,
+      errorRows: rows.filter((row) => row.status === 'error').length,
+    };
+
+    return { rows, summary };
+  }
+
+  async commitImport(dto: CommitClientImportDto) {
+    const companyId = Number(dto.companyId);
+    if (!companyId || Number.isNaN(companyId)) {
+      throw new BadRequestException('Valid companyId is required to import clients');
+    }
+
+    const validatedRows = await this.validateImportRows(companyId, dto.rows ?? []);
+    const readyRows = validatedRows.filter((row) => row.status === 'ready');
+    const skippedRows = validatedRows.filter((row) => row.status !== 'ready');
+    const createdClients: Client[] = [];
+    const failedRows: Array<ValidatedImportRow & { errorMessage?: string }> = [];
+
+    if (readyRows.length) {
+      const entities = readyRows.map((row) =>
+        this.clientRepository.create({
+          companyId,
+          name: row.name!,
+          tradeName: row.tradeName,
+          documentTypeId: Number(row.documentTypeId),
+          documentNumber: row.documentNumber!,
+          phone: row.phone,
+          address: row.address,
+          city: row.city,
+          country: row.country,
+        }),
+      );
+
+      try {
+        const saved = await this.clientRepository.save(entities, { chunk: 200 });
+        createdClients.push(...saved);
+      } catch (error) {
+        for (const entity of entities) {
+          try {
+            const savedEntity = await this.clientRepository.save(entity);
+            createdClients.push(savedEntity);
+          } catch (saveError) {
+            failedRows.push({
+              rowNumber: 0,
+              documentTypeId: entity.documentTypeId,
+              documentNumber: entity.documentNumber,
+              name: entity.name,
+              tradeName: entity.tradeName,
+              phone: entity.phone,
+              address: entity.address,
+              city: entity.city,
+              country: entity.country,
+              status: 'error',
+              errors: ['No se pudo importar la fila en el commit final.'],
+              errorMessage:
+                saveError instanceof Error ? saveError.message : 'Unknown error while importing row',
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      createdCount: createdClients.length,
+      skippedCount: skippedRows.length + failedRows.length,
+      summary: {
+        totalRows: dto.rows.length,
+        createdRows: createdClients.length,
+        skippedRows: skippedRows.length,
+        failedRows: failedRows.length,
+      },
+      skippedRows,
+      failedRows,
+    };
   }
 }
