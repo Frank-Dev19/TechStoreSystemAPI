@@ -27,6 +27,8 @@ import { AssignTechnicianDto } from '../dto/assign-technician.dto';
 import { ServiceOrderWorkflowStatus } from '../enums';
 import { ChangeServiceOrderWorkflowStatusDto } from '../dto/change-service-order-workflow-status.dto';
 import { ServiceOrderTechnicianSuggestionDto } from '../dto/service-order-technician-suggestion.dto';
+import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.dto';
+import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -35,6 +37,7 @@ export class ServiceOrderController {
   constructor(
     private readonly serviceOrderService: ServiceOrderService,
     private readonly workflowService: ServiceOrderWorkflowService,
+    private readonly saleLinkService: ServiceOrderSaleLinkService,
   ) {}
 
   @Permissions('service-order.create')
@@ -56,6 +59,34 @@ export class ServiceOrderController {
   @Get('technician-suggestion')
   getTechnicianSuggestion(@Query() query: ServiceOrderTechnicianSuggestionDto) {
     return this.workflowService.getAssignmentSuggestion(query.serviceType);
+  }
+
+  @Permissions('service-order.read')
+  @Get('billing-links/search-sales')
+  searchSales(@Query() query: any) {
+    return this.saleLinkService.searchSales(query);
+  }
+
+  @Permissions('service-order.read')
+  @Get('billing-links/by-orders')
+  getLinksByOrders(@Query('serviceOrderIds') serviceOrderIds?: string) {
+    const ids = String(serviceOrderIds ?? '')
+      .split(',')
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    return this.saleLinkService.getLinksByServiceOrderIds(ids);
+  }
+
+  @Permissions('service-order.update')
+  @Post('billing-links')
+  linkSaleToOrders(@Body() dto: LinkSaleToServiceOrdersDto, @CurrentUser() userId?: number) {
+    return this.saleLinkService.linkSaleToServiceOrders(dto, userId ? String(userId) : undefined);
+  }
+
+  @Permissions('service-order.update')
+  @Delete('billing-links/:id')
+  unlinkSale(@Param('id', ParseIntPipe) id: number) {
+    return this.saleLinkService.unlink(id);
   }
 
   @Permissions('service-order.read')

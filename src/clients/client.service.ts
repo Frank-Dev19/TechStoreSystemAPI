@@ -272,7 +272,7 @@ export class ClientService {
         buildCondition({ city: ILike(`%${q}%`) }),
         buildCondition({ country: ILike(`%${q}%`) }),
       );
-    } else {
+    } else if (!where.length) {
       where.push({
         ...baseCondition,
         ...(documentTypeId && !Number.isNaN(documentTypeId) ? { documentTypeId } : {}),

@@ -9,6 +9,7 @@ import {
 import { Sale } from './sale.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
+import { Service } from 'src/service-catalog/entities/service.entity';
 
 @Entity({ name: 'sale_items' })
 export class SaleItem {
@@ -22,12 +23,31 @@ export class SaleItem {
     @JoinColumn({ name: 'sale_id' })
     sale: Sale;
 
-    @Column({ name: 'product_id' })
-    productId: number;
+    @Column({ name: 'item_type', type: 'varchar', length: 16, default: 'PRODUCT' })
+    itemType: 'PRODUCT' | 'SERVICE';
 
-    @ManyToOne(() => Product, { eager: true, nullable: false })
+    @Column({ name: 'product_id', nullable: true })
+    productId?: number | null;
+
+    @ManyToOne(() => Product, { eager: true, nullable: true })
     @JoinColumn({ name: 'product_id' })
-    product: Product;
+    product?: Product | null;
+
+    @Column({ name: 'service_id', type: 'int', unsigned: true, nullable: true })
+    serviceId?: number | null;
+
+    @ManyToOne(() => Service, { eager: true, nullable: true })
+    @JoinColumn({ name: 'service_id' })
+    service?: Service | null;
+
+    @Column({ name: 'service_code_snapshot', type: 'varchar', length: 64, nullable: true })
+    serviceCodeSnapshot?: string | null;
+
+    @Column({ name: 'service_name_snapshot', type: 'varchar', length: 256, nullable: true })
+    serviceNameSnapshot?: string | null;
+
+    @Column({ name: 'description_snapshot', type: 'varchar', length: 256, nullable: true })
+    descriptionSnapshot?: string | null;
 
     @Column({ name: 'lot_id', nullable: true })
     lotId?: number | null;

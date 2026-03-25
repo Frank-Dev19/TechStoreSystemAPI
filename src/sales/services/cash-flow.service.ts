@@ -429,6 +429,9 @@ export class CashFlowService {
         for (const sale of sales) {
             for (const item of sale.items) {
                 const productId = item.productId;
+                if (!productId) {
+                    continue;
+                }
                 const current = productSales.get(productId) || {
                     productId,
                     productName: item.product?.name || `Producto ${productId}`,

@@ -21,9 +21,23 @@ import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { PaymentMethod } from '../enums/payment-method.enum';
 
+export enum SaleItemKindDto {
+    PRODUCT = 'PRODUCT',
+    SERVICE = 'SERVICE',
+}
+
 export class SaleItemDto {
+    @IsOptional()
+    @IsEnum(SaleItemKindDto)
+    itemType?: SaleItemKindDto;
+
+    @IsOptional()
     @IsInt()
-    productId: number;
+    productId?: number;
+
+    @IsOptional()
+    @IsInt()
+    serviceId?: number;
 
     @IsOptional()
     @IsInt()
@@ -51,6 +65,11 @@ export class SaleItemDto {
     @IsOptional()
     @IsInt()
     comboId?: number | null;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(256)
+    description?: string;
 }
 
 export class SalePaymentDto {

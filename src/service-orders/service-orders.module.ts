@@ -11,12 +11,15 @@ import { NotificationMessage } from './entities/notification-message.entity';
 import { ServiceOrderEvent } from './entities/service-order-event.entity';
 import { ServiceOrderPayment } from './entities/service-order-payment.entity';
 import { ServiceOrder } from './entities/service-order.entity';
+import { ServiceOrderSaleLink } from './entities/service-order-sale-link.entity';
 import { ServiceOrderAgreement } from './service-agreements/entities/service-agreement.entity';
 import { TechnicianAssignmentBalance } from './entities/technician-assignment-balance.entity';
 import { Service } from '../service-catalog/entities/service.entity';
+import { Sale } from '../sales/entities/sale.entity';
 import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
 import { ServiceOrderNotificationService } from './services/service-order-notification.service';
 import { ServiceOrderPaymentService } from './services/service-order-payment.service';
+import { ServiceOrderSaleLinkService } from './services/service-order-sale-link.service';
 import { ServiceOrderService } from './services/service-order.service';
 import { ServiceOrderWorkflowService } from './services/service-order-workflow.service';
 
@@ -24,8 +27,10 @@ import { ServiceOrderWorkflowService } from './services/service-order-workflow.s
   imports: [
     TypeOrmModule.forFeature([
       ServiceOrder,
+      ServiceOrderSaleLink,
       ServiceOrderAgreement,
       Service,
+      Sale,
       Client,
       User,
       ServiceOrderDiagnosis,
@@ -42,6 +47,7 @@ import { ServiceOrderWorkflowService } from './services/service-order-workflow.s
     ServiceOrderWorkflowService,
     ServiceOrderDiagnosisService,
     ServiceOrderPaymentService,
+    ServiceOrderSaleLinkService,
     ServiceOrderNotificationService,
   ],
   exports: [
@@ -49,6 +55,7 @@ import { ServiceOrderWorkflowService } from './services/service-order-workflow.s
     ServiceOrderWorkflowService,
     ServiceOrderDiagnosisService,
     ServiceOrderPaymentService,
+    ServiceOrderSaleLinkService,
     ServiceOrderNotificationService,
   ],
 })

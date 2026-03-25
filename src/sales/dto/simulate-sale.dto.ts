@@ -13,10 +13,20 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SaleType } from '../enums/sale-type.enum';
+import { SaleItemKindDto } from './create-sale.dto';
 
 export class SimulateItemDto {
+    @IsOptional()
+    @IsEnum(SaleItemKindDto)
+    itemType?: SaleItemKindDto;
+
+    @IsOptional()
     @IsInt()
-    productId: number;
+    productId?: number;
+
+    @IsOptional()
+    @IsInt()
+    serviceId?: number;
 
     @IsNumber()
     @IsPositive()
@@ -25,6 +35,11 @@ export class SimulateItemDto {
     @IsOptional()
     @IsInt()
     comboId?: number | null;
+
+    @IsOptional()
+    @IsNumber()
+    @IsPositive()
+    finalUnitPrice?: number;
 }
 
 export class SimulateSaleDto {

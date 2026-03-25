@@ -14,6 +14,7 @@ import { SaleLineDiscount } from '../entities/sale-line-discount.entity';
 import { SaleComboItem } from '../entities/sale-combo-item.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Product } from 'src/inventory/entities/product.entity';
+import { Service } from 'src/service-catalog/entities/service.entity';
 import { Combo } from 'src/pricing/entities/combo.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
@@ -23,7 +24,7 @@ import { MovementSerial } from 'src/inventory/entities/movement-serial.entity';
 import { CashRegister } from '../entities/cash-register.entity';
 import { CashFlowTransaction } from '../entities/cash-flow-transaction.entity';
 
-import { CreateSaleDto, SaleItemDto, SalePaymentDto } from '../dto/create-sale.dto';
+import { CreateSaleDto, SaleItemDto, SalePaymentDto, SaleItemKindDto } from '../dto/create-sale.dto';
 import { UpdateSaleDto } from '../dto/update-sale.dto';
 import { FilterSalesDto } from '../dto/filter-sales.dto';
 import { CancelSaleDto } from '../dto/cancel-sale.dto';
@@ -63,6 +64,8 @@ export class SalesService {
     private readonly clientRepo: Repository<Client>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
+    @InjectRepository(Service)
+    private readonly serviceRepo: Repository<Service>,
     @InjectRepository(Combo)
     private readonly comboRepo: Repository<Combo>,
     @InjectRepository(Lot)
@@ -100,16 +103,54 @@ export class SalesService {
       throw new BadRequestException('Cliente no encontrado');
     }
 
-    // Simular cada producto
+    // Simular cada línea de venta
     const simulationResults = await Promise.all(
       simulateDto.items.map(async (item) => {
-        // Validar stock
+        if (item.itemType === SaleItemKindDto.SERVICE) {
+          if (!item.serviceId) {
+            throw new BadRequestException('Cada línea de servicio requiere serviceId');
+          }
+
+          const service = await this.serviceRepo.findOne({ where: { id: item.serviceId } });
+          if (!service) {
+            throw new BadRequestException(`Servicio con ID ${item.serviceId} no encontrado`);
+          }
+
+          const unitPrice = Number(item.finalUnitPrice ?? service.price ?? 0);
+          const finalSubtotal = Number((unitPrice * Number(item.quantity)).toFixed(2));
+
+          return {
+            item,
+            stockValidation: {
+              isValid: true,
+              warning: null,
+            },
+            pricing: {
+              itemType: SaleItemKindDto.SERVICE,
+              productId: null,
+              serviceId: service.id,
+              productName: service.name,
+              sku: service.code,
+              baseUnitPrice: unitPrice,
+              finalUnitPrice: unitPrice,
+              baseSubtotal: finalSubtotal,
+              totalDiscount: 0,
+              finalSubtotal,
+              discounts: [],
+              availableCombos: [],
+            },
+          };
+        }
+
+        if (!item.productId) {
+          throw new BadRequestException('Cada línea de producto requiere productId');
+        }
+
         const stockValidation = await this.salesInventory.validateStock({
           productId: item.productId,
           quantity: item.quantity,
         });
 
-        // Obtener precio con descuentos
         const pricing = await this.salesPricing.getProductPricing({
           productId: item.productId,
           quantity: item.quantity,
@@ -121,7 +162,11 @@ export class SalesService {
         return {
           item,
           stockValidation,
-          pricing,
+          pricing: {
+            ...pricing,
+            itemType: SaleItemKindDto.PRODUCT,
+            serviceId: null,
+          },
         };
       })
     );
@@ -172,7 +217,9 @@ export class SalesService {
     return {
       customer,
       items: simulationResults.map(result => ({
+        itemType: result.pricing.itemType,
         productId: result.pricing.productId,
+        serviceId: result.pricing.serviceId,
         productName: result.pricing.productName,
         sku: result.pricing.sku,
         quantity: result.item.quantity,
@@ -426,6 +473,23 @@ export class SalesService {
       enhancedItems = [];
 
       for (const item of createSaleDto.items) {
+        if (item.itemType === SaleItemKindDto.SERVICE) {
+          const service = item.serviceId
+            ? await this.serviceRepo.findOne({ where: { id: item.serviceId } })
+            : null;
+          const servicePrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? service?.price ?? 0);
+          enhancedItems.push({
+            ...item,
+            baseUnitPrice: servicePrice,
+            finalUnitPrice: servicePrice
+          });
+          continue;
+        }
+
+        if (!item.productId) {
+          throw new BadRequestException('Cada línea de producto requiere productId');
+        }
+
         // Llamar al pricing engine para obtener el mejor precio
         const bestPriceResponse = await this.pricingEngine.getBestPriceForQty({
           product_id: item.productId,
@@ -534,6 +598,44 @@ export class SalesService {
       for (let i = 0; i < createSaleDto.items.length; i++) {
         const itemDto = createSaleDto.items[i];
         const simulationResult = simulation.items[i];
+        if (itemDto.itemType === SaleItemKindDto.SERVICE) {
+          if (!itemDto.serviceId) {
+            throw new BadRequestException('Cada línea de servicio requiere serviceId');
+          }
+
+          const service = await this.serviceRepo.findOne({ where: { id: itemDto.serviceId } });
+          if (!service) {
+            throw new BadRequestException(`Servicio con ID ${itemDto.serviceId} no encontrado`);
+          }
+
+          const saleItem = this.saleItemRepo.create({
+            saleId: savedSale.id,
+            itemType: 'SERVICE',
+            productId: null,
+            serviceId: service.id,
+            serviceCodeSnapshot: service.code,
+            serviceNameSnapshot: service.name,
+            descriptionSnapshot: itemDto.description ?? service.name,
+            lotId: null,
+            baseUnitPrice: simulationResult.baseUnitPrice,
+            finalUnitPrice: simulationResult.finalUnitPrice,
+            quantity: itemDto.quantity,
+            discountAmount: 0,
+            taxAmount: 0,
+            lineTotal: simulationResult.finalSubtotal,
+            serialCount: 0,
+            isComboItem: false,
+            comboId: null,
+          });
+
+          const savedItem = await queryRunner.manager.save(saleItem);
+          saleItems.push(savedItem);
+          continue;
+        }
+
+        if (!itemDto.productId) {
+          throw new BadRequestException('Cada línea de producto requiere productId');
+        }
 
         // ✅ OBTENER LOTE Y SERIALES AUTOMÁTICAMENTE si no se enviaron
         // Ahora retorna un array de lotes
@@ -578,7 +680,12 @@ export class SalesService {
 
         const saleItem = this.saleItemRepo.create({
           saleId: savedSale.id,
+          itemType: 'PRODUCT',
           productId: itemDto.productId,
+          serviceId: null,
+          serviceCodeSnapshot: null,
+          serviceNameSnapshot: null,
+          descriptionSnapshot: simulationResult.productName,
           lotId: firstLotData.lotId,
           baseUnitPrice: simulationResult.baseUnitPrice,
           finalUnitPrice: simulationResult.finalUnitPrice,
