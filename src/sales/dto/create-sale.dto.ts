@@ -70,6 +70,10 @@ export class SaleItemDto {
     @IsString()
     @MaxLength(256)
     description?: string;
+
+    @IsOptional()
+    @IsNumber()
+    discountPct?: number;
 }
 
 export class SalePaymentDto {

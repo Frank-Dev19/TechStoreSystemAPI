@@ -15,7 +15,6 @@ import { SaleComboItem } from '../entities/sale-combo-item.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Service } from 'src/service-catalog/entities/service.entity';
-import { Combo } from 'src/pricing/entities/combo.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
 import { Stock } from 'src/inventory/entities/stock.entity';
@@ -66,8 +65,6 @@ export class SalesService {
     private readonly productRepo: Repository<Product>,
     @InjectRepository(Service)
     private readonly serviceRepo: Repository<Service>,
-    @InjectRepository(Combo)
-    private readonly comboRepo: Repository<Combo>,
     @InjectRepository(Lot)
     private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Serial)
@@ -154,9 +151,7 @@ export class SalesService {
         const pricing = await this.salesPricing.getProductPricing({
           productId: item.productId,
           quantity: item.quantity,
-          priceListCode: simulateDto.priceListCode,
-          applyAutoDiscounts: simulateDto.applyAutoDiscounts ?? true,
-          userPermissions: [...userPermissions, ...(simulateDto.userPermissions || [])],
+          discountPct: item.discountPct ?? 0,
         });
 
         return {
@@ -464,57 +459,43 @@ export class SalesService {
       documentSeriesId = documentSeries?.id || null;
     }
 
-    // Si no se especifica priceListCode, determinarlo automáticamente
-    let finalPriceListCode = createSaleDto.priceListCode;
-    let enhancedItems = createSaleDto.items;
+    // Calcular precios usando el nuevo motor de porcentajes
+    const enhancedItems: any[] = [];
 
-    if (!finalPriceListCode) {
-      // Para cada item, obtener el mejor precio disponible
-      enhancedItems = [];
-
-      for (const item of createSaleDto.items) {
-        if (item.itemType === SaleItemKindDto.SERVICE) {
-          const service = item.serviceId
-            ? await this.serviceRepo.findOne({ where: { id: item.serviceId } })
-            : null;
-          const servicePrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? service?.price ?? 0);
-          enhancedItems.push({
-            ...item,
-            baseUnitPrice: servicePrice,
-            finalUnitPrice: servicePrice
-          });
-          continue;
-        }
-
-        if (!item.productId) {
-          throw new BadRequestException('Cada línea de producto requiere productId');
-        }
-
-        // Llamar al pricing engine para obtener el mejor precio
-        const bestPriceResponse = await this.pricingEngine.getBestPriceForQty({
-          product_id: item.productId,
-          qty: item.quantity,
-          user_permissions: [] // Aquí podrían pasarse permisos si fuera necesario
-        });
-
-        // Usar el priceListCode del mejor precio encontrado
-        const itemPriceListCode = bestPriceResponse.applied.priceListCode;
-        finalPriceListCode = itemPriceListCode; // Para esta venta
-
+    for (const item of createSaleDto.items) {
+      if (item.itemType === SaleItemKindDto.SERVICE) {
+        const service = item.serviceId
+          ? await this.serviceRepo.findOne({ where: { id: item.serviceId } })
+          : null;
+        const servicePrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? service?.price ?? 0);
         enhancedItems.push({
           ...item,
-          baseUnitPrice: bestPriceResponse.applied.baseUnitPrice,
-          finalUnitPrice: bestPriceResponse.applied.finalUnitPrice
+          baseUnitPrice: servicePrice,
+          finalUnitPrice: servicePrice
         });
+        continue;
       }
+
+      if (!item.productId) {
+        throw new BadRequestException('Cada línea de producto requiere productId');
+      }
+
+      // Calcular precio con el motor de porcentajes
+      const priceCalc = await this.pricingEngine.calculatePrice(item.productId);
+      const discountPct = item.discountPct ?? 0;
+      const finalUnitPrice = Number((priceCalc.salePrice * (1 - discountPct / 100)).toFixed(6));
+
+      enhancedItems.push({
+        ...item,
+        baseUnitPrice: priceCalc.salePrice,
+        finalUnitPrice,
+      });
     }
 
-    // Simular para validar (usando enhanced items y priceListCode determinado)
+    // Simular para validar
     const simulation = await this.simulate({
       customerId: createSaleDto.customerId,
       saleType: createSaleDto.saleType,
-      priceListCode: finalPriceListCode,
-      applyAutoDiscounts: createSaleDto.applyAutoDiscounts ?? true,
       items: enhancedItems,
     });
 
@@ -568,8 +549,8 @@ export class SalesService {
         number: finalNumber,
         issueDate: createSaleDto.issueDate,
         dueDate: createSaleDto.dueDate,
-        priceListCode: finalPriceListCode,
-        applyAutoDiscounts: createSaleDto.applyAutoDiscounts ?? true,
+        priceListCode: '',
+        applyAutoDiscounts: true,
         subtotal: simulation.summary.subtotal,           // Subtotal NETO (baseSubtotal - discountTotal)
         discountTotal: simulation.summary.discountTotal, // Total de descuentos
         taxRate: simulation.summary.taxRate,
@@ -701,13 +682,13 @@ export class SalesService {
         const savedItem = await queryRunner.manager.save(saleItem);
         saleItems.push(savedItem);
 
-        // Registrar descuentos por línea
+        // Registrar descuentos por línea (rebaja del vendedor)
         for (const discount of simulationResult.discounts) {
           const lineDiscount = this.saleLineDiscountRepo.create({
             saleId: savedSale.id,
             saleItemId: savedItem.id,
-            discountRuleId: discount.ruleId,
-            discountSource: discount.source === 'RULE_AUTO' ? 'RULE_AUTO' : 'RULE_MANUAL',
+            discountRuleId: null,
+            discountSource: 'SELLER_DISCOUNT',
             name: discount.name,
             amount: discount.amount,
             isPercent: discount.type === 'PERCENT',
@@ -716,30 +697,6 @@ export class SalesService {
           });
 
           await queryRunner.manager.save(lineDiscount);
-        }
-
-        // Registrar items de combo si aplica
-        if (itemDto.comboId) {
-          const combo = await this.comboRepo.findOne({
-            where: { id: itemDto.comboId },
-            relations: ['items', 'items.product'],
-          });
-
-          if (combo) {
-            for (const comboItem of combo.items) {
-              const saleComboItem = this.saleComboItemRepo.create({
-                saleId: savedSale.id,
-                saleItemId: savedItem.id,
-                comboId: combo.id,
-                productId: comboItem.productId,
-                qtyInCombo: comboItem.qty,
-                unitPriceAtSale: simulationResult.finalUnitPrice,
-                comboSavings: 0,
-              });
-
-              await queryRunner.manager.save(saleComboItem);
-            }
-          }
         }
       }
 

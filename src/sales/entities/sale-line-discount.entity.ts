@@ -8,9 +8,8 @@ import {
 } from 'typeorm';
 import { Sale } from './sale.entity';
 import { SaleItem } from './sale-item.entity';
-import { DiscountRule } from 'src/pricing/entities/discount-rule.entity';
 
-export type DiscountSource = 'RULE_AUTO' | 'RULE_MANUAL' | 'COMBO' | 'MANUAL' | 'PROMOTION';
+export type DiscountSource = 'RULE_AUTO' | 'RULE_MANUAL' | 'COMBO' | 'MANUAL' | 'PROMOTION' | 'SELLER_DISCOUNT';
 
 @Entity({ name: 'sale_line_discounts' })
 export class SaleLineDiscount {
@@ -33,10 +32,6 @@ export class SaleLineDiscount {
 
     @Column({ name: 'discount_rule_id', type: 'int', unsigned: true, nullable: true })
     discountRuleId?: number | null;
-
-    @ManyToOne(() => DiscountRule, { nullable: true })
-    @JoinColumn({ name: 'discount_rule_id' })
-    discountRule?: DiscountRule | null;
 
     @Column({ name: 'discount_source', length: 16 })
     discountSource: DiscountSource;

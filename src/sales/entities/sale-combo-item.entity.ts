@@ -8,7 +8,6 @@ import {
 } from 'typeorm';
 import { Sale } from './sale.entity';
 import { SaleItem } from './sale-item.entity';
-import { Combo } from 'src/pricing/entities/combo.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 
 @Entity({ name: 'sale_combo_items' })
@@ -30,12 +29,8 @@ export class SaleComboItem {
     @JoinColumn({ name: 'sale_item_id' })
     saleItem?: SaleItem | null;
 
-    @Column({ name: 'combo_id' })
+    @Column({ name: 'combo_id', nullable: true })
     comboId: number;
-
-    @ManyToOne(() => Combo, { eager: true })
-    @JoinColumn({ name: 'combo_id' })
-    combo: Combo;
 
     @Column({ name: 'product_id' })
     productId: number;

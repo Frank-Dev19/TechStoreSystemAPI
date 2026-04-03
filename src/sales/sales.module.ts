@@ -23,8 +23,6 @@ import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
 import { Movement } from 'src/inventory/entities/movement.entity';
 import { MovementSerial } from 'src/inventory/entities/movement-serial.entity';
-import { Combo } from 'src/pricing/entities/combo.entity';
-import { DiscountRule } from 'src/pricing/entities/discount-rule.entity';
 import { Service } from 'src/service-catalog/entities/service.entity';
 import { PricingModule } from 'src/pricing/pricing.module';
 import { InventoryModule } from 'src/inventory/inventory.module';
@@ -47,8 +45,6 @@ import { ClientModule } from 'src/clients/client.module';
       Serial,
       Movement,
       MovementSerial,
-      Combo,
-      DiscountRule,
       Service,
     ]),
     PricingModule,

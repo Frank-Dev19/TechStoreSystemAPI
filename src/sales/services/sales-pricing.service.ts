@@ -2,11 +2,8 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PricingEngineService } from 'src/pricing/services/pricing-engine.service';
-import { PricingSimulationService } from 'src/pricing/services/pricing-simulation.service';
-import { CombosService } from 'src/pricing/services/combos.service';
+import { PricingEngineService, PriceCalculation } from 'src/pricing/services/pricing-engine.service';
 import { Product } from 'src/inventory/entities/product.entity';
-import { Combo } from 'src/pricing/entities/combo.entity';
 
 export interface ProductPricingResult {
     productId: number;
@@ -14,63 +11,52 @@ export interface ProductPricingResult {
     sku: string;
     quantity: number;
 
-    // PRECIOS POR UNIDAD
-    baseUnitPrice: number;      // Precio SIN descuento
-    finalUnitPrice: number;     // Precio CON descuento
-    unitDiscount: number;       // Descuento por unidad (baseUnitPrice - finalUnitPrice)
+    // Precios por unidad (sin IGV)
+    baseUnitPrice: number;      // Precio de venta calculado (CPP × (1 + utilidad%))
+    finalUnitPrice: number;     // Precio con descuento aplicado
+    unitDiscount: number;       // Descuento por unidad
 
-    // TOTALES
+    // Totales (sin IGV)
     baseSubtotal: number;       // baseUnitPrice × quantity
     finalSubtotal: number;      // finalUnitPrice × quantity
     totalDiscount: number;      // unitDiscount × quantity
 
-    // Descuentos
+    // IGV
+    igvRate: number;
+    igvAmount: number;          // IGV sobre el finalSubtotal
+    totalWithIgv: number;       // finalSubtotal + igvAmount
+
+    // Info de márgenes
+    cpp: number;
+    profitMarginPct: number;
+    maxDiscountPct: number;
+    appliedDiscountPct: number;
+
+    // Descuentos (simplificado — ya no hay reglas complejas)
     discounts: Array<{
-        ruleId?: number;
         name: string;
         type: string;
-        amount: number; // Porcentaje o monto
-        value: number;  // Valor monetario POR UNIDAD
+        amount: number;
+        value: number;
         source: string;
         priority: number;
     }>;
 
-    // Combos disponibles
-    availableCombos: Array<{
-        comboId: number;
-        name: string;
-        type: string;
-        comboPrice?: number;
-        discountPercent?: number;
-        savings: number;
-        items: Array<{
-            productId: number;
-            productName: string;
-            quantity: number;
-        }>;
-    }>;
+    availableCombos: Array<any>; // Mantenemos la interface pero siempre vacío
 }
 
 @Injectable()
 export class SalesPricingService {
     constructor(
         private readonly pricingEngine: PricingEngineService,
-        private readonly pricingSimulation: PricingSimulationService,
-        private readonly combosService: CombosService,
-
         @InjectRepository(Product)
         private readonly productRepo: Repository<Product>,
-        @InjectRepository(Combo)
-        private readonly comboRepo: Repository<Combo>,
-    ) { }
+    ) {}
 
     async getProductPricing(params: {
         productId: number;
         quantity: number;
-        priceListCode?: string;
-        applyAutoDiscounts?: boolean;
-        userPermissions?: string[];
-        date?: Date;
+        discountPct?: number;
     }): Promise<ProductPricingResult> {
         const product = await this.productRepo.findOne({
             where: { id: params.productId },
@@ -80,165 +66,62 @@ export class SalesPricingService {
             throw new BadRequestException(`Producto con ID ${params.productId} no encontrado`);
         }
 
-        try {
-            // Consultar precio con el Pricing Engine
-            const priceResult = await this.pricingEngine.getProductPrice({
-                product_id: params.productId,
-                qty: params.quantity,
-                price_list_code: params.priceListCode,
-                date: params.date?.toISOString().split('T')[0],
-                user_permissions: params.userPermissions || [],
-            });
+        // Calcular precio con el nuevo motor
+        const calc = await this.pricingEngine.calculatePrice(params.productId);
 
-            // Buscar combos disponibles para este producto
-            const allCombos = await this.combosService.findAll({ activeOnly: true });
-            const availableCombos = allCombos.filter(combo =>
-                combo.items.some(item => item.productId === params.productId)
-            );
+        // Aplicar descuento si se proporcionó
+        const discountPct = params.discountPct ?? 0;
 
-            // Calcular ahorro para cada combo
-            const combosWithSavings = await Promise.all(
-                availableCombos.map(async (combo) => {
-                    // Calcular precio individual de los componentes
-                    let individualTotal = 0;
-                    for (const item of combo.items) {
-                        try {
-                            const itemPrice = await this.pricingEngine.getBestPriceForQty({
-                                product_id: item.productId,
-                                qty: item.qty,
-                                date: params.date?.toISOString().split('T')[0],
-                                user_permissions: params.userPermissions || [],
-                            });
-                            individualTotal += itemPrice.applied.finalUnitPrice * item.qty;
-                        } catch (error) {
-                            // Si no hay precio para algún componente, omitir este combo
-                            continue;
-                        }
-                    }
-
-                    let comboPrice: number;
-                    if (combo.comboType === 'FIXED_PRICE') {
-                        comboPrice = Number(combo.comboPrice);
-                    } else {
-                        const discount = Number(combo.discountPercent) / 100;
-                        comboPrice = individualTotal * (1 - discount);
-                    }
-
-                    const savings = individualTotal - comboPrice;
-
-                    return {
-                        comboId: combo.id,
-                        name: combo.name,
-                        type: combo.comboType,
-                        comboPrice: combo.comboType === 'FIXED_PRICE' ? Number(combo.comboPrice) : undefined,
-                        discountPercent: combo.comboType === 'PERCENT' ? Number(combo.discountPercent) : undefined,
-                        savings,
-                        items: combo.items.map(item => ({
-                            productId: item.productId,
-                            productName: item.product?.name || `ID ${item.productId}`,
-                            quantity: item.qty,
-                        })),
-                    };
-                })
-            );
-
-            // Filtrar combos con ahorro positivo
-            const validCombos = combosWithSavings.filter(c => c.savings > 0);
-
-            // CALCULAR VALORES CLAROS
-            const unitDiscount = priceResult.baseUnitPrice - priceResult.finalUnitPrice;
-            const baseSubtotal = priceResult.baseUnitPrice * params.quantity;
-            const finalSubtotal = priceResult.finalUnitPrice * params.quantity;
-            const totalDiscount = unitDiscount * params.quantity;
-
-            return {
-                productId: product.id,
-                productName: product.name,
-                sku: product.sku,
-                quantity: params.quantity,
-
-                // Por unidad
-                baseUnitPrice: priceResult.baseUnitPrice,
-                finalUnitPrice: priceResult.finalUnitPrice,
-                unitDiscount,
-
-                // Totales
-                baseSubtotal,
-                finalSubtotal,
-                totalDiscount,
-
-                // Descuentos
-                discounts: priceResult.autoAppliedDiscounts.map(d => ({
-                    ruleId: d.id,
-                    name: d.name,
-                    type: d.discountType,
-                    amount: d.amount,
-                    value: d.discountType === 'PERCENT'
-                        ? (priceResult.baseUnitPrice * d.amount / 100)
-                        : d.amount,
-                    source: 'RULE_AUTO',
-                    priority: d.priority,
-                })),
-
-                availableCombos: validCombos,
-            };
-        } catch (error) {
+        if (discountPct > calc.maxDiscountPct) {
             throw new BadRequestException(
-                `Error al calcular precio para producto ${product.name}: ${error.message}`,
+                `No se puede aplicar un descuento mayor al ${calc.maxDiscountPct}%`,
             );
         }
-    }
 
-    async simulateSale(simulationData: {
-        customerId: number;
-        saleType: string;
-        items: Array<{ productId: number; quantity: number; comboId?: number }>;
-        priceListCode?: string;
-        applyAutoDiscounts?: boolean;
-        userPermissions?: string[];
-    }) {
-        // Simular cada producto
-        const itemResults = await Promise.all(
-            simulationData.items.map(async (item) => {
-                return this.getProductPricing({
-                    productId: item.productId,
-                    quantity: item.quantity,
-                    priceListCode: simulationData.priceListCode,
-                    applyAutoDiscounts: simulationData.applyAutoDiscounts,
-                    userPermissions: simulationData.userPermissions,
-                });
-            })
-        );
+        const baseUnitPrice = calc.salePrice;
+        const finalUnitPrice = Number((baseUnitPrice * (1 - discountPct / 100)).toFixed(6));
+        const unitDiscount = Number((baseUnitPrice - finalUnitPrice).toFixed(6));
 
-// Calcular totales SIN IGV (el precio del producto YA incluye el IGV)
-        const baseSubtotal = itemResults.reduce((sum, item) => sum + item.baseSubtotal, 0);
-        const discountTotal = itemResults.reduce((sum, item) => sum + item.totalDiscount, 0);
-        const subtotal = baseSubtotal - discountTotal;
-        
-        // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
-        // const taxRate = 0.18;
-        // const taxAmount = subtotal * taxRate;
-        // const total = subtotal + taxAmount;
-        
-        // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
-        const taxRate = 0; // Sin cálculo de IGV adicional
-        const taxAmount = 0; // Sin cálculo de IGV adicional
-        const total = subtotal; // El total es el precio con IGV incluido
+        const baseSubtotal = Number((baseUnitPrice * params.quantity).toFixed(2));
+        const finalSubtotal = Number((finalUnitPrice * params.quantity).toFixed(2));
+        const totalDiscount = Number((unitDiscount * params.quantity).toFixed(2));
+
+        const igvRate = calc.igvRate;
+        const igvAmount = Number((finalSubtotal * igvRate / 100).toFixed(2));
+        const totalWithIgv = Number((finalSubtotal + igvAmount).toFixed(2));
+
+        const discounts: ProductPricingResult['discounts'] = [];
+        if (discountPct > 0) {
+            discounts.push({
+                name: `Rebaja del vendedor (${discountPct}%)`,
+                type: 'PERCENT',
+                amount: discountPct,
+                value: unitDiscount,
+                source: 'SELLER_DISCOUNT',
+                priority: 1,
+            });
+        }
 
         return {
-            items: itemResults,
-            summary: {
-                baseSubtotal,
-                discountTotal,
-                subtotal,
-                taxRate,
-                taxAmount,
-                total,
-            },
-            validation: {
-                isValid: true,
-                messages: [],
-            },
+            productId: product.id,
+            productName: product.name,
+            sku: product.sku,
+            quantity: params.quantity,
+            baseUnitPrice,
+            finalUnitPrice,
+            unitDiscount,
+            baseSubtotal,
+            finalSubtotal,
+            totalDiscount,
+            igvRate,
+            igvAmount,
+            totalWithIgv,
+            cpp: calc.cpp,
+            profitMarginPct: calc.profitMarginPct,
+            maxDiscountPct: calc.maxDiscountPct,
+            appliedDiscountPct: discountPct,
+            discounts,
+            availableCombos: [],
         };
     }
 }

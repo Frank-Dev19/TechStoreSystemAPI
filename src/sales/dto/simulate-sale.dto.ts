@@ -40,6 +40,10 @@ export class SimulateItemDto {
     @IsNumber()
     @IsPositive()
     finalUnitPrice?: number;
+
+    @IsOptional()
+    @IsNumber()
+    discountPct?: number;
 }
 
 export class SimulateSaleDto {
