@@ -34,6 +34,7 @@ import { SalesInventoryService } from './sales-inventory.service';
 import { CashFlowService } from './cash-flow.service';
 import { DocumentSeriesService } from './document-series.service';
 import { PricingEngineService } from 'src/pricing/services/pricing-engine.service';
+import { TaxConfigService } from 'src/pricing/services/tax-config.service';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -85,6 +86,7 @@ export class SalesService {
     private readonly cashFlowService: CashFlowService,
     private readonly documentSeriesService: DocumentSeriesService,
     private readonly pricingEngine: PricingEngineService,
+    private readonly taxConfigService: TaxConfigService,
   ) { }
 
   // =========================
@@ -1111,5 +1113,54 @@ export class SalesService {
       saleCount: parseInt(row.saleCount) || 0,
       averagePrice: parseFloat(row.totalAmount) / (parseFloat(row.totalQuantity) || 1),
     }));
+  }
+
+  // =========================
+  // REPORTE DE IMPUESTO A LA RENTA
+  // =========================
+  async getIncomeTaxReport(companyId: number, year: number) {
+    const ratePct = await this.taxConfigService.getRentaRate();
+    const rateDecimal = ratePct / 100;
+
+    const startDate = new Date(`${year}-01-01T00:00:00Z`);
+    const endDate = new Date(`${year + 1}-01-01T00:00:00Z`);
+
+    const sales = await this.saleRepo
+      .createQueryBuilder('s')
+      .select([
+        'MONTH(s.createdAt) as month',
+        'SUM(s.subtotal) as totalRevenue', // Base imponible de los ingresos brutos
+      ])
+      .where('s.companyId = :companyId', { companyId })
+      .andWhere('s.status = "CONFIRMED"')
+      .andWhere('s.createdAt >= :startDate', { startDate })
+      .andWhere('s.createdAt < :endDate', { endDate })
+      .groupBy('MONTH(s.createdAt)')
+      .getRawMany();
+
+    // Map results to array length 12
+    const breakdown = Array.from({ length: 12 }).map((_, i) => {
+      const monthNumber = i + 1;
+      const data = sales.find(s => parseInt(s.month) === monthNumber);
+      const baseTotal = data ? parseFloat(data.totalRevenue) : 0;
+      const taxDue = baseTotal * rateDecimal;
+
+      return {
+        month: monthNumber,
+        baseTotal,
+        taxDue,
+      };
+    });
+
+    const yearlyBaseTotal = breakdown.reduce((sum, b) => sum + b.baseTotal, 0);
+    const yearlyTaxDue = breakdown.reduce((sum, b) => sum + b.taxDue, 0);
+
+    return {
+      year,
+      rentaRatePct: ratePct,
+      yearlyBaseTotal,
+      yearlyTaxDue,
+      breakdown,
+    };
   }
 }

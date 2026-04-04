@@ -56,6 +56,18 @@ export class SalesController {
     }
 
     // @Permissions('sales.read')
+    @Get('reports/income-tax')
+    getIncomeTaxReport(
+        @Query('companyId') companyId: string,
+        @Query('year') year: string,
+    ) {
+        return this.salesService.getIncomeTaxReport(
+            parseInt(companyId),
+            parseInt(year) || new Date().getFullYear(),
+        );
+    }
+
+    // @Permissions('sales.read')
     @Get('by-product')
     getSalesByProduct(
         @Query('companyId') companyId: string,
