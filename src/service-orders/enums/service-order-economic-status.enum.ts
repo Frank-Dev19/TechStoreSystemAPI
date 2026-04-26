@@ -1,0 +1,8 @@
+export enum ServiceOrderEconomicStatus {
+  NO_APLICA = 'NO_APLICA',
+  PENDIENTE = 'PENDIENTE',
+  PARCIAL = 'PARCIAL',
+  TOTAL = 'TOTAL',
+  EXONERADO = 'EXONERADO',
+  REVERTIDO = 'REVERTIDO',
+}

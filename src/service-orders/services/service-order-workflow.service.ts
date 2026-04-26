@@ -7,8 +7,13 @@ import { AssignTechnicianDto } from '../dto/assign-technician.dto';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { TechnicianAssignmentBalance } from '../entities/technician-assignment-balance.entity';
-import { ServiceOrderStatus, ServiceOrderWorkflowStatus, ServiceType } from '../enums';
-import { ServiceOrderNotificationService } from './service-order-notification.service';
+import {
+  ServiceOrderOperativeStatus,
+  ServiceOrderTechnicalStatus,
+  ServiceType,
+} from '../enums';
+import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-transition-policy';
+import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 
 type TechnicianTypeBalance = {
   assignedCount: number;
@@ -59,7 +64,8 @@ export class ServiceOrderWorkflowService {
     private readonly technicianAssignmentBalanceRepository: Repository<TechnicianAssignmentBalance>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    private readonly notificationService: ServiceOrderNotificationService,
+    private readonly transitionPolicy: ServiceOrderTransitionPolicy,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async autoAssignTechnician(serviceOrderId: number, actorId?: number): Promise<ServiceOrder> {
@@ -123,22 +129,16 @@ export class ServiceOrderWorkflowService {
       serviceOrder.assignedToTechnicianId,
       serviceOrder.serviceType,
       1,
-      this.isTerminalWorkflow(serviceOrder.workflowStatus) ? 0 : 1,
+      this.isTerminalTechnical(serviceOrder.technicalStatus) ? 0 : 1,
       serviceOrder.assignedAt ?? new Date(),
     );
 
-    await this.recordEvent(serviceOrder.id, 'assigned', null, serviceOrder.workflowStatus, actorId, null, {
+    await this.recordEvent(serviceOrder.id, 'assigned', 'tecnico', 'assignment', null, serviceOrder.technicalStatus, actorId, null, {
       technicianId: serviceOrder.assignedToTechnicianId,
       source: 'created',
     });
 
-    await this.notificationService.queueNotification(
-      serviceOrder.id,
-      'assigned',
-      serviceOrder.clientSnapshotPhone ?? null,
-      `Tecnico asignado a la orden ${serviceOrder.code}`,
-      `service_order:${serviceOrder.id}:assigned:${serviceOrder.assignedToTechnicianId}:created`,
-    );
+    await this.messageMatrixService.notifyInitialAssignment(serviceOrder);
   }
 
   async assignTechnician(serviceOrderId: number, dto: AssignTechnicianDto, actorId?: number): Promise<ServiceOrder> {
@@ -156,83 +156,54 @@ export class ServiceOrderWorkflowService {
       {
         assignedToTechnicianId: dto.technicianId,
         assignedAt,
+        technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
       },
     );
 
-    if (previousTechnicianId && !this.isTerminalWorkflow(serviceOrder.workflowStatus)) {
+    if (previousTechnicianId && !this.isTerminalTechnical(serviceOrder.technicalStatus)) {
       await this.adjustTechnicianBalance(previousTechnicianId, serviceOrder.serviceType, 0, -1);
     }
     await this.adjustTechnicianBalance(dto.technicianId, serviceOrder.serviceType, 1, 1, assignedAt);
 
-    await this.recordEvent(serviceOrder.id, 'assigned', null, serviceOrder.workflowStatus, actorId, null, {
+    await this.recordEvent(serviceOrder.id, 'assigned', 'tecnico', 'assignment', null, ServiceOrderTechnicalStatus.ASIGNADA, actorId, null, {
       technicianId: dto.technicianId,
       previousTechnicianId,
     });
-    await this.notificationService.queueNotification(
-      serviceOrder.id,
-      'assigned',
-      serviceOrder.clientSnapshotPhone ?? null,
-      `Tecnico asignado a la orden ${serviceOrder.code}`,
-      `service_order:${serviceOrder.id}:assigned:${dto.technicianId}`,
-    );
+    const updatedOrder = await this.findOrder(serviceOrderId);
+    if (previousTechnicianId) {
+      const technician = updatedOrder.assignedTechnician;
+      await this.messageMatrixService.notifyTechnicianReassignment(
+        updatedOrder,
+        technician?.name ?? null,
+      );
+    } else {
+      await this.messageMatrixService.notifyInitialAssignment(updatedOrder);
+    }
 
-    return this.findOrder(serviceOrderId);
+    return updatedOrder;
   }
 
-  async changeWorkflowStatus(
+  async changeTechnicalStatus(
     serviceOrderId: number,
-    nextStatus: ServiceOrderWorkflowStatus,
+    nextStatus: ServiceOrderTechnicalStatus,
     actorId?: number,
     reason?: string,
   ): Promise<ServiceOrder> {
     const serviceOrder = await this.findOrder(serviceOrderId);
-    const previousStatus = serviceOrder.workflowStatus;
+    const previousTechnicalStatus = serviceOrder.technicalStatus;
 
-    if (!this.canTransition(previousStatus, nextStatus, serviceOrder.serviceType)) {
-      throw new BadRequestException(
-        `Cannot transition service order ${serviceOrderId} from ${previousStatus} to ${nextStatus}`,
-      );
-    }
+    this.transitionPolicy.assertTransition('tecnico', previousTechnicalStatus, nextStatus);
 
     const now = new Date();
-    serviceOrder.workflowStatus = nextStatus;
-    serviceOrder.status = this.resolveGeneralStatus(nextStatus, serviceOrder.status);
-
-    switch (nextStatus) {
-      case ServiceOrderWorkflowStatus.UNDER_REVIEW:
-        serviceOrder.reviewStartedAt = now;
-        break;
-      case ServiceOrderWorkflowStatus.IN_SERVICE:
-        serviceOrder.serviceStartedAt = now;
-        break;
-      case ServiceOrderWorkflowStatus.SERVICE_DONE:
-        serviceOrder.serviceCompletedAt = now;
-        serviceOrder.readyForPickupAt = now;
-        serviceOrder.status = ServiceOrderStatus.READY_FOR_PICKUP;
-        break;
-      case ServiceOrderWorkflowStatus.READY_FOR_PICKUP:
-        serviceOrder.readyForPickupAt = now;
-        serviceOrder.status = ServiceOrderStatus.READY_FOR_PICKUP;
-        break;
-      case ServiceOrderWorkflowStatus.NO_SOLUTION:
-        serviceOrder.resolvedAt = now;
-        break;
-      case ServiceOrderWorkflowStatus.CANCELLED:
-        serviceOrder.cancelledAt = now;
-        serviceOrder.status = ServiceOrderStatus.CANCELLED;
-        if (reason) {
-          serviceOrder.cancellationReason = reason;
-        }
-        break;
-      default:
-        break;
-    }
+    serviceOrder.technicalStatus = nextStatus;
+    this.applyCanonicalStatusesFromTechnicalTransition(serviceOrder, nextStatus, reason, now);
+    this.applyLifecycleTimestamps(serviceOrder, nextStatus, reason, now);
 
     await this.serviceOrderRepository.save(serviceOrder);
 
     if (serviceOrder.assignedToTechnicianId) {
-      const movedToTerminal = !this.isTerminalWorkflow(previousStatus) && this.isTerminalWorkflow(nextStatus);
-      const movedOutOfTerminal = this.isTerminalWorkflow(previousStatus) && !this.isTerminalWorkflow(nextStatus);
+      const movedToTerminal = !this.isTerminalTechnical(previousTechnicalStatus) && this.isTerminalTechnical(nextStatus);
+      const movedOutOfTerminal = this.isTerminalTechnical(previousTechnicalStatus) && !this.isTerminalTechnical(nextStatus);
 
       if (movedToTerminal) {
         await this.adjustTechnicianBalance(serviceOrder.assignedToTechnicianId, serviceOrder.serviceType, 0, -1);
@@ -241,21 +212,29 @@ export class ServiceOrderWorkflowService {
       }
     }
 
-    await this.recordEvent(serviceOrder.id, 'workflow.changed', previousStatus, nextStatus, actorId, reason, null);
-    await this.notificationService.queueNotification(
+    await this.recordEvent(
       serviceOrder.id,
-      nextStatus.toLowerCase(),
-      serviceOrder.clientSnapshotPhone ?? null,
-      `La orden ${serviceOrder.code} cambio a ${nextStatus}`,
-      `service_order:${serviceOrder.id}:workflow:${nextStatus}`,
+      'technical.changed',
+      'tecnico',
+      'workflow',
+      previousTechnicalStatus,
+      nextStatus,
+      actorId,
+      reason,
+      null,
     );
 
-    return this.findOrder(serviceOrderId);
+    const updatedOrder = await this.findOrder(serviceOrderId);
+    await this.messageMatrixService.notifyWorkflowTransition(updatedOrder, nextStatus);
+
+    return updatedOrder;
   }
 
   private async recordEvent(
     serviceOrderId: number,
     eventType: string,
+    axis: string | null,
+    capability: string | null,
     fromStatus: string | null,
     toStatus: string | null,
     actorId?: number,
@@ -266,6 +245,8 @@ export class ServiceOrderWorkflowService {
       this.eventRepository.create({
         serviceOrderId,
         eventType,
+        axis,
+        capability,
         fromStatus,
         toStatus,
         actorId: actorId ?? null,
@@ -286,117 +267,83 @@ export class ServiceOrderWorkflowService {
     return serviceOrder;
   }
 
-  private resolveGeneralStatus(
-    workflowStatus: ServiceOrderWorkflowStatus,
-    currentStatus: ServiceOrderStatus,
-  ): ServiceOrderStatus {
-    switch (workflowStatus) {
-      case ServiceOrderWorkflowStatus.SERVICE_DONE:
-      case ServiceOrderWorkflowStatus.READY_FOR_PICKUP:
-        return ServiceOrderStatus.READY_FOR_PICKUP;
-      case ServiceOrderWorkflowStatus.CANCELLED:
-        return ServiceOrderStatus.CANCELLED;
-      case ServiceOrderWorkflowStatus.NO_SOLUTION:
-        return currentStatus === ServiceOrderStatus.READY_FOR_PICKUP
-          ? ServiceOrderStatus.READY_FOR_PICKUP
-          : ServiceOrderStatus.ACTIVE;
+  private applyCanonicalStatusesFromTechnicalTransition(
+    serviceOrder: ServiceOrder,
+    nextTechnicalStatus: ServiceOrderTechnicalStatus,
+    reason: string | undefined,
+    now: Date,
+  ): void {
+    switch (nextTechnicalStatus) {
+      case ServiceOrderTechnicalStatus.ASIGNADA:
+        serviceOrder.operativeStatus = ServiceOrderOperativeStatus.ABIERTA;
+        break;
+      case ServiceOrderTechnicalStatus.DIAGNOSTICADA:
+      case ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL:
+      case ServiceOrderTechnicalStatus.EN_DIAGNOSTICO:
+      case ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION:
+      case ServiceOrderTechnicalStatus.EN_EJECUCION:
+      case ServiceOrderTechnicalStatus.BLOQUEADA:
+      case ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO:
+        serviceOrder.operativeStatus = ServiceOrderOperativeStatus.EN_PROCESO;
+        break;
+      case ServiceOrderTechnicalStatus.RESUELTA:
+        serviceOrder.operativeStatus = ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA;
+        break;
+      case ServiceOrderTechnicalStatus.SIN_SOLUCION:
+        serviceOrder.operativeStatus = ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION;
+        if (reason) {
+          serviceOrder.cancellationReason = reason;
+        }
+        break;
+      case ServiceOrderTechnicalStatus.PENDIENTE_ASIGNACION:
+        serviceOrder.operativeStatus = ServiceOrderOperativeStatus.ABIERTA;
+        break;
       default:
-        return currentStatus === ServiceOrderStatus.OPEN ? ServiceOrderStatus.ACTIVE : currentStatus;
+        break;
+    }
+
+    if (nextTechnicalStatus === ServiceOrderTechnicalStatus.RESUELTA) {
+      serviceOrder.readyForPickupAt = serviceOrder.readyForPickupAt ?? now;
+      serviceOrder.resolvedAt = serviceOrder.resolvedAt ?? now;
+    }
+
+    if (nextTechnicalStatus === ServiceOrderTechnicalStatus.SIN_SOLUCION) {
+      serviceOrder.resolvedAt = serviceOrder.resolvedAt ?? now;
+      serviceOrder.closedAt = serviceOrder.closedAt ?? now;
     }
   }
 
-  private canTransition(
-    current: ServiceOrderWorkflowStatus,
-    next: ServiceOrderWorkflowStatus,
-    serviceType: ServiceType,
-  ): boolean {
-    if (
-      serviceType === ServiceType.WARRANTY_SERVICE &&
-      current === ServiceOrderWorkflowStatus.UNDER_REVIEW &&
-      next === ServiceOrderWorkflowStatus.APPROVED_FOR_WORK
-    ) {
-      return true;
+  private applyLifecycleTimestamps(
+    serviceOrder: ServiceOrder,
+    nextTechnicalStatus: ServiceOrderTechnicalStatus,
+    reason: string | undefined,
+    now: Date,
+  ): void {
+    switch (nextTechnicalStatus) {
+      case ServiceOrderTechnicalStatus.EN_DIAGNOSTICO:
+        serviceOrder.reviewStartedAt = serviceOrder.reviewStartedAt ?? now;
+        break;
+      case ServiceOrderTechnicalStatus.EN_EJECUCION:
+        serviceOrder.serviceStartedAt = serviceOrder.serviceStartedAt ?? now;
+        break;
+      case ServiceOrderTechnicalStatus.RESUELTA:
+        serviceOrder.serviceCompletedAt = serviceOrder.serviceCompletedAt ?? now;
+        serviceOrder.readyForPickupAt = serviceOrder.readyForPickupAt ?? now;
+        break;
+      case ServiceOrderTechnicalStatus.SIN_SOLUCION:
+        if (serviceOrder.operativeStatus === ServiceOrderOperativeStatus.CANCELADA && reason) {
+          serviceOrder.cancelledAt = serviceOrder.cancelledAt ?? now;
+        }
+        break;
+      default:
+        break;
     }
-
-    const commonMap: Record<ServiceOrderWorkflowStatus, ServiceOrderWorkflowStatus[]> = {
-      [ServiceOrderWorkflowStatus.ASSIGNED]: [
-        ServiceOrderWorkflowStatus.UNDER_REVIEW,
-        ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.UNDER_REVIEW]: [
-        ServiceOrderWorkflowStatus.DIAGNOSIS_READY,
-        ServiceOrderWorkflowStatus.NO_SOLUTION,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.DIAGNOSIS_READY]: [
-        ServiceOrderWorkflowStatus.UNDER_COORDINATION,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.UNDER_COORDINATION]: [
-        ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
-        ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.APPROVED_FOR_WORK]: [
-        ServiceOrderWorkflowStatus.IN_SERVICE,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.IN_SERVICE]: [
-        ServiceOrderWorkflowStatus.WAITING_PARTS,
-        ServiceOrderWorkflowStatus.SERVICE_DONE,
-        ServiceOrderWorkflowStatus.UNDER_REVIEW,
-        ServiceOrderWorkflowStatus.DIAGNOSIS_READY,
-        ServiceOrderWorkflowStatus.NO_SOLUTION,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.WAITING_PARTS]: [
-        ServiceOrderWorkflowStatus.IN_SERVICE,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.SERVICE_DONE]: [
-        ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
-      ],
-      [ServiceOrderWorkflowStatus.NO_SOLUTION]: [
-        ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
-        ServiceOrderWorkflowStatus.CANCELLED,
-      ],
-      [ServiceOrderWorkflowStatus.READY_FOR_PICKUP]: [],
-      [ServiceOrderWorkflowStatus.CANCELLED]: [],
-    };
-
-    if (!commonMap[current]?.includes(next)) {
-      return false;
-    }
-
-    if ([ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(serviceType)) {
-      const forbidden = [
-        ServiceOrderWorkflowStatus.UNDER_REVIEW,
-        ServiceOrderWorkflowStatus.DIAGNOSIS_READY,
-        ServiceOrderWorkflowStatus.UNDER_COORDINATION,
-        ServiceOrderWorkflowStatus.NO_SOLUTION,
-      ];
-      return !forbidden.includes(next);
-    }
-
-    if (serviceType === ServiceType.WARRANTY_SERVICE) {
-      if (
-        [
-          ServiceOrderWorkflowStatus.UNDER_COORDINATION,
-        ].includes(next)
-      ) {
-        return false;
-      }
-    }
-
-    return true;
   }
 
-  private isTerminalWorkflow(status: ServiceOrderWorkflowStatus): boolean {
+  private isTerminalTechnical(status: ServiceOrderTechnicalStatus): boolean {
     return [
-      ServiceOrderWorkflowStatus.CANCELLED,
-      ServiceOrderWorkflowStatus.SERVICE_DONE,
-      ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
+      ServiceOrderTechnicalStatus.RESUELTA,
+      ServiceOrderTechnicalStatus.SIN_SOLUCION,
     ].includes(status);
   }
 
@@ -417,12 +364,12 @@ export class ServiceOrderWorkflowService {
     const technicianIds = technicians.map((tech) => tech.id);
     const assignedOrders = await this.serviceOrderRepository.find({
       where: { assignedToTechnicianId: In(technicianIds) },
-      select: {
-        assignedToTechnicianId: true,
-        serviceType: true,
-        workflowStatus: true,
-        assignedAt: true,
-      },
+        select: {
+          assignedToTechnicianId: true,
+          serviceType: true,
+          technicalStatus: true,
+          assignedAt: true,
+        },
     });
 
     return technicians.map((technician) => {
@@ -436,7 +383,7 @@ export class ServiceOrderWorkflowService {
           (order) => order.serviceType === serviceType,
         );
         const activeOrdersOfType = ordersOfType.filter(
-          (order) => !this.isTerminalWorkflow(order.workflowStatus),
+          (order) => !this.isTerminalTechnical(order.technicalStatus),
         );
         const lastAssignedAt =
           ordersOfType

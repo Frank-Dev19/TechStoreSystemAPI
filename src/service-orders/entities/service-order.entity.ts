@@ -14,10 +14,11 @@ import { User } from '../../users/entities/user.entity';
 import {
   EquipmentType,
   RequestOrigin,
-  ServiceOrderPaymentStatus,
+  ServiceOrderCommercialStatus,
+  ServiceOrderEconomicStatus,
+  ServiceOrderOperativeStatus,
   ServiceOrderPriority,
-  ServiceOrderStatus,
-  ServiceOrderWorkflowStatus,
+  ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
 
@@ -30,27 +31,36 @@ export class ServiceOrder {
   code: string;
 
   @Column({
+    name: 'operative_status',
     type: 'enum',
-    enum: ServiceOrderStatus,
-    default: ServiceOrderStatus.OPEN,
+    enum: ServiceOrderOperativeStatus,
+    default: ServiceOrderOperativeStatus.ABIERTA,
   })
-  status: ServiceOrderStatus;
+  operativeStatus: ServiceOrderOperativeStatus;
 
   @Column({
-    name: 'workflow_status',
+    name: 'technical_status',
     type: 'enum',
-    enum: ServiceOrderWorkflowStatus,
-    default: ServiceOrderWorkflowStatus.ASSIGNED,
+    enum: ServiceOrderTechnicalStatus,
+    default: ServiceOrderTechnicalStatus.PENDIENTE_ASIGNACION,
   })
-  workflowStatus: ServiceOrderWorkflowStatus;
+  technicalStatus: ServiceOrderTechnicalStatus;
 
   @Column({
-    name: 'payment_status',
+    name: 'commercial_status',
     type: 'enum',
-    enum: ServiceOrderPaymentStatus,
-    default: ServiceOrderPaymentStatus.UNPAID,
+    enum: ServiceOrderCommercialStatus,
+    default: ServiceOrderCommercialStatus.NO_REQUIERE,
   })
-  paymentStatus: ServiceOrderPaymentStatus;
+  commercialStatus: ServiceOrderCommercialStatus;
+
+  @Column({
+    name: 'economic_status',
+    type: 'enum',
+    enum: ServiceOrderEconomicStatus,
+    default: ServiceOrderEconomicStatus.NO_APLICA,
+  })
+  economicStatus: ServiceOrderEconomicStatus;
 
   @Column({
     type: 'enum',
@@ -186,11 +196,23 @@ export class ServiceOrder {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
-  @Column({ name: 'is_paid', type: 'boolean', default: false })
-  isPaid: boolean;
+  @Column({
+    name: 'monto_comprometido_vigente',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 0,
+  })
+  montoComprometidoVigente: number;
 
-  @Column({ name: 'paid_at', type: 'datetime', nullable: true })
-  paidAt: Date | null;
+  @Column({
+    name: 'monto_reconciliado',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 0,
+  })
+  montoReconciliado: number;
 
   @Column({ name: 'discount', type: 'decimal', precision: 10, scale: 2, default: 0 })
   discount: number;

@@ -1,6 +1,10 @@
 import {
+  Transform,
+} from 'class-transformer';
+import {
   IsDateString,
   IsEnum,
+  IsEmail,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -76,4 +80,22 @@ export class CreateServiceOrderDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @IsString()
+  @MaxLength(150)
+  @IsOptional()
+  contactName?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @IsEmail()
+  @MaxLength(150)
+  @IsOptional()
+  contactEmail?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @IsString()
+  @MaxLength(20)
+  @IsOptional()
+  contactPhone?: string;
 }

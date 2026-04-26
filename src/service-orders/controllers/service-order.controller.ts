@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseEnumPipe,
   ParseIntPipe,
   Patch,
   Post,
@@ -24,11 +25,11 @@ import { Permissions } from '../../rbac/decorators/permissions.decorator';
 import { RECEPTIONIST_ROLE_NAMES, SUPERVISOR_ROLE_NAMES, TECHNICIAN_ROLE_NAMES } from '../../common/constants/role-names';
 import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
 import { AssignTechnicianDto } from '../dto/assign-technician.dto';
-import { ServiceOrderWorkflowStatus } from '../enums';
-import { ChangeServiceOrderWorkflowStatusDto } from '../dto/change-service-order-workflow-status.dto';
+import { ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceOrderTechnicianSuggestionDto } from '../dto/service-order-technician-suggestion.dto';
 import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.dto';
 import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
+import { TransitionServiceOrderTechnicalDto } from '../dto/transition-service-order-technical.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -62,13 +63,13 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.read')
-  @Get('billing-links/search-sales')
+  @Get('backoffice/billing-links/search-sales')
   searchSales(@Query() query: any) {
     return this.saleLinkService.searchSales(query);
   }
 
   @Permissions('service-order.read')
-  @Get('billing-links/by-orders')
+  @Get('backoffice/billing-links/by-orders')
   getLinksByOrders(@Query('serviceOrderIds') serviceOrderIds?: string) {
     const ids = String(serviceOrderIds ?? '')
       .split(',')
@@ -78,13 +79,13 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.update')
-  @Post('billing-links')
+  @Post('backoffice/billing-links')
   linkSaleToOrders(@Body() dto: LinkSaleToServiceOrdersDto, @CurrentUser() userId?: number) {
     return this.saleLinkService.linkSaleToServiceOrders(dto, userId ? String(userId) : undefined);
   }
 
   @Permissions('service-order.update')
-  @Delete('billing-links/:id')
+  @Delete('backoffice/billing-links/:id')
   unlinkSale(@Param('id', ParseIntPipe) id: number) {
     return this.saleLinkService.unlink(id);
   }
@@ -102,6 +103,12 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.update')
+  @Patch(':id/deliver')
+  deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number) {
+    return this.serviceOrderService.markAsDelivered(id, userId);
+  }
+
+  @Permissions('service-order.update')
   @Patch(':id/assign-technician')
   assignTechnician(
     @Param('id', ParseIntPipe) id: number,
@@ -112,14 +119,14 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.update')
-  @Patch(':id/workflow/:status')
-  changeWorkflowStatus(
+  @Patch(':id/technical/:status')
+  changeTechnicalStatus(
     @Param('id', ParseIntPipe) id: number,
-    @Param('status') status: ServiceOrderWorkflowStatus,
-    @Body() dto: ChangeServiceOrderWorkflowStatusDto,
+    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus)) status: ServiceOrderTechnicalStatus,
+    @Body() dto?: TransitionServiceOrderTechnicalDto,
     @CurrentUser() userId?: number,
   ) {
-    return this.workflowService.changeWorkflowStatus(id, status, userId, dto.reason);
+    return this.workflowService.changeTechnicalStatus(id, status, userId, dto?.reason);
   }
 
   @Permissions('service-order.delete')

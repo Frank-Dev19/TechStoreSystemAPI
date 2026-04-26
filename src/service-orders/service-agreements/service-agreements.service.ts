@@ -2,10 +2,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
-import { Service } from '../../service-catalog/entities/service.entity';
 import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { ServiceOrderStatus, ServiceOrderWorkflowStatus, ServiceType } from '../enums';
+import {
+  ServiceOrderCommercialStatus,
+  ServiceOrderEconomicStatus,
+  ServiceOrderTechnicalStatus,
+  ServiceType,
+} from '../enums';
+import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
 import { CreateServiceOrderAgreementDto } from './dto/create-service-agreement.dto';
 import { ServiceOrderAgreementProductItemDto } from './dto/service-agreement-product-item.dto';
@@ -38,6 +43,10 @@ type TechnicianRevenueRankingRow = {
   standardItemsCount: number;
 };
 
+const TECHNICAL_SERVICE_CODE = 'TECHNICAL_SERVICE';
+const TECHNICAL_SERVICE_NAME = 'Servicio técnico';
+const TECHNICAL_SERVICE_MINIMUM_AMOUNT = 20;
+
 @Injectable()
 export class ServiceOrderAgreementsService {
   constructor(
@@ -51,9 +60,8 @@ export class ServiceOrderAgreementsService {
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     @InjectRepository(ServiceOrderDiagnosis)
     private readonly diagnosisRepository: Repository<ServiceOrderDiagnosis>,
-    @InjectRepository(Service)
-    private readonly catalogServiceRepository: Repository<Service>,
     private readonly workflowService: ServiceOrderWorkflowService,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async findAll(query: FindAgreementsQuery) {
@@ -65,7 +73,6 @@ export class ServiceOrderAgreementsService {
       .leftJoinAndSelect('agreement.productItems', 'productItems')
       .leftJoinAndSelect('productItems.product', 'product')
       .leftJoinAndSelect('agreement.serviceItems', 'serviceItems')
-      .leftJoinAndSelect('serviceItems.service', 'service')
       .leftJoinAndSelect('agreement.serviceOrder', 'serviceOrder')
       .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
       .orderBy('agreement.createdAt', 'DESC')
@@ -93,7 +100,6 @@ export class ServiceOrderAgreementsService {
         'productItems',
         'productItems.product',
         'serviceItems',
-        'serviceItems.service',
       ],
       withDeleted,
     });
@@ -197,6 +203,7 @@ export class ServiceOrderAgreementsService {
     if (serviceOrder.serviceType === ServiceType.WARRANTY_SERVICE) {
       throw new BadRequestException('Warranty service orders do not use agreements');
     }
+    this.ensureTechnicalServiceAmount(dto.technicalServiceAmount);
 
     const diagnosis = dto.diagnosisId ? await this.ensureDiagnosis(dto.diagnosisId) : null;
     if (diagnosis && diagnosis.serviceOrderId !== serviceOrder.id) {
@@ -208,7 +215,7 @@ export class ServiceOrderAgreementsService {
 
     const agreement = await this.agreementRepository.manager.transaction(async (manager) => {
       const productItems = await this.buildProductItems(dto.products, manager, serviceOrder.serviceType);
-      const serviceItems = await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType);
+      const serviceItems = this.buildTechnicalServiceItems(dto.technicalServiceAmount, serviceOrder.serviceType);
 
       await this.supersedePrevious(manager, serviceOrder.id, targetStatus);
 
@@ -229,7 +236,13 @@ export class ServiceOrderAgreementsService {
       return saved;
     });
 
-    await this.syncWorkflowAfterAgreementCreate(serviceOrder.id, targetStatus, serviceOrder.serviceType);
+    await this.syncCanonicalCommercialAfterAgreementCreate(serviceOrder.id, targetStatus, agreement.totalAmount);
+    if (targetStatus === ServiceOrderAgreementStatus.CONFIRMED) {
+      await this.messageMatrixService.notifyAgreementConfirmed(
+        await this.ensureServiceOrder(serviceOrder.id),
+        agreement.id,
+      );
+    }
     return this.findOne(agreement.id);
   }
 
@@ -253,7 +266,7 @@ export class ServiceOrderAgreementsService {
       throw new BadRequestException('Diagnosis does not belong to the provided service order');
     }
 
-    return this.agreementRepository.manager.transaction(async (manager) => {
+    const updatedAgreement = await this.agreementRepository.manager.transaction(async (manager) => {
       if (dto.products) {
         await manager.getRepository(ServiceOrderAgreementProduct).delete({ serviceOrderAgreementId: agreement.id });
         await this.persistProductItems(
@@ -262,12 +275,13 @@ export class ServiceOrderAgreementsService {
           await this.buildProductItems(dto.products, manager, serviceOrder.serviceType),
         );
       }
-      if (dto.services) {
+      if (dto.technicalServiceAmount !== undefined) {
+        this.ensureTechnicalServiceAmount(dto.technicalServiceAmount);
         await manager.getRepository(ServiceOrderAgreementServiceItem).delete({ serviceOrderAgreementId: agreement.id });
         await this.persistServiceItems(
           manager,
           agreement.id,
-          await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType),
+          this.buildTechnicalServiceItems(dto.technicalServiceAmount, serviceOrder.serviceType),
         );
       }
 
@@ -281,14 +295,22 @@ export class ServiceOrderAgreementsService {
           dto.products
             ? await this.buildProductItems(dto.products, manager, serviceOrder.serviceType)
             : await this.loadCurrentProductItems(manager, agreement.id),
-          dto.services
-            ? await this.buildServiceItems(dto.services, manager, serviceOrder.serviceType)
+          dto.technicalServiceAmount !== undefined
+            ? this.buildTechnicalServiceItems(dto.technicalServiceAmount, serviceOrder.serviceType)
             : await this.loadCurrentServiceItems(manager, agreement.id),
         ),
       });
 
       return this.findOne(agreement.id);
     });
+
+    await this.syncCanonicalCommercialAfterAgreementCreate(
+      serviceOrder.id,
+      ServiceOrderAgreementStatus.DRAFT,
+      updatedAgreement.totalAmount,
+    );
+
+    return updatedAgreement;
   }
 
   async confirm(id: number) {
@@ -319,15 +341,20 @@ export class ServiceOrderAgreementsService {
       });
     });
 
-    await this.workflowService.changeWorkflowStatus(
+    await this.workflowService.changeTechnicalStatus(
       agreement.serviceOrderId,
-      ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
+      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+    );
+    await this.syncCanonicalCommercialAfterConfirmation(agreement.serviceOrderId, agreement.totalAmount);
+    await this.messageMatrixService.notifyAgreementConfirmed(
+      await this.ensureServiceOrder(agreement.serviceOrderId),
+      agreement.id,
     );
     return this.findOne(id);
   }
 
   async void(id: number, notes?: string) {
-    const agreement = await this.findEditableAgreement(id);
+    const agreement = await this.findEditableAgreement(id, ['serviceOrder']);
     if (agreement.status === ServiceOrderAgreementStatus.VOIDED) {
       return this.findOne(id);
     }
@@ -336,49 +363,18 @@ export class ServiceOrderAgreementsService {
       status: ServiceOrderAgreementStatus.VOIDED,
       notes: notes ?? agreement.notes,
     });
+    if (agreement.serviceOrder?.serviceType === ServiceType.DIAGNOSIS) {
+      await this.createAutomaticTechnicalServiceAgreement(agreement.serviceOrderId, notes);
+    }
+    await this.syncCanonicalCommercialAfterVoid(agreement.serviceOrderId);
     return this.findOne(id);
   }
 
   async createDiagnosisFeeAgreement(serviceOrderId: number) {
-    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
-    const diagnosticService = await this.catalogServiceRepository.findOne({
-      where: { code: 'DIAGNOSIS_FEE' },
-    });
-    if (!diagnosticService) {
-      throw new NotFoundException('Diagnostic fee service not found');
-    }
+    const agreement = await this.createAutomaticTechnicalServiceAgreement(serviceOrderId);
 
-    const agreement = await this.agreementRepository.manager.transaction(async (manager) => {
-      await this.supersedePrevious(manager, serviceOrder.id, ServiceOrderAgreementStatus.CONFIRMED);
-
-      const saved = await manager.getRepository(ServiceOrderAgreement).save({
-        serviceOrderId: serviceOrder.id,
-        diagnosisId: null,
-        sequenceNumber: await this.resolveNextSequence(manager, serviceOrder.id),
-        status: ServiceOrderAgreementStatus.CONFIRMED,
-        source: ServiceOrderAgreementSource.DIAGNOSIS_FEE_AUTO,
-        totalAmount: Number(diagnosticService.price ?? 0),
-        notes: 'Cobro automatico por diagnostico sin acuerdo comercial',
-        agreedAt: new Date(),
-        agreedByUserId: null,
-      });
-
-      const serviceItem = manager.getRepository(ServiceOrderAgreementServiceItem).create({
-        serviceOrderAgreementId: saved.id,
-        serviceId: diagnosticService.id,
-        serviceCodeSnapshot: diagnosticService.code ?? String(diagnosticService.id),
-        serviceNameSnapshot: diagnosticService.name ?? `Servicio ${diagnosticService.id}`,
-        serviceDescriptionSnapshot: diagnosticService.description ?? null,
-        estimatedHours: Number((((diagnosticService as any).estimatedDurationMinutes ?? 60) / 60).toFixed(2)),
-        unitPrice: Number(diagnosticService.price ?? 0),
-        lineTotal: Number(Number(diagnosticService.price ?? 0).toFixed(2)),
-        notes: 'Diagnostico no culminado con acuerdo de reparacion',
-      });
-      await manager.getRepository(ServiceOrderAgreementServiceItem).save(serviceItem);
-      return saved;
-    });
-
-    await this.workflowService.changeWorkflowStatus(serviceOrder.id, ServiceOrderWorkflowStatus.READY_FOR_PICKUP);
+    await this.workflowService.changeTechnicalStatus(serviceOrderId, ServiceOrderTechnicalStatus.RESUELTA);
+    await this.syncCanonicalCommercialAfterConfirmation(serviceOrderId, agreement.totalAmount);
     return this.findOne(agreement.id);
   }
 
@@ -411,38 +407,67 @@ export class ServiceOrderAgreementsService {
     return { ok: true, message: `${toRestore.length} service order agreements restored successfully` };
   }
 
-  private async syncWorkflowAfterAgreementCreate(
+  private async syncCanonicalCommercialAfterAgreementCreate(
     serviceOrderId: number,
     status: ServiceOrderAgreementStatus,
-    serviceType: ServiceType,
-  ) {
+    totalAmount: number,
+  ): Promise<void> {
     const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
-    const currentWorkflowStatus = serviceOrder.workflowStatus;
 
     if (status === ServiceOrderAgreementStatus.CONFIRMED) {
-      if (
-        [
-          ServiceOrderWorkflowStatus.APPROVED_FOR_WORK,
-          ServiceOrderWorkflowStatus.IN_SERVICE,
-          ServiceOrderWorkflowStatus.WAITING_PARTS,
-          ServiceOrderWorkflowStatus.SERVICE_DONE,
-          ServiceOrderWorkflowStatus.READY_FOR_PICKUP,
-          ServiceOrderWorkflowStatus.CANCELLED,
-        ].includes(currentWorkflowStatus)
-      ) {
-        return;
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.AUTORIZADA;
+      serviceOrder.technicalStatus = ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
+      serviceOrder.montoComprometidoVigente = Number(totalAmount ?? 0);
+      serviceOrder.economicStatus = Number(totalAmount ?? 0) > 0
+        ? ServiceOrderEconomicStatus.PENDIENTE
+        : ServiceOrderEconomicStatus.NO_APLICA;
+    } else {
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.PENDIENTE_RESPUESTA_CLIENTE;
+      serviceOrder.montoComprometidoVigente = Number(totalAmount ?? 0);
+      if (Number(totalAmount ?? 0) > 0) {
+        serviceOrder.economicStatus = ServiceOrderEconomicStatus.PENDIENTE;
       }
-
-      await this.workflowService.changeWorkflowStatus(serviceOrderId, ServiceOrderWorkflowStatus.APPROVED_FOR_WORK);
-      return;
     }
 
-    if (
-      serviceType === ServiceType.DIAGNOSIS &&
-      currentWorkflowStatus === ServiceOrderWorkflowStatus.DIAGNOSIS_READY
-    ) {
-      await this.workflowService.changeWorkflowStatus(serviceOrderId, ServiceOrderWorkflowStatus.UNDER_COORDINATION);
+    await this.serviceOrderRepository.save(serviceOrder);
+  }
+
+  private async syncCanonicalCommercialAfterConfirmation(
+    serviceOrderId: number,
+    totalAmount: number,
+  ): Promise<void> {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    serviceOrder.commercialStatus = ServiceOrderCommercialStatus.AUTORIZADA;
+    serviceOrder.technicalStatus = ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
+    serviceOrder.montoComprometidoVigente = Number(totalAmount ?? 0);
+    serviceOrder.economicStatus = Number(totalAmount ?? 0) > 0
+      ? ServiceOrderEconomicStatus.PENDIENTE
+      : ServiceOrderEconomicStatus.NO_APLICA;
+    await this.serviceOrderRepository.save(serviceOrder);
+  }
+
+  private async syncCanonicalCommercialAfterVoid(serviceOrderId: number): Promise<void> {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    const activeAgreement = await this.agreementRepository.findOne({
+      where: { serviceOrderId, status: In([ServiceOrderAgreementStatus.DRAFT, ServiceOrderAgreementStatus.CONFIRMED]) },
+      order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
+    });
+
+    if (activeAgreement) {
+      serviceOrder.commercialStatus = activeAgreement.status === ServiceOrderAgreementStatus.CONFIRMED
+        ? ServiceOrderCommercialStatus.AUTORIZADA
+        : ServiceOrderCommercialStatus.PENDIENTE_RESPUESTA_CLIENTE;
+      serviceOrder.montoComprometidoVigente = Number(activeAgreement.totalAmount ?? 0);
+      serviceOrder.economicStatus = Number(activeAgreement.totalAmount ?? 0) > 0
+        ? ServiceOrderEconomicStatus.PENDIENTE
+        : ServiceOrderEconomicStatus.NO_APLICA;
+    } else {
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
+      serviceOrder.montoComprometidoVigente = 0;
+      serviceOrder.economicStatus = ServiceOrderEconomicStatus.NO_APLICA;
     }
+
+    await this.serviceOrderRepository.save(serviceOrder);
   }
 
   private async supersedePrevious(
@@ -530,34 +555,80 @@ export class ServiceOrderAgreementsService {
     });
   }
 
-  private async buildServiceItems(
-    items: ServiceOrderAgreementServiceItemDto[] | undefined,
-    manager: EntityManager,
-    serviceType?: ServiceType,
-  ) {
-    if (!items?.length) return [];
-    const services = await manager.getRepository(Service).find({
-      where: { id: In([...new Set(items.map((item) => Number(item.serviceId)))]) },
-    });
-    const serviceMap = new Map(services.map((service) => [service.id, service]));
-    return items.map((item) => {
-      const service = serviceMap.get(Number(item.serviceId));
-      if (!service) throw new NotFoundException(`Service with id ${item.serviceId} not found`);
-      const estimatedHours = Number((((service as any).estimatedDurationMinutes ?? 60) / 60).toFixed(2));
-      const isZeroBillingService =
-        serviceType === ServiceType.CUSTOMER_SERVICE || serviceType === ServiceType.WARRANTY_SERVICE;
-      const unitPrice = isZeroBillingService ? 0 : Number((service as any).price ?? 0);
-      return manager.getRepository(ServiceOrderAgreementServiceItem).create({
-        serviceId: service.id,
-        serviceCodeSnapshot: (service as any).code ?? String(service.id),
-        serviceNameSnapshot: (service as any).name ?? `Servicio ${service.id}`,
-        serviceDescriptionSnapshot: (service as any).description ?? null,
-        estimatedHours,
+  private buildTechnicalServiceItems(amount: number, serviceType?: ServiceType) {
+    this.ensureTechnicalServiceAmount(amount);
+    const isZeroBillingService =
+      serviceType === ServiceType.CUSTOMER_SERVICE || serviceType === ServiceType.WARRANTY_SERVICE;
+    const unitPrice = isZeroBillingService ? 0 : Number(amount.toFixed(2));
+    return [
+      this.agreementServiceItemRepository.create({
+        serviceId: null,
+        serviceCodeSnapshot: TECHNICAL_SERVICE_CODE,
+        serviceNameSnapshot: TECHNICAL_SERVICE_NAME,
+        serviceDescriptionSnapshot: TECHNICAL_SERVICE_NAME,
+        estimatedHours: 1,
         unitPrice,
         lineTotal: Number(unitPrice.toFixed(2)),
-        notes: item.notes ?? null,
-      });
+        notes: null,
+      }),
+    ];
+  }
+
+  private async createAutomaticTechnicalServiceAgreement(serviceOrderId: number, reason?: string) {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    const existingConfirmed = await this.agreementRepository.find({
+      where: {
+        serviceOrderId,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+      },
+      relations: ['serviceItems'],
+      order: { agreedAt: 'DESC', createdAt: 'DESC' },
     });
+
+    const duplicatedAutomaticCharge = existingConfirmed.some((agreement) =>
+      (agreement.serviceItems ?? []).some(
+        (item) =>
+          item.serviceCodeSnapshot === TECHNICAL_SERVICE_CODE &&
+          Number(item.unitPrice ?? 0) === TECHNICAL_SERVICE_MINIMUM_AMOUNT,
+      ),
+    );
+    if (duplicatedAutomaticCharge) {
+      return existingConfirmed[0];
+    }
+
+    return this.agreementRepository.manager.transaction(async (manager) => {
+      await this.supersedePrevious(manager, serviceOrder.id, ServiceOrderAgreementStatus.CONFIRMED);
+      const saved = await manager.getRepository(ServiceOrderAgreement).save({
+        serviceOrderId: serviceOrder.id,
+        diagnosisId: null,
+        sequenceNumber: await this.resolveNextSequence(manager, serviceOrder.id),
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        source: ServiceOrderAgreementSource.TECHNICAL_SERVICE_AUTO,
+        totalAmount: TECHNICAL_SERVICE_MINIMUM_AMOUNT,
+        notes: reason ?? 'Cobro automático de Servicio técnico por diagnóstico cerrado sin reparación',
+        agreedAt: new Date(),
+        agreedByUserId: null,
+      });
+
+      await this.persistServiceItems(
+        manager,
+        saved.id,
+        this.buildTechnicalServiceItems(TECHNICAL_SERVICE_MINIMUM_AMOUNT, serviceOrder.serviceType),
+      );
+      return saved;
+    });
+  }
+
+  private ensureTechnicalServiceAmount(value: number | undefined) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) {
+      throw new BadRequestException('technicalServiceAmount is required');
+    }
+    if (amount < TECHNICAL_SERVICE_MINIMUM_AMOUNT) {
+      throw new BadRequestException(
+        `technicalServiceAmount must be at least ${TECHNICAL_SERVICE_MINIMUM_AMOUNT}`,
+      );
+    }
   }
 
   private async loadCurrentProductItems(manager: EntityManager, agreementId: number) {

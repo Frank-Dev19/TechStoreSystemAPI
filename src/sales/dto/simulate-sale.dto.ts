@@ -38,6 +38,25 @@ export class SimulateItemDto {
 
     @IsOptional()
     @IsNumber()
+    baseUnitPrice?: number;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(256)
+    description?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(64)
+    serviceCodeSnapshot?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(256)
+    serviceNameSnapshot?: string;
+
+    @IsOptional()
+    @IsNumber()
     @IsPositive()
     finalUnitPrice?: number;
 

@@ -1,7 +1,6 @@
-﻿import { IsArray, IsEnum, IsNumber, IsOptional, IsPositive, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsEnum, IsNumber, IsOptional, IsPositive, IsString, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ServiceOrderAgreementProductItemDto } from './service-agreement-product-item.dto';
-import { ServiceOrderAgreementServiceItemDto } from './service-agreement-service-item.dto';
 import { ServiceOrderAgreementStatus } from '../service-agreement-status.enum';
 import { ServiceOrderAgreementSource } from '../service-agreement-source.enum';
 
@@ -38,10 +37,8 @@ export class CreateServiceOrderAgreementDto {
   @Type(() => ServiceOrderAgreementProductItemDto)
   products?: ServiceOrderAgreementProductItemDto[];
 
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => ServiceOrderAgreementServiceItemDto)
-  services?: ServiceOrderAgreementServiceItemDto[];
+  @IsNumber()
+  @Min(20)
+  technicalServiceAmount: number;
 }
 

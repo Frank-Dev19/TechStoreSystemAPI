@@ -9,7 +9,6 @@ import {
 import { Sale } from './sale.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
-import { Service } from 'src/service-catalog/entities/service.entity';
 
 @Entity({ name: 'sale_items' })
 export class SaleItem {
@@ -35,10 +34,6 @@ export class SaleItem {
 
     @Column({ name: 'service_id', type: 'int', unsigned: true, nullable: true })
     serviceId?: number | null;
-
-    @ManyToOne(() => Service, { eager: true, nullable: true })
-    @JoinColumn({ name: 'service_id' })
-    service?: Service | null;
 
     @Column({ name: 'service_code_snapshot', type: 'varchar', length: 64, nullable: true })
     serviceCodeSnapshot?: string | null;

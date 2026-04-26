@@ -17,6 +17,12 @@ export class ServiceOrderEvent {
   @Column({ name: 'event_type', type: 'varchar', length: 80 })
   eventType: string;
 
+  @Column({ name: 'axis', type: 'varchar', length: 40, nullable: true })
+  axis: string | null;
+
+  @Column({ name: 'capability', type: 'varchar', length: 80, nullable: true })
+  capability: string | null;
+
   @Column({ name: 'from_status', type: 'varchar', length: 80, nullable: true })
   fromStatus: string | null;
 

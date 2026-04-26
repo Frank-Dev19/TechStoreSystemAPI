@@ -4,8 +4,8 @@ import { RequestContextMiddleware } from './common/request-context.middleware';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
-// Importa tus mÃ³dulos reales
-// Ejemplo de otros mÃ³dulos (desactÃ­valos si aÃºn no existen)
+// Importa tus modulos reales
+// Ejemplo de otros modulos (desactivalos si aun no existen)
 // import { SalesModule } from './sales/sales.module';
 import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './audit/audit.module';
@@ -23,7 +23,6 @@ import { ClientModule } from './clients/client.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { PricingModule } from './pricing/pricing.module';
-import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { ServiceOrdersModule } from './service-orders/service-orders.module';
 import { ServiceOrderAgreementsModule } from './service-orders/service-agreements/service-agreements.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -48,11 +47,11 @@ import { SupplierModule } from './suppliers/supplier.module';
         if (isProd) {
           // Un solo env var en prod
           const url = config.get<string>('DATABASE_URL');
-          if (!url) throw new Error('DATABASE_URL no definido en producciÃ³n');
+          if (!url) throw new Error('DATABASE_URL no definido en produccion');
           return {
             ...common,
             url,
-            // Algunos proveedores requieren SSL; ajusta segÃºn tu servicio:
+            // Algunos proveedores requieren SSL; ajusta segun tu servicio:
             ssl:
               process.env.DB_SSL === 'true'
                 ? { rejectUnauthorized: false }
@@ -68,13 +67,13 @@ import { SupplierModule } from './suppliers/supplier.module';
           username: config.get<string>('DB_USERNAME'),
           password: config.get<string>('DB_PASSWORD'),
           database: config.get<string>('DB_NAME'),
-          synchronize: true, // solo mientras modelas; luego pÃ¡salo a false + migrations
+          synchronize: true, // solo mientras modelas; luego pasalo a false + migrations
         };
       },
     }),
     ScheduleModule.forRoot(),
 
-    // Tus mÃ³dulos
+    // Tus modulos
     AuthModule,
     AuditModule,
     KeysModule,
@@ -90,7 +89,6 @@ import { SupplierModule } from './suppliers/supplier.module';
     ClientModule,
     SupplierModule,
     InventoryModule,
-    ServiceCatalogModule,
     ServiceOrdersModule,
     ServiceOrderAgreementsModule,
     PricingModule,

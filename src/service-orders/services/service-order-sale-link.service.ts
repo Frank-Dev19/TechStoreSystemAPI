@@ -7,7 +7,8 @@ import { ServiceOrderAgreement } from '../service-agreements/entities/service-ag
 import { ServiceOrderAgreementStatus } from '../service-agreements/service-agreement-status.enum';
 import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.dto';
 import { ServiceOrderSaleLink } from '../entities/service-order-sale-link.entity';
-import { ServiceOrderPaymentStatus } from '../enums';
+import { ServiceOrderEconomicStatus } from '../enums';
+import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 
 type SearchSalesQuery = {
   companyId?: number | string;
@@ -29,6 +30,7 @@ export class ServiceOrderSaleLinkService {
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     @InjectRepository(ServiceOrderAgreement)
     private readonly agreementRepository: Repository<ServiceOrderAgreement>,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async searchSales(query: SearchSalesQuery) {
@@ -125,6 +127,12 @@ export class ServiceOrderSaleLinkService {
     }
 
     for (const order of serviceOrders) {
+      if (order.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
+        throw new BadRequestException(
+          `La orden ${order.code} solo puede reconciliarse manualmente si está pendiente de pago`,
+        );
+      }
+
       const agreement = activeAgreementByOrderId.get(Number(order.id));
       if (!agreement || Number(agreement.totalAmount || 0) <= 0) {
         throw new BadRequestException(`La orden ${order.code} no tiene acuerdo facturable vigente`);
@@ -163,7 +171,8 @@ export class ServiceOrderSaleLinkService {
         }),
       );
 
-      await this.syncServiceOrderPayment(order.id);
+      await this.syncServiceOrderEconomicState(order.id);
+      await this.messageMatrixService.notifyInvoiceLinked(order, sale);
       createdLinks.push(link);
     }
 
@@ -177,11 +186,11 @@ export class ServiceOrderSaleLinkService {
     }
 
     await this.linkRepository.softDelete(id);
-    await this.syncServiceOrderPayment(Number(link.serviceOrderId));
+    await this.syncServiceOrderEconomicState(Number(link.serviceOrderId));
     return { ok: true, message: 'Vínculo eliminado' };
   }
 
-  private async syncServiceOrderPayment(serviceOrderId: number) {
+  private async syncServiceOrderEconomicState(serviceOrderId: number) {
     const serviceOrder = await this.serviceOrderRepository.findOne({ where: { id: serviceOrderId } });
     if (!serviceOrder) {
       throw new NotFoundException('Orden no encontrada');
@@ -196,9 +205,9 @@ export class ServiceOrderSaleLinkService {
     });
 
     if (!agreement || Number(agreement.totalAmount || 0) <= 0) {
-      serviceOrder.paymentStatus = ServiceOrderPaymentStatus.UNPAID;
-      serviceOrder.isPaid = false;
-      serviceOrder.paidAt = null;
+      serviceOrder.montoComprometidoVigente = 0;
+      serviceOrder.montoReconciliado = 0;
+      serviceOrder.economicStatus = ServiceOrderEconomicStatus.NO_APLICA;
       await this.serviceOrderRepository.save(serviceOrder);
       return;
     }
@@ -214,19 +223,15 @@ export class ServiceOrderSaleLinkService {
       links.reduce((sum, link) => sum + Number(link.linkedAmount || 0), 0).toFixed(2),
     );
     const totalAmount = Number(agreement.totalAmount || 0);
+    serviceOrder.montoComprometidoVigente = totalAmount;
+    serviceOrder.montoReconciliado = linkedAmount;
 
     if (linkedAmount <= 0) {
-      serviceOrder.paymentStatus = ServiceOrderPaymentStatus.UNPAID;
-      serviceOrder.isPaid = false;
-      serviceOrder.paidAt = null;
+      serviceOrder.economicStatus = ServiceOrderEconomicStatus.PENDIENTE;
     } else if (linkedAmount + 0.01 < totalAmount) {
-      serviceOrder.paymentStatus = ServiceOrderPaymentStatus.PARTIALLY_PAID;
-      serviceOrder.isPaid = false;
-      serviceOrder.paidAt = null;
+      serviceOrder.economicStatus = ServiceOrderEconomicStatus.PARCIAL;
     } else {
-      serviceOrder.paymentStatus = ServiceOrderPaymentStatus.PAID;
-      serviceOrder.isPaid = true;
-      serviceOrder.paidAt = new Date();
+      serviceOrder.economicStatus = ServiceOrderEconomicStatus.TOTAL;
     }
 
     await this.serviceOrderRepository.save(serviceOrder);

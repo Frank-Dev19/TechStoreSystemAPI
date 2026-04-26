@@ -8,7 +8,8 @@ import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderDiagnosisStatus } from './service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisOutcome } from './service-order-diagnosis-outcome.enum';
 import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
-import { ServiceOrderWorkflowStatus } from '../enums';
+import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
+import { ServiceOrderCommercialStatus, ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceType } from '../enums/service-type.enum';
 
 type FindDiagnosisQuery = {
@@ -27,6 +28,7 @@ export class ServiceOrderDiagnosisService {
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     private readonly workflowService: ServiceOrderWorkflowService,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async findAll(query: FindDiagnosisQuery) {
@@ -77,6 +79,13 @@ export class ServiceOrderDiagnosisService {
   async create(dto: CreateServiceOrderDiagnosisDto) {
     const serviceOrder = await this.ensureServiceOrder(dto.serviceOrderId);
     this.ensureDiagnosisCreateAllowed(serviceOrder);
+    const previousCurrentDiagnosis = await this.diagnosisRepository.findOne({
+      where: {
+        serviceOrderId: dto.serviceOrderId,
+        status: ServiceOrderDiagnosisStatus.CURRENT,
+      },
+      order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
+    });
 
     const diagnosis = await this.diagnosisRepository.manager.transaction(async (manager) => {
       const repository = manager.getRepository(ServiceOrderDiagnosis);
@@ -104,8 +113,14 @@ export class ServiceOrderDiagnosisService {
       return repository.save(entity);
     });
 
-    const nextWorkflowStatus = this.resolveWorkflowStatusFromOutcome(diagnosis.outcome);
-    await this.workflowService.changeWorkflowStatus(dto.serviceOrderId, nextWorkflowStatus);
+    const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(diagnosis.outcome);
+    await this.workflowService.changeTechnicalStatus(dto.serviceOrderId, nextTechnicalStatus);
+    await this.applyCommercialStatusFromDiagnosis(dto.serviceOrderId, diagnosis.outcome);
+    await this.messageMatrixService.notifyDiagnosisUpdated(
+      await this.ensureServiceOrder(dto.serviceOrderId),
+      diagnosis,
+      previousCurrentDiagnosis,
+    );
     return diagnosis;
   }
 
@@ -193,13 +208,13 @@ export class ServiceOrderDiagnosisService {
     return { ok: true, message: `${toRestore.length} service order diagnoses restored successfully` };
   }
 
-  private resolveWorkflowStatusFromOutcome(outcome: ServiceOrderDiagnosisOutcome): ServiceOrderWorkflowStatus {
+  private resolveTechnicalStatusFromOutcome(outcome: ServiceOrderDiagnosisOutcome): ServiceOrderTechnicalStatus {
     return [
       ServiceOrderDiagnosisOutcome.REPAIRABLE,
       ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
     ].includes(outcome)
-      ? ServiceOrderWorkflowStatus.DIAGNOSIS_READY
-      : ServiceOrderWorkflowStatus.NO_SOLUTION;
+      ? ServiceOrderTechnicalStatus.DIAGNOSTICADA
+      : ServiceOrderTechnicalStatus.SIN_SOLUCION;
   }
 
   private async ensureServiceOrder(id: number) {
@@ -211,7 +226,7 @@ export class ServiceOrderDiagnosisService {
   }
 
   private ensureDiagnosisCreateAllowed(serviceOrder: ServiceOrder) {
-    if (serviceOrder.workflowStatus === ServiceOrderWorkflowStatus.UNDER_REVIEW) {
+    if (serviceOrder.technicalStatus === ServiceOrderTechnicalStatus.EN_DIAGNOSTICO) {
       if (
         ![ServiceType.DIAGNOSIS, ServiceType.WARRANTY_SERVICE].includes(serviceOrder.serviceType)
       ) {
@@ -220,7 +235,7 @@ export class ServiceOrderDiagnosisService {
       return;
     }
 
-    if (serviceOrder.workflowStatus === ServiceOrderWorkflowStatus.IN_SERVICE) {
+    if (serviceOrder.technicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION) {
       if (serviceOrder.serviceType !== ServiceType.DIAGNOSIS) {
         throw new BadRequestException('Only diagnosis service orders can create a new diagnosis from IN_SERVICE');
       }
@@ -228,8 +243,25 @@ export class ServiceOrderDiagnosisService {
     }
 
     throw new BadRequestException(
-      `Cannot register a diagnosis while the service order is ${serviceOrder.workflowStatus}`,
+      `Cannot register a diagnosis while the service order is ${serviceOrder.technicalStatus}`,
     );
+  }
+
+  private async applyCommercialStatusFromDiagnosis(
+    serviceOrderId: number,
+    outcome: ServiceOrderDiagnosisOutcome,
+  ): Promise<void> {
+    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+
+    if (
+      [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
+    ) {
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
+    } else {
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.NO_REQUIERE;
+    }
+
+    await this.serviceOrderRepository.save(serviceOrder);
   }
 
   private async ensureDiagnosis(id: number) {

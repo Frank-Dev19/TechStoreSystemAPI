@@ -1,4 +1,4 @@
-﻿import {
+import {
   Column,
   CreateDateColumn,
   DeleteDateColumn,
@@ -9,7 +9,6 @@
   UpdateDateColumn,
 } from 'typeorm';
 import { ServiceOrderAgreement } from './service-agreement.entity';
-import { Service } from '../../../service-catalog/entities/service.entity';
 
 @Entity('service_order_agreement_services')
 export class ServiceOrderAgreementServiceItem {
@@ -22,10 +21,6 @@ export class ServiceOrderAgreementServiceItem {
 
   @Column({ name: 'service_order_agreement_id', type: 'bigint', unsigned: true })
   serviceOrderAgreementId: number;
-
-  @ManyToOne(() => Service, { eager: true, nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'service_id' })
-  service: Service | null;
 
   @Column({ name: 'service_id', type: 'int', unsigned: true, nullable: true })
   serviceId: number | null;

@@ -14,7 +14,6 @@ import { SaleLineDiscount } from '../entities/sale-line-discount.entity';
 import { SaleComboItem } from '../entities/sale-combo-item.entity';
 import { Client } from 'src/clients/entities/client.entity';
 import { Product } from 'src/inventory/entities/product.entity';
-import { Service } from 'src/service-catalog/entities/service.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Serial } from 'src/inventory/entities/serial.entity';
 import { Stock } from 'src/inventory/entities/stock.entity';
@@ -35,6 +34,11 @@ import { CashFlowService } from './cash-flow.service';
 import { DocumentSeriesService } from './document-series.service';
 import { PricingEngineService } from 'src/pricing/services/pricing-engine.service';
 import { TaxConfigService } from 'src/pricing/services/tax-config.service';
+import { ServiceOrder } from 'src/service-orders/entities/service-order.entity';
+import { ServiceOrderSaleLink } from 'src/service-orders/entities/service-order-sale-link.entity';
+import { ServiceOrderEconomicStatus } from 'src/service-orders/enums';
+import { ServiceOrderAgreement } from 'src/service-orders/service-agreements/entities/service-agreement.entity';
+import { ServiceOrderAgreementStatus } from 'src/service-orders/service-agreements/service-agreement-status.enum';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -43,6 +47,39 @@ import { PaymentMethod } from '../enums/payment-method.enum';
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
   message: string;
+}
+
+type ServiceOrderSaleDraftItem = {
+  itemType: SaleItemKindDto.PRODUCT;
+  productId: number | null;
+  quantity: number;
+  baseUnitPrice: number;
+  finalUnitPrice: number;
+  description: string;
+};
+
+type ServiceOrderSaleDraftServiceItem = {
+  itemType: SaleItemKindDto.SERVICE;
+  quantity: number;
+  baseUnitPrice: number;
+  finalUnitPrice: number;
+  description: string;
+  serviceCodeSnapshot: string;
+  serviceNameSnapshot: string;
+};
+
+type ServiceOrderSaleDraftLine = ServiceOrderSaleDraftItem | ServiceOrderSaleDraftServiceItem;
+
+function isServiceOrderSaleDraftServiceItem(
+  item: ServiceOrderSaleDraftLine,
+): item is ServiceOrderSaleDraftServiceItem {
+  return item.itemType === SaleItemKindDto.SERVICE;
+}
+
+function isServiceOrderSaleDraftProductItem(
+  item: ServiceOrderSaleDraftLine,
+): item is ServiceOrderSaleDraftItem {
+  return item.itemType === SaleItemKindDto.PRODUCT;
 }
 
 @Injectable()
@@ -64,8 +101,6 @@ export class SalesService {
     private readonly clientRepo: Repository<Client>,
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
-    @InjectRepository(Service)
-    private readonly serviceRepo: Repository<Service>,
     @InjectRepository(Lot)
     private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Serial)
@@ -80,6 +115,12 @@ export class SalesService {
     private readonly movementRepo: Repository<Movement>,
     @InjectRepository(MovementSerial)
     private readonly movementSerialRepo: Repository<MovementSerial>,
+    @InjectRepository(ServiceOrder)
+    private readonly serviceOrderRepo: Repository<ServiceOrder>,
+    @InjectRepository(ServiceOrderAgreement)
+    private readonly agreementRepo: Repository<ServiceOrderAgreement>,
+    @InjectRepository(ServiceOrderSaleLink)
+    private readonly serviceOrderSaleLinkRepo: Repository<ServiceOrderSaleLink>,
 
     private readonly salesPricing: SalesPricingService,
     private readonly salesInventory: SalesInventoryService,
@@ -106,17 +147,10 @@ export class SalesService {
     const simulationResults = await Promise.all(
       simulateDto.items.map(async (item) => {
         if (item.itemType === SaleItemKindDto.SERVICE) {
-          if (!item.serviceId) {
-            throw new BadRequestException('Cada línea de servicio requiere serviceId');
-          }
-
-          const service = await this.serviceRepo.findOne({ where: { id: item.serviceId } });
-          if (!service) {
-            throw new BadRequestException(`Servicio con ID ${item.serviceId} no encontrado`);
-          }
-
-          const unitPrice = Number(item.finalUnitPrice ?? service.price ?? 0);
+          const unitPrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? 0);
           const finalSubtotal = Number((unitPrice * Number(item.quantity)).toFixed(2));
+          const serviceLabel = (item as any).serviceNameSnapshot ?? item.description ?? 'Servicio técnico';
+          const serviceCode = (item as any).serviceCodeSnapshot ?? 'TECHNICAL_SERVICE';
 
           return {
             item,
@@ -127,9 +161,9 @@ export class SalesService {
             pricing: {
               itemType: SaleItemKindDto.SERVICE,
               productId: null,
-              serviceId: service.id,
-              productName: service.name,
-              sku: service.code,
+              serviceId: null,
+              productName: serviceLabel,
+              sku: serviceCode,
               baseUnitPrice: unitPrice,
               finalUnitPrice: unitPrice,
               baseSubtotal: finalSubtotal,
@@ -431,6 +465,7 @@ export class SalesService {
   // CREAR VENTA
   // =========================
   async create(createSaleDto: CreateSaleDto, user: string) {
+    const allowServiceItems = Boolean((createSaleDto as any).allowServiceItems);
     // Validar cliente
     const customer = await this.clientRepo.findOne({
       where: { id: createSaleDto.customerId },
@@ -466,10 +501,10 @@ export class SalesService {
 
     for (const item of createSaleDto.items) {
       if (item.itemType === SaleItemKindDto.SERVICE) {
-        const service = item.serviceId
-          ? await this.serviceRepo.findOne({ where: { id: item.serviceId } })
-          : null;
-        const servicePrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? service?.price ?? 0);
+        if (!allowServiceItems) {
+          throw new BadRequestException('Las ventas manuales solo admiten productos');
+        }
+        const servicePrice = Number(item.finalUnitPrice ?? item.baseUnitPrice ?? 0);
         enhancedItems.push({
           ...item,
           baseUnitPrice: servicePrice,
@@ -582,23 +617,18 @@ export class SalesService {
         const itemDto = createSaleDto.items[i];
         const simulationResult = simulation.items[i];
         if (itemDto.itemType === SaleItemKindDto.SERVICE) {
-          if (!itemDto.serviceId) {
-            throw new BadRequestException('Cada línea de servicio requiere serviceId');
-          }
-
-          const service = await this.serviceRepo.findOne({ where: { id: itemDto.serviceId } });
-          if (!service) {
-            throw new BadRequestException(`Servicio con ID ${itemDto.serviceId} no encontrado`);
+          if (!allowServiceItems) {
+            throw new BadRequestException('Las ventas manuales solo admiten productos');
           }
 
           const saleItem = this.saleItemRepo.create({
             saleId: savedSale.id,
             itemType: 'SERVICE',
             productId: null,
-            serviceId: service.id,
-            serviceCodeSnapshot: service.code,
-            serviceNameSnapshot: service.name,
-            descriptionSnapshot: itemDto.description ?? service.name,
+            serviceId: null,
+            serviceCodeSnapshot: (itemDto as any).serviceCodeSnapshot ?? 'TECHNICAL_SERVICE',
+            serviceNameSnapshot: (itemDto as any).serviceNameSnapshot ?? itemDto.description ?? 'Servicio técnico',
+            descriptionSnapshot: itemDto.description ?? (itemDto as any).serviceNameSnapshot ?? 'Servicio técnico',
             lotId: null,
             baseUnitPrice: simulationResult.baseUnitPrice,
             finalUnitPrice: simulationResult.finalUnitPrice,
@@ -788,6 +818,275 @@ export class SalesService {
     }
   }
 
+  async createFromServiceOrder(dto: any, user: string) {
+    const serviceOrder = await this.serviceOrderRepo.findOne({ where: { id: Number(dto.serviceOrderId) } });
+    if (!serviceOrder) {
+      throw new NotFoundException('Orden de servicio no encontrada');
+    }
+    if (serviceOrder.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
+      throw new BadRequestException('Solo se puede facturar desde órdenes pendientes de pago');
+    }
+
+    const confirmedAgreements = await this.agreementRepo.find({
+      where: {
+        serviceOrderId: Number(dto.serviceOrderId),
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+      },
+      relations: ['productItems', 'serviceItems'],
+      order: { agreedAt: 'DESC', createdAt: 'DESC' },
+    });
+    const agreement = confirmedAgreements[0];
+    if (!agreement) {
+      throw new BadRequestException('La orden no tiene acuerdo confirmado para facturar');
+    }
+
+    const totalAmount = Number(agreement.totalAmount ?? 0);
+    const totalPayments = (dto.payments ?? []).reduce(
+      (sum: number, payment: { amount?: number }) => sum + Number(payment.amount ?? 0),
+      0,
+    );
+    if (Math.abs(totalPayments - totalAmount) > 0.01) {
+      throw new BadRequestException(
+        `El total de pagos (${totalPayments}) no coincide con el total del acuerdo (${totalAmount})`,
+      );
+    }
+
+    const items: ServiceOrderSaleDraftLine[] = [
+      ...(agreement.productItems ?? []).map((item) => ({
+        itemType: SaleItemKindDto.PRODUCT as const,
+        productId: item.productId,
+        quantity: Number(item.quantity ?? 0),
+        baseUnitPrice: Number(item.unitPrice ?? 0),
+        finalUnitPrice: Number(item.unitPrice ?? 0),
+        description: item.productNameSnapshot,
+      })),
+      ...(agreement.serviceItems ?? []).map((item) => ({
+        itemType: SaleItemKindDto.SERVICE as const,
+        quantity: 1,
+        baseUnitPrice: Number(item.unitPrice ?? 0),
+        finalUnitPrice: Number(item.unitPrice ?? 0),
+        description: item.serviceNameSnapshot,
+        serviceCodeSnapshot: item.serviceCodeSnapshot,
+        serviceNameSnapshot: item.serviceNameSnapshot,
+      })),
+    ];
+
+    let finalSeries = dto.series;
+    let finalNumber = dto.number;
+    let documentSeriesId: number | null = null;
+
+    if (!finalSeries || !finalNumber) {
+      const nextNumber = await this.documentSeriesService.getNextNumber(dto.companyId, dto.documentType);
+      finalSeries = nextNumber.series;
+      finalNumber = nextNumber.number;
+      const documentSeries = await this.documentSeriesService.getActiveByType(dto.companyId, dto.documentType);
+      documentSeriesId = documentSeries?.id || null;
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const existingLink = await queryRunner.manager.findOne(ServiceOrderSaleLink, {
+        where: {
+          serviceOrderId: Number(serviceOrder.id),
+          agreementId: Number(agreement.id),
+          deletedAt: IsNull(),
+        } as any,
+      });
+      if (existingLink) {
+        throw new BadRequestException('La orden ya tiene un comprobante autoligado para el acuerdo vigente');
+      }
+
+      const cashRegister = await queryRunner.manager.findOne(CashRegister, {
+        where: { companyId: dto.companyId, status: 'OPEN' },
+      });
+      if (!cashRegister) {
+        throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
+      }
+
+      const sale = await queryRunner.manager.save(
+        this.saleRepo.create({
+          companyId: dto.companyId,
+          customerId: Number(serviceOrder.clientId),
+          cashRegisterId: cashRegister.id,
+          saleType: dto.saleType ?? SaleType.SERVICE,
+          documentType: dto.documentType as DocumentType,
+          documentSeriesId,
+          series: finalSeries,
+          number: finalNumber,
+          issueDate: dto.issueDate,
+          dueDate: dto.dueDate ?? dto.issueDate,
+          priceListCode: '',
+          applyAutoDiscounts: false,
+          subtotal: totalAmount,
+          discountTotal: 0,
+          taxRate: 0,
+          taxAmount: 0,
+          total: totalAmount,
+          status: 'CONFIRMED' as SaleStatus,
+          createdBy: user,
+          confirmedBy: user,
+          observations: dto.observations,
+        }),
+      );
+
+      const itemsWithAutoData: Array<{ productId: number; quantity: number; lotId: number | null; serialIds: number[] }> = [];
+
+      for (const item of items) {
+        if (isServiceOrderSaleDraftServiceItem(item)) {
+          await queryRunner.manager.save(
+            this.saleItemRepo.create({
+              saleId: sale.id,
+              itemType: 'SERVICE',
+              productId: null,
+              serviceId: null,
+              serviceCodeSnapshot: item.serviceCodeSnapshot ?? 'TECHNICAL_SERVICE',
+              serviceNameSnapshot: item.serviceNameSnapshot ?? 'Servicio técnico',
+              descriptionSnapshot: item.description ?? item.serviceNameSnapshot ?? 'Servicio técnico',
+              lotId: null,
+              baseUnitPrice: item.baseUnitPrice,
+              finalUnitPrice: item.finalUnitPrice,
+              quantity: item.quantity,
+              discountAmount: 0,
+              taxAmount: 0,
+              lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
+              serialCount: 0,
+              isComboItem: false,
+              comboId: null,
+            }),
+          );
+          continue;
+        }
+
+        if (!isServiceOrderSaleDraftProductItem(item) || !item.productId) {
+          throw new BadRequestException('Cada línea de producto requiere productId');
+        }
+
+        const lotsData = await this.getAutoLotAndSerials(item.productId, item.quantity);
+        for (const lotData of lotsData) {
+          itemsWithAutoData.push({
+            productId: item.productId,
+            quantity: lotData.quantityFromThisLot,
+            lotId: lotData.lotId,
+            serialIds: lotData.serialIds,
+          });
+        }
+
+        const firstLotData = lotsData[0];
+        await queryRunner.manager.save(
+          this.saleItemRepo.create({
+            saleId: sale.id,
+            itemType: 'PRODUCT',
+            productId: item.productId,
+            serviceId: null,
+            serviceCodeSnapshot: null,
+            serviceNameSnapshot: null,
+            descriptionSnapshot: item.description,
+            lotId: firstLotData?.lotId ?? null,
+            baseUnitPrice: item.baseUnitPrice,
+            finalUnitPrice: item.finalUnitPrice,
+            quantity: item.quantity,
+            discountAmount: 0,
+            taxAmount: 0,
+            lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
+            serialCount: firstLotData?.serialIds?.length || 0,
+            isComboItem: false,
+            comboId: null,
+          }),
+        );
+      }
+
+      let currentBalance = Number(cashRegister.currentBalance ?? 0);
+      for (const paymentDto of dto.payments ?? []) {
+        await queryRunner.manager.save(
+          this.salePaymentRepo.create({
+            saleId: sale.id,
+            method: paymentDto.method as PaymentMethod,
+            amount: paymentDto.amount,
+            reference: paymentDto.reference,
+            bankName: paymentDto.bankName,
+            cardType: paymentDto.cardType,
+            paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
+          }),
+        );
+
+        const paymentAmount = Number(paymentDto.amount ?? 0);
+        switch (paymentDto.method) {
+          case 'CASH':
+            currentBalance += paymentAmount;
+            cashRegister.currentBalance = currentBalance;
+            cashRegister.expectedBalance = Number(cashRegister.expectedBalance ?? 0) + paymentAmount;
+            cashRegister.totalCash = Number(cashRegister.totalCash ?? 0) + paymentAmount;
+            break;
+          case 'CARD':
+            cashRegister.totalCard = Number(cashRegister.totalCard ?? 0) + paymentAmount;
+            break;
+          case 'TRANSFER':
+            cashRegister.totalTransfer = Number(cashRegister.totalTransfer ?? 0) + paymentAmount;
+            break;
+          case 'YAPE':
+            cashRegister.totalYape = Number(cashRegister.totalYape ?? 0) + paymentAmount;
+            break;
+          case 'PLIN':
+            cashRegister.totalPlin = Number(cashRegister.totalPlin ?? 0) + paymentAmount;
+            break;
+          case 'CREDIT':
+            break;
+        }
+
+        await queryRunner.manager.save(
+          this.transactionRepo.create({
+            cashRegisterId: cashRegister.id,
+            saleId: sale.id,
+            type: 'SALE_PAYMENT',
+            subtype: paymentDto.method as any,
+            amount: paymentAmount,
+            balanceAfter: currentBalance,
+            description: `Venta desde orden ${serviceOrder.code}`,
+            reference: `${finalSeries}-${finalNumber}`,
+            recordedBy: user,
+            recordedAt: new Date(),
+          } as any),
+        );
+      }
+
+      await queryRunner.manager.save(cashRegister);
+      await queryRunner.manager.save(
+        this.serviceOrderSaleLinkRepo.create({
+          saleId: Number(sale.id),
+          serviceOrderId: Number(serviceOrder.id),
+          agreementId: Number(agreement.id),
+          linkedAmount: totalAmount,
+          linkedBy: user,
+          linkedAt: new Date(),
+        }),
+      );
+      await queryRunner.manager.save(
+        ServiceOrder,
+        this.serviceOrderRepo.create({
+          ...serviceOrder,
+          montoComprometidoVigente: totalAmount,
+          montoReconciliado: totalAmount,
+          economicStatus: ServiceOrderEconomicStatus.TOTAL,
+        }),
+      );
+
+      if (itemsWithAutoData.length) {
+        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user);
+      }
+
+      await queryRunner.commitTransaction();
+      return this.findOne(sale.id);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   // =========================
   // LISTAR VENTAS
   // =========================
@@ -884,7 +1183,6 @@ export class SalesService {
         'lineDiscounts',
         'comboItems',
         'comboItems.product',
-        'comboItems.combo',
       ],
     });
 

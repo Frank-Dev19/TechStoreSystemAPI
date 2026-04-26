@@ -1,0 +1,109 @@
+import { BadRequestException } from '@nestjs/common';
+import { ServiceOrderController } from './service-order.controller';
+import { ServiceOrderService } from '../services/service-order.service';
+import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
+import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
+import { ServiceOrderTechnicalStatus, ServiceType } from '../enums';
+
+describe('ServiceOrderController', () => {
+  let controller: ServiceOrderController;
+  let serviceOrderService: jest.Mocked<ServiceOrderService>;
+  let workflowService: jest.Mocked<ServiceOrderWorkflowService>;
+  let saleLinkService: jest.Mocked<ServiceOrderSaleLinkService>;
+
+  beforeEach(() => {
+    serviceOrderService = {
+      create: jest.fn(),
+      findAll: jest.fn(),
+      findOne: jest.fn(),
+      update: jest.fn(),
+      markAsDelivered: jest.fn(),
+      softDelete: jest.fn(),
+      restore: jest.fn(),
+      bulkSoftDelete: jest.fn(),
+      bulkRestore: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderService>;
+
+    workflowService = {
+      getAssignmentSuggestion: jest.fn(),
+      assignTechnician: jest.fn(),
+      changeTechnicalStatus: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderWorkflowService>;
+
+    saleLinkService = {
+      searchSales: jest.fn(),
+      getLinksByServiceOrderIds: jest.fn(),
+      linkSaleToServiceOrders: jest.fn(),
+      unlink: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderSaleLinkService>;
+
+    controller = new ServiceOrderController(serviceOrderService, workflowService, saleLinkService);
+  });
+
+  it('rechaza create si falta el usuario autenticado', () => {
+    expect(() => controller.create({} as any, undefined)).toThrow(BadRequestException);
+    expect(serviceOrderService.create).not.toHaveBeenCalled();
+  });
+
+  it('delegates create con dto y userId', async () => {
+    serviceOrderService.create.mockResolvedValue({ id: 1 } as any);
+
+    await controller.create({ initialIssue: 'No enciende' } as any, 22);
+
+    expect(serviceOrderService.create).toHaveBeenCalledWith(expect.objectContaining({ initialIssue: 'No enciende' }), 22);
+  });
+
+  it('normaliza serviceOrderIds validos en billing-links/by-orders', async () => {
+    saleLinkService.getLinksByServiceOrderIds.mockResolvedValue([] as any);
+
+    await controller.getLinksByOrders('1, 2, foo, 0, -1, 9');
+
+    expect(saleLinkService.getLinksByServiceOrderIds).toHaveBeenCalledWith([1, 2, 9]);
+  });
+
+  it('usa endpoint dedicado de entrega propagando actorId', async () => {
+    serviceOrderService.markAsDelivered.mockResolvedValue({ id: 7 } as any);
+
+    await controller.deliver(7, 44);
+
+    expect(serviceOrderService.markAsDelivered).toHaveBeenCalledWith(7, 44);
+  });
+
+  it('delegates assign-technician con userId opcional', async () => {
+    workflowService.assignTechnician.mockResolvedValue({ ok: true } as any);
+
+    await controller.assignTechnician(4, { assignedToTechnicianId: 11 } as any, 90);
+
+    expect(workflowService.assignTechnician).toHaveBeenCalledWith(4, { assignedToTechnicianId: 11 }, 90);
+  });
+
+  it('delegates transición técnica con reason', async () => {
+    workflowService.changeTechnicalStatus.mockResolvedValue({ id: 5 } as any);
+
+    await controller.changeTechnicalStatus(
+      5,
+      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+      { reason: 'Aprobado por supervisor' },
+      77,
+    );
+
+    expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
+      5,
+      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+      77,
+      'Aprobado por supervisor',
+    );
+  });
+
+  it('delegates technician suggestion usando serviceType', async () => {
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 3,
+      technicians: [],
+    } as any);
+
+    await controller.getTechnicianSuggestion({ serviceType: ServiceType.DIAGNOSIS } as any);
+
+    expect(workflowService.getAssignmentSuggestion).toHaveBeenCalledWith(ServiceType.DIAGNOSIS);
+  });
+});

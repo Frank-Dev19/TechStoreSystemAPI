@@ -8,8 +8,6 @@ import { Role } from 'src/roles/entities/role.entity';
 import { Permission } from 'src/roles/entities/permission.entity';
 import { PermissionModule } from 'src/roles/entities/permission-module.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
-import { ServiceCategory } from 'src/service-catalog/entities/service-category.entity';
-import { Service } from 'src/service-catalog/entities/service.entity';
 
 type ModuleSeed = { moduleKey: string; label: string; sortOrder: number; icon?: string | null };
 type PermSeed = { moduleKey: string; actionKey: string; description: string; sortOrder?: number };
@@ -24,8 +22,6 @@ export class BootstrapService implements OnModuleInit {
     @InjectRepository(Permission) private readonly permsRepo: Repository<Permission>,
     @InjectRepository(PermissionModule) private readonly permModulesRepo: Repository<PermissionModule>,
     @InjectRepository(DocumentType) private readonly docTypesRepo: Repository<DocumentType>,
-    @InjectRepository(ServiceCategory) private readonly serviceCategoryRepo: Repository<ServiceCategory>,
-    @InjectRepository(Service) private readonly serviceRepo: Repository<Service>,
   ) { }
 
   async onModuleInit() {
@@ -41,8 +37,6 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
       { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
       { moduleKey: 'auditoria', label: 'Auditoria', sortOrder: 90, icon: 'fas fa-history' },
-      { moduleKey: 'service-category', label: 'Categorias de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
-      { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
       { moduleKey: 'service-order', label: 'Ordenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
       { moduleKey: 'service-order-diagnosis', label: 'Diagnosticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
       { moduleKey: 'service-order-agreement', label: 'Acuerdos de Orden de Servicio', sortOrder: 118, icon: 'fas fa-handshake' },
@@ -95,20 +89,6 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoria', sortOrder: 10 },
       { moduleKey: 'auditoria', actionKey: 'delete', description: 'Eliminar eventos', sortOrder: 20 },
       { moduleKey: 'auditoria', actionKey: 'stream', description: 'Ver eventos en vivo', sortOrder: 30 },
-
-      //Service Category (Categorias de servicios)
-      { moduleKey: 'service-category', actionKey: 'create', description: 'Crear categorias de servicios', sortOrder: 10 },
-      { moduleKey: 'service-category', actionKey: 'read', description: 'Ver categorias de servicios', sortOrder: 20 },
-      { moduleKey: 'service-category', actionKey: 'update', description: 'Actualizar categorias de servicios', sortOrder: 30 },
-      { moduleKey: 'service-category', actionKey: 'delete', description: 'Eliminar categorias de servicios', sortOrder: 60 },
-      { moduleKey: 'service-category', actionKey: 'restore', description: 'Restaurar categorias de servicios', sortOrder: 70 },
-
-      //Service (Servicios)
-      { moduleKey: 'service', actionKey: 'create', description: 'Crear servicios', sortOrder: 10 },
-      { moduleKey: 'service', actionKey: 'read', description: 'Ver servicios', sortOrder: 20 },
-      { moduleKey: 'service', actionKey: 'update', description: 'Actualizar servicios', sortOrder: 30 },
-      { moduleKey: 'service', actionKey: 'delete', description: 'Eliminar servicios', sortOrder: 60 },
-      { moduleKey: 'service', actionKey: 'restore', description: 'Restaurar servicios', sortOrder: 70 },
 
       // Service Orders
       { moduleKey: 'service-order', actionKey: 'create', description: 'Crear ordenes de servicio', sortOrder: 10 },
@@ -165,9 +145,6 @@ export class BootstrapService implements OnModuleInit {
     await this.ensureDefaultUsers();
     await this.ensureOperationalUsers();
 
-    // 6) Asegurar servicio de diagnostico
-    await this.ensureDiagnosticServiceCatalog();
-
     this.log.log('Bootstrap OK (catalogo sincronizado, admin con permisos, usuario inicial si hacia falta).');
   }
 
@@ -204,60 +181,6 @@ export class BootstrapService implements OnModuleInit {
     if (dirty) {
       await this.docTypesRepo.save(dt);
       this.log.log(`DocumentType "${name}" actualizado/restaurado.`);
-    }
-  }
-
-  private async ensureDiagnosticServiceCatalog() {
-    const categoryCode = 'SC-000001';
-    const serviceCode = 'DIAGNOSIS_FEE';
-    const price = 30;
-
-    let category = await this.serviceCategoryRepo.findOne({
-      where: { code: categoryCode },
-      withDeleted: true,
-    });
-    if (!category) {
-      category = this.serviceCategoryRepo.create({
-        code: categoryCode,
-        name: 'Diagnóstico',
-        description: 'Servicios de diagnóstico',
-        isActive: true,
-      });
-      await this.serviceCategoryRepo.save(category);
-      this.log.log(`ServiceCategory "${categoryCode}" creada.`);
-    } else if (category.deletedAt) {
-      category.deletedAt = null;
-      category.isActive = true;
-      await this.serviceCategoryRepo.save(category);
-      this.log.log(`ServiceCategory "${categoryCode}" restaurada.`);
-    }
-
-    let service = await this.serviceRepo.findOne({
-      where: { code: serviceCode },
-      withDeleted: true,
-    });
-    if (!service) {
-      service = this.serviceRepo.create({
-        code: serviceCode,
-        name: 'Servicio de Diagnóstico',
-        description: 'Costo base por diagnóstico',
-        categoryId: category.id,
-        price,
-        estimatedDurationMinutes: 60,
-        warrantyDays: 0,
-        isActive: true,
-      });
-      await this.serviceRepo.save(service);
-      this.log.log(`Service "${serviceCode}" creado.`);
-    } else if (service.deletedAt) {
-      service.deletedAt = null;
-      service.isActive = true;
-      await this.serviceRepo.save(service);
-      this.log.log(`Service "${serviceCode}" restaurado.`);
-    } else if (service.price !== price) {
-      service.price = price;
-      await this.serviceRepo.save(service);
-      this.log.log(`Service "${serviceCode}" actualizado con precio ${price}.`);
     }
   }
 

@@ -8,28 +8,32 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
+import { ServiceOrderEvent } from '../entities/service-order-event.entity';
+import { ServiceOrderInboxThread } from '../inbox/entities/service-order-inbox-thread.entity';
 import {
   EquipmentType,
   RequestOrigin,
-  ServiceOrderPaymentStatus,
+  ServiceOrderCommercialStatus,
+  ServiceOrderEconomicStatus,
+  ServiceOrderOperativeStatus,
   ServiceOrderPriority,
-  ServiceOrderStatus,
-  ServiceOrderWorkflowStatus,
+  ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
 type FindAllServiceOrdersQuery = {
   page?: number | string;
   limit?: number | string;
   search?: string;
-  status?: string;
-  workflowStatus?: string;
-  itemStatus?: string;
-  paymentStatus?: string;
+  operativeStatus?: string;
+  technicalStatus?: string;
+  commercialStatus?: string;
+  economicStatus?: string;
   priority?: string;
   clientId?: number | string;
   technicianId?: number | string;
@@ -47,7 +51,12 @@ export class ServiceOrderService {
     private readonly clientRepository: Repository<Client>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(ServiceOrderEvent)
+    private readonly eventRepository: Repository<ServiceOrderEvent>,
+    @InjectRepository(ServiceOrderInboxThread)
+    private readonly threadRepository: Repository<ServiceOrderInboxThread>,
     private readonly workflowService: ServiceOrderWorkflowService,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async create(dto: CreateServiceOrderDto, creatorId: number): Promise<ServiceOrder> {
@@ -61,11 +70,10 @@ export class ServiceOrderService {
       dto.serviceType ?? ServiceType.DIAGNOSIS,
     );
 
-    const workflowStatus = this.getInitialWorkflowStatus(dto.serviceType ?? ServiceType.DIAGNOSIS);
-    const status =
-      workflowStatus === ServiceOrderWorkflowStatus.APPROVED_FOR_WORK
-        ? ServiceOrderStatus.ACTIVE
-        : ServiceOrderStatus.OPEN;
+    const technicalStatus = this.getInitialTechnicalStatus(
+      dto.serviceType ?? ServiceType.DIAGNOSIS,
+      !!assignedToTechnicianId,
+    );
 
     const serviceOrder = this.serviceOrderRepository.create({
       code,
@@ -73,9 +81,12 @@ export class ServiceOrderService {
       clientId: client?.id ?? null,
       createdBy: creatorId,
       priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
-      status,
-      workflowStatus,
-      paymentStatus: ServiceOrderPaymentStatus.UNPAID,
+      operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
+      technicalStatus,
+      commercialStatus: ServiceOrderCommercialStatus.NO_REQUIERE,
+      economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
+      montoComprometidoVigente: 0,
+      montoReconciliado: 0,
       assignedToTechnicianId,
       assignedAt: assignedToTechnicianId ? now : null,
       equipmentType: dto.equipmentType,
@@ -94,6 +105,7 @@ export class ServiceOrderService {
     });
 
     this.applyClientSnapshot(serviceOrder, client);
+    this.applyContactSnapshotOverrides(serviceOrder, dto);
     const saved = await this.serviceOrderRepository.save(serviceOrder);
     await this.workflowService.registerInitialAssignment(saved, creatorId);
     return this.findOne(saved.id);
@@ -104,16 +116,25 @@ export class ServiceOrderService {
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const includeDeleted = query.withDeleted === 'true';
 
-    const statuses = this.parseEnumList<ServiceOrderStatus>(query.status, ServiceOrderStatus, 'status');
-    const workflowStatuses = this.parseEnumList<ServiceOrderWorkflowStatus>(
-      query.workflowStatus ?? query.itemStatus,
-      ServiceOrderWorkflowStatus,
-      'workflowStatus',
+    const operativeStatuses = this.parseEnumList<ServiceOrderOperativeStatus>(
+      query.operativeStatus,
+      ServiceOrderOperativeStatus,
+      'operativeStatus',
     );
-    const paymentStatuses = this.parseEnumList<ServiceOrderPaymentStatus>(
-      query.paymentStatus,
-      ServiceOrderPaymentStatus,
-      'paymentStatus',
+    const technicalStatuses = this.parseEnumList<ServiceOrderTechnicalStatus>(
+      query.technicalStatus,
+      ServiceOrderTechnicalStatus,
+      'technicalStatus',
+    );
+    const commercialStatuses = this.parseEnumList<ServiceOrderCommercialStatus>(
+      query.commercialStatus,
+      ServiceOrderCommercialStatus,
+      'commercialStatus',
+    );
+    const economicStatuses = this.parseEnumList<ServiceOrderEconomicStatus>(
+      query.economicStatus,
+      ServiceOrderEconomicStatus,
+      'economicStatus',
     );
     const priorities = this.parseEnumList<ServiceOrderPriority>(query.priority, ServiceOrderPriority, 'priority');
 
@@ -125,14 +146,21 @@ export class ServiceOrderService {
     if (includeDeleted) {
       qb.withDeleted();
     }
-    if (statuses?.length) {
-      qb.andWhere('serviceOrder.status IN (:...statuses)', { statuses });
+    if (operativeStatuses?.length) {
+      qb.andWhere('serviceOrder.operativeStatus IN (:...operativeStatuses)', {
+        operativeStatuses,
+      });
     }
-    if (workflowStatuses?.length) {
-      qb.andWhere('serviceOrder.workflowStatus IN (:...workflowStatuses)', { workflowStatuses });
+    if (technicalStatuses?.length) {
+      qb.andWhere('serviceOrder.technicalStatus IN (:...technicalStatuses)', {
+        technicalStatuses,
+      });
     }
-    if (paymentStatuses?.length) {
-      qb.andWhere('serviceOrder.paymentStatus IN (:...paymentStatuses)', { paymentStatuses });
+    if (commercialStatuses?.length) {
+      qb.andWhere('serviceOrder.commercialStatus IN (:...commercialStatuses)', { commercialStatuses });
+    }
+    if (economicStatuses?.length) {
+      qb.andWhere('serviceOrder.economicStatus IN (:...economicStatuses)', { economicStatuses });
     }
     if (priorities?.length) {
       qb.andWhere('serviceOrder.priority IN (:...priorities)', { priorities });
@@ -194,6 +222,8 @@ export class ServiceOrderService {
 
   async update(id: number, dto: UpdateServiceOrderDto): Promise<ServiceOrder> {
     const serviceOrder = await this.findOne(id, true);
+    const previousOperativeStatus = serviceOrder.operativeStatus;
+    const previousNormalizedClientPhone = this.normalizeComparablePhone(serviceOrder.clientSnapshotPhone);
 
     if (dto.requestOrigin !== undefined || dto.clientId !== undefined) {
       const requestOrigin = dto.requestOrigin ?? serviceOrder.requestOrigin ?? RequestOrigin.CLIENT;
@@ -223,27 +253,51 @@ export class ServiceOrderService {
     }
     if (dto.notes !== undefined) serviceOrder.notes = dto.notes ?? null;
     if (dto.cancellationReason !== undefined) serviceOrder.cancellationReason = dto.cancellationReason ?? null;
-    if (dto.status !== undefined) serviceOrder.status = dto.status;
-    if (dto.workflowStatus !== undefined) serviceOrder.workflowStatus = dto.workflowStatus;
-    if (dto.paymentStatus !== undefined) serviceOrder.paymentStatus = dto.paymentStatus;
-
-    if (dto.isPaid !== undefined) {
-      serviceOrder.isPaid = dto.isPaid;
-      serviceOrder.paymentStatus = dto.isPaid ? ServiceOrderPaymentStatus.PAID : ServiceOrderPaymentStatus.UNPAID;
-      serviceOrder.paidAt = dto.isPaid ? new Date() : null;
+    if ('operativeStatus' in dto) {
+      throw new BadRequestException('operativeStatus ya no se puede modificar por update; usa el workflow correspondiente');
+    }
+    if ('serviceType' in dto) {
+      throw new BadRequestException('serviceType ya no se puede modificar por update; usa un flujo dedicado');
+    }
+    if ('assignedToTechnicianId' in dto) {
+      throw new BadRequestException('assignedToTechnicianId ya no se puede modificar por update; usa assign-technician');
     }
 
-    if (dto.contactName !== undefined) {
-      serviceOrder.clientSnapshotName = this.normalizeOptionalValue(dto.contactName, 150);
+    this.applyContactSnapshotOverrides(serviceOrder, dto);
+
+    const saved = await this.serviceOrderRepository.save(serviceOrder);
+    await this.syncInboxThreadClientPhoneSnapshotIfNeeded(saved.id, previousNormalizedClientPhone, saved.clientSnapshotPhone);
+    if (
+      previousOperativeStatus !== ServiceOrderOperativeStatus.ENTREGADA &&
+      saved.operativeStatus === ServiceOrderOperativeStatus.ENTREGADA
+    ) {
+      await this.messageMatrixService.notifySurveyRequest(saved);
     }
-    if (dto.contactEmail !== undefined) {
-      serviceOrder.clientSnapshotEmail = this.normalizeOptionalValue(dto.contactEmail, 150);
-    }
-    if (dto.contactPhone !== undefined) {
-      serviceOrder.clientSnapshotPhone = this.normalizeOptionalValue(dto.contactPhone, 20);
+    return saved;
+  }
+
+  async markAsDelivered(id: number, actorId?: number): Promise<ServiceOrder> {
+    const serviceOrder = await this.findOne(id, true);
+    const previousOperativeStatus = serviceOrder.operativeStatus;
+
+    if (serviceOrder.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA) {
+      throw new BadRequestException('Solo se pueden entregar ordenes listas para entrega');
     }
 
-    return this.serviceOrderRepository.save(serviceOrder);
+    serviceOrder.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;
+    serviceOrder.deliveredAt = serviceOrder.deliveredAt ?? new Date();
+
+    const saved = await this.serviceOrderRepository.save(serviceOrder);
+    await this.recordOperativeEvent(
+      saved.id,
+      'operative.delivered',
+      previousOperativeStatus,
+      ServiceOrderOperativeStatus.ENTREGADA,
+      actorId,
+      { deliveredAt: saved.deliveredAt?.toISOString() ?? null },
+    );
+    await this.messageMatrixService.notifySurveyRequest(saved);
+    return saved;
   }
 
   async softDelete(id: number) {
@@ -276,11 +330,16 @@ export class ServiceOrderService {
     return { ok: true, message: `${ids.length} service orders restored successfully` };
   }
 
-  private getInitialWorkflowStatus(serviceType: ServiceType): ServiceOrderWorkflowStatus {
-    if ([ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(serviceType)) {
-      return ServiceOrderWorkflowStatus.APPROVED_FOR_WORK;
+  private getInitialTechnicalStatus(serviceType: ServiceType, hasAssignedTechnician: boolean): ServiceOrderTechnicalStatus {
+    if (!hasAssignedTechnician) {
+      return ServiceOrderTechnicalStatus.PENDIENTE_ASIGNACION;
     }
-    return ServiceOrderWorkflowStatus.ASSIGNED;
+
+    if ([ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(serviceType)) {
+      return ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
+    }
+
+    return ServiceOrderTechnicalStatus.ASIGNADA;
   }
 
   private async resolveAssignedTechnicianId(
@@ -341,11 +400,69 @@ export class ServiceOrderService {
     serviceOrder.clientSnapshotEmail = client.email ?? null;
   }
 
+  private applyContactSnapshotOverrides(
+    serviceOrder: ServiceOrder,
+    dto: Pick<CreateServiceOrderDto, 'contactName' | 'contactEmail' | 'contactPhone'>,
+  ): void {
+    if (dto.contactName !== undefined) {
+      serviceOrder.clientSnapshotName = this.normalizeOptionalValue(dto.contactName, 150);
+    }
+    if (dto.contactEmail !== undefined) {
+      serviceOrder.clientSnapshotEmail = this.normalizeOptionalValue(dto.contactEmail, 150);
+    }
+    if (dto.contactPhone !== undefined) {
+      serviceOrder.clientSnapshotPhone = this.normalizeOptionalValue(dto.contactPhone, 20);
+    }
+  }
+
   private normalizeOptionalValue(value: string | null | undefined, maxLength: number): string | null {
     if (value === undefined || value === null) return null;
     const normalized = String(value).trim();
     if (!normalized) return null;
     return normalized.slice(0, maxLength);
+  }
+
+  private normalizeComparablePhone(phone: string | null | undefined): string | null {
+    const normalized = String(phone ?? '')
+      .replace(/\D+/g, '')
+      .trim();
+    return normalized || null;
+  }
+
+  private async syncInboxThreadClientPhoneSnapshotIfNeeded(
+    serviceOrderId: number,
+    previousPhone: string | null,
+    nextPhone: string | null | undefined,
+  ): Promise<void> {
+    const normalizedNextPhone = this.normalizeComparablePhone(nextPhone);
+    if (normalizedNextPhone === previousPhone) {
+      return;
+    }
+
+    await this.threadRepository.update({ serviceOrderId }, { clientPhoneSnapshot: normalizedNextPhone });
+  }
+
+  private async recordOperativeEvent(
+    serviceOrderId: number,
+    eventType: string,
+    fromStatus: string | null,
+    toStatus: string | null,
+    actorId?: number,
+    payloadJson?: Record<string, unknown> | null,
+  ): Promise<void> {
+    await this.eventRepository.save(
+      this.eventRepository.create({
+        serviceOrderId,
+        eventType,
+        axis: 'operativo',
+        capability: 'delivery',
+        fromStatus,
+        toStatus,
+        actorId: actorId ?? null,
+        reason: null,
+        payloadJson: payloadJson ?? null,
+      }),
+    );
   }
 
   private async ensureUser(id: number): Promise<User> {

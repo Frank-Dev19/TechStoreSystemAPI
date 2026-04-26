@@ -8,7 +8,6 @@ import { ServiceOrderAgreementServiceItem } from './entities/service-agreement-s
 import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
 import { ServiceOrdersModule } from '../service-orders.module';
 import { User } from '../../users/entities/user.entity';
-import { Service } from '../../service-catalog/entities/service.entity';
 import { Product } from '../../inventory/entities/product.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 
@@ -21,7 +20,6 @@ import { ServiceOrder } from '../entities/service-order.entity';
       ServiceOrder,
       ServiceOrderDiagnosis,
       User,
-      Service,
       Product,
     ]),
     ServiceOrdersModule,

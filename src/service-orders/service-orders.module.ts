@@ -3,25 +3,29 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../users/entities/user.entity';
 import { ServiceOrderController } from './controllers/service-order.controller';
-import { ServiceOrderPaymentController } from './controllers/service-order-payment.controller';
 import { ServiceOrderDiagnosisController } from './diagnoses/service-order-diagnosis.controller';
 import { ServiceOrderDiagnosis } from './diagnoses/entities/service-order-diagnosis.entity';
 import { NotificationDeliveryAttempt } from './entities/notification-delivery-attempt.entity';
 import { NotificationMessage } from './entities/notification-message.entity';
 import { ServiceOrderEvent } from './entities/service-order-event.entity';
-import { ServiceOrderPayment } from './entities/service-order-payment.entity';
 import { ServiceOrder } from './entities/service-order.entity';
 import { ServiceOrderSaleLink } from './entities/service-order-sale-link.entity';
+import { ServiceOrderInboxController } from './inbox/service-order-inbox.controller';
+import { ServiceOrderInboxAttachment } from './inbox/entities/service-order-inbox-attachment.entity';
+import { ServiceOrderInboxMessage } from './inbox/entities/service-order-inbox-message.entity';
+import { ServiceOrderInboxThread } from './inbox/entities/service-order-inbox-thread.entity';
+import { ServiceOrderInboxChannelService } from './inbox/service-order-inbox-channel.service';
+import { ServiceOrderInboxService } from './inbox/service-order-inbox.service';
 import { ServiceOrderAgreement } from './service-agreements/entities/service-agreement.entity';
 import { TechnicianAssignmentBalance } from './entities/technician-assignment-balance.entity';
-import { Service } from '../service-catalog/entities/service.entity';
 import { Sale } from '../sales/entities/sale.entity';
 import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
+import { ServiceOrderMessageMatrixService } from './services/service-order-message-matrix.service';
 import { ServiceOrderNotificationService } from './services/service-order-notification.service';
-import { ServiceOrderPaymentService } from './services/service-order-payment.service';
 import { ServiceOrderSaleLinkService } from './services/service-order-sale-link.service';
 import { ServiceOrderService } from './services/service-order.service';
 import { ServiceOrderWorkflowService } from './services/service-order-workflow.service';
+import { ServiceOrderTransitionPolicy } from './state-machines/service-order-transition-policy';
 
 @Module({
   imports: [
@@ -29,34 +33,43 @@ import { ServiceOrderWorkflowService } from './services/service-order-workflow.s
       ServiceOrder,
       ServiceOrderSaleLink,
       ServiceOrderAgreement,
-      Service,
       Sale,
       Client,
       User,
       ServiceOrderDiagnosis,
       ServiceOrderEvent,
-      ServiceOrderPayment,
       TechnicianAssignmentBalance,
       NotificationMessage,
       NotificationDeliveryAttempt,
+      ServiceOrderInboxThread,
+      ServiceOrderInboxMessage,
+      ServiceOrderInboxAttachment,
     ]),
   ],
-  controllers: [ServiceOrderController, ServiceOrderDiagnosisController, ServiceOrderPaymentController],
+  controllers: [
+    ServiceOrderController,
+    ServiceOrderDiagnosisController,
+    ServiceOrderInboxController,
+  ],
   providers: [
     ServiceOrderService,
     ServiceOrderWorkflowService,
+    ServiceOrderTransitionPolicy,
     ServiceOrderDiagnosisService,
-    ServiceOrderPaymentService,
     ServiceOrderSaleLinkService,
+    ServiceOrderMessageMatrixService,
     ServiceOrderNotificationService,
+    ServiceOrderInboxService,
+    ServiceOrderInboxChannelService,
   ],
   exports: [
     ServiceOrderService,
     ServiceOrderWorkflowService,
     ServiceOrderDiagnosisService,
-    ServiceOrderPaymentService,
     ServiceOrderSaleLinkService,
+    ServiceOrderMessageMatrixService,
     ServiceOrderNotificationService,
+    ServiceOrderInboxService,
   ],
 })
 export class ServiceOrdersModule {}

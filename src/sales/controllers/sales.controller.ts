@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { SalesService } from '../services/sales.service';
 import { CreateSaleDto } from '../dto/create-sale.dto';
+import { CreateSaleFromServiceOrderDto } from '../dto/create-sale-from-service-order.dto';
 import { UpdateSaleDto } from '../dto/update-sale.dto';
 import { FilterSalesDto } from '../dto/filter-sales.dto';
 import { CancelSaleDto } from '../dto/cancel-sale.dto';
@@ -101,6 +102,12 @@ export class SalesController {
     create(@Body() createSaleDto: CreateSaleDto, @Req() req: any) {
         const user = req.user?.name || 'System';
         return this.salesService.create(createSaleDto, user);
+    }
+
+    @Post('from-service-order')
+    createFromServiceOrder(@Body() createSaleFromServiceOrderDto: CreateSaleFromServiceOrderDto, @Req() req: any) {
+        const user = req.user?.name || 'System';
+        return this.salesService.createFromServiceOrder(createSaleFromServiceOrderDto, user);
     }
 
     // @Permissions('sales.update')
