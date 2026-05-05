@@ -9,7 +9,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, In, IsNull, Not, Repository } from 'typeorm';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import { ClientContactInputDto } from './dto/client-contact-input.dto';
+import { ClientContact } from './entities/client-contact.entity';
 import { Client } from './entities/client.entity';
+import { ClientKind } from './entities/client-kind.enum';
 import { CreateClientDto } from './create-client.dto';
 import { CommitClientImportDto } from './dto/commit-client-import.dto';
 import { ImportClientRowDto } from './dto/import-client-row.dto';
@@ -46,11 +49,22 @@ type ValidatedImportRow = NormalizedImportRow & {
   duplicateExistingClientId?: number;
 };
 
+type NormalizedClientContactInput = {
+  id?: number;
+  name?: string;
+  email?: string;
+  phone?: string;
+  isPrimary: boolean;
+  isActive: boolean;
+};
+
 @Injectable()
 export class ClientService {
   constructor(
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
+    @InjectRepository(ClientContact)
+    private readonly clientContactRepository: Repository<ClientContact>,
     @InjectRepository(DocumentType)
     private readonly documentTypeRepository: Repository<DocumentType>,
   ) {}
@@ -67,6 +81,70 @@ export class ClientService {
       .replace(/\s+/g, '')
       .trim();
     return normalized ? normalized : undefined;
+  }
+
+  private inferClientKind(documentNumber?: string): ClientKind {
+    if (String(documentNumber ?? '').trim().length === 11) {
+      return ClientKind.COMPANY;
+    }
+    return ClientKind.PERSON;
+  }
+
+  private normalizeContactInput(contact: ClientContactInputDto): NormalizedClientContactInput {
+    return {
+      id: contact.id ? Number(contact.id) : undefined,
+      name: this.normalizeOptionalText(contact.name),
+      email: this.normalizeOptionalText(contact.email),
+      phone: this.normalizeOptionalText(contact.phone),
+      isPrimary: Boolean(contact.isPrimary),
+      isActive: contact.isActive !== undefined ? Boolean(contact.isActive) : true,
+    };
+  }
+
+  private async saveClientContacts(
+    client: Client,
+    kind: ClientKind,
+    contacts?: ClientContactInputDto[],
+    contactRepository: Repository<ClientContact> = this.clientContactRepository,
+  ): Promise<ClientContact[]> {
+    if (kind !== ClientKind.COMPANY) {
+      return [];
+    }
+
+    const normalizedContacts = (contacts ?? [])
+      .map((contact) => this.normalizeContactInput(contact))
+      .filter((contact) => !!contact.name);
+
+    if (!normalizedContacts.length) {
+      throw new BadRequestException('Company clients require at least one contact');
+    }
+
+    const contactsToSave = normalizedContacts.map((contact, index) =>
+      contactRepository.create({
+        id: contact.id,
+        clientId: client.id,
+        name: contact.name!,
+        email: contact.email ?? null,
+        phone: contact.phone ?? null,
+        isPrimary: contact.isPrimary,
+        isActive: contact.isActive ?? true,
+      }),
+    );
+
+    let primaryAssigned = false;
+    for (const contact of contactsToSave) {
+      if (contact.isPrimary && !primaryAssigned) {
+        primaryAssigned = true;
+        continue;
+      }
+      contact.isPrimary = false;
+    }
+    if (!primaryAssigned && contactsToSave[0]) {
+      contactsToSave[0].isPrimary = true;
+    }
+
+    await contactRepository.delete({ clientId: client.id });
+    return contactRepository.save(contactsToSave);
   }
 
   private normalizeImportRow(row: ImportClientRowDto): NormalizedImportRow {
@@ -217,12 +295,38 @@ export class ClientService {
       throw new ConflictException('Client already exists');
     }
 
-    const entity = this.clientRepository.create({
-      ...createClientDto,
-      companyId,
+    const kind = createClientDto.kind ?? this.inferClientKind(createClientDto.documentNumber);
+    if (kind === ClientKind.COMPANY) {
+      const normalizedContacts = (createClientDto.contacts ?? [])
+        .map((contact) => this.normalizeContactInput(contact))
+        .filter((contact) => !!contact.name);
+
+      if (!normalizedContacts.length) {
+        throw new BadRequestException('Company clients require at least one contact');
+      }
+    }
+
+    const saved = await this.clientRepository.manager.transaction(async (manager) => {
+      const transactionClientRepository = manager.getRepository(Client);
+      const transactionClientContactRepository = manager.getRepository(ClientContact);
+
+      const entity = transactionClientRepository.create({
+        ...createClientDto,
+        companyId,
+        kind,
+      });
+
+      const createdClient = await transactionClientRepository.save(entity);
+      await this.saveClientContacts(
+        createdClient,
+        kind,
+        createClientDto.contacts,
+        transactionClientContactRepository,
+      );
+      return createdClient;
     });
 
-    return this.clientRepository.save(entity);
+    return this.findOne(saved.id);
   }
 
   async findAll(query: FindAllQuery) {
@@ -285,14 +389,21 @@ export class ClientService {
       skip: (page - 1) * limit,
       take: limit,
       withDeleted: showDeleted,
+      relations: ['documentType', 'contacts'],
     });
 
     return { data, total, page, limit };
   }
 
   async findOne(id: number) {
-    const client = await this.clientRepository.findOne({ where: { id } });
+    const client = await this.clientRepository.findOne({
+      where: { id },
+      relations: ['documentType', 'contacts'],
+    });
     if (!client) throw new NotFoundException(`Client with id ${id} not found`);
+    if (Array.isArray(client.contacts)) {
+      client.contacts = [...client.contacts].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+    }
     return client;
   }
 
@@ -337,8 +448,16 @@ export class ClientService {
       }
     }
 
-    Object.assign(client, updateClientDto);
-    return this.clientRepository.save(client);
+    const kind = updateClientDto.kind ?? client.kind ?? this.inferClientKind(updateClientDto.documentNumber ?? client.documentNumber);
+    const { contacts, ...clientPatch } = updateClientDto;
+    Object.assign(client, { ...clientPatch, kind });
+    const saved = await this.clientRepository.save(client);
+    if (kind === ClientKind.PERSON) {
+      await this.clientContactRepository.delete({ clientId: saved.id });
+    } else if (contacts) {
+      await this.saveClientContacts(saved, kind, contacts);
+    }
+    return this.findOne(saved.id);
   }
 
   async softDelete(id: number) {
@@ -414,6 +533,7 @@ export class ClientService {
       const entities = readyRows.map((row) =>
         this.clientRepository.create({
           companyId,
+          kind: this.inferClientKind(row.documentNumber),
           name: row.name!,
           tradeName: row.tradeName,
           documentTypeId: Number(row.documentTypeId),

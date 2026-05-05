@@ -1,4 +1,18 @@
-import { IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { ClientContactInputDto } from './dto/client-contact-input.dto';
+import { ClientKind } from './entities/client-kind.enum';
 
 export class CreateClientDto {
   @IsNumber()
@@ -13,6 +27,10 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   tradeName?: string;
+
+  @IsEnum(ClientKind)
+  @IsOptional()
+  kind?: ClientKind;
 
   @IsNumber()
   @IsNotEmpty()
@@ -30,8 +48,8 @@ export class CreateClientDto {
   email?: string;
 
   @IsString()
-  @IsNotEmpty()
-  phone: string;
+  @IsOptional()
+  phone?: string;
 
   @IsString()
   @IsOptional()
@@ -44,4 +62,10 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   country?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ClientContactInputDto)
+  @IsOptional()
+  contacts?: ClientContactInputDto[];
 }

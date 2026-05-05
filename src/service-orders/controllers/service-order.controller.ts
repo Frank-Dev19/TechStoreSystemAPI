@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ServiceOrderService } from '../services/service-order.service';
+import { CreateServiceOrderBatchDto } from '../dto/create-service-order-batch.dto';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
@@ -48,6 +49,15 @@ export class ServiceOrderController {
       throw new BadRequestException('Usuario autenticado no encontrado');
     }
     return this.serviceOrderService.create(dto, userId);
+  }
+
+  @Permissions('service-order.create')
+  @Post('batch')
+  createBatch(@Body() dto: CreateServiceOrderBatchDto, @CurrentUser() userId?: number) {
+    if (!userId) {
+      throw new BadRequestException('Usuario autenticado no encontrado');
+    }
+    return this.serviceOrderService.createBatch(dto, userId);
   }
 
   @Permissions('service-order.read')

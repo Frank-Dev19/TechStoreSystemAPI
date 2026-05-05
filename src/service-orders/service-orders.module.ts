@@ -1,5 +1,6 @@
 ﻿import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ClientContact } from '../clients/entities/client-contact.entity';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../users/entities/user.entity';
 import { ServiceOrderController } from './controllers/service-order.controller';
@@ -21,9 +22,12 @@ import { TechnicianAssignmentBalance } from './entities/technician-assignment-ba
 import { Sale } from '../sales/entities/sale.entity';
 import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
 import { ServiceOrderMessageMatrixService } from './services/service-order-message-matrix.service';
+import { ServiceOrderMetricsFactory } from './services/service-order-metrics.factory';
 import { ServiceOrderNotificationService } from './services/service-order-notification.service';
 import { ServiceOrderSaleLinkService } from './services/service-order-sale-link.service';
 import { ServiceOrderService } from './services/service-order.service';
+import { ServiceOrderSlaStageResolverService } from './services/service-order-sla-stage.resolver';
+import { ServiceOrderStageSlaPolicyService } from './services/service-order-stage-sla-policy.service';
 import { ServiceOrderWorkflowService } from './services/service-order-workflow.service';
 import { ServiceOrderTransitionPolicy } from './state-machines/service-order-transition-policy';
 
@@ -35,6 +39,7 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
       ServiceOrderAgreement,
       Sale,
       Client,
+      ClientContact,
       User,
       ServiceOrderDiagnosis,
       ServiceOrderEvent,
@@ -54,6 +59,9 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
   providers: [
     ServiceOrderService,
     ServiceOrderWorkflowService,
+    ServiceOrderSlaStageResolverService,
+    ServiceOrderStageSlaPolicyService,
+    ServiceOrderMetricsFactory,
     ServiceOrderTransitionPolicy,
     ServiceOrderDiagnosisService,
     ServiceOrderSaleLinkService,

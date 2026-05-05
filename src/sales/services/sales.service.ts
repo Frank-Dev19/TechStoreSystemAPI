@@ -27,6 +27,7 @@ import { UpdateSaleDto } from '../dto/update-sale.dto';
 import { FilterSalesDto } from '../dto/filter-sales.dto';
 import { CancelSaleDto } from '../dto/cancel-sale.dto';
 import { SimulateSaleDto } from '../dto/simulate-sale.dto';
+import { CreateSaleFromServiceAgreementsDto } from '../dto/create-sale-from-service-agreements.dto';
 
 import { SalesPricingService } from './sales-pricing.service';
 import { SalesInventoryService } from './sales-inventory.service';
@@ -43,6 +44,7 @@ import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { PaymentMethod } from '../enums/payment-method.enum';
+import { ClientKind } from 'src/clients/entities/client-kind.enum';
 
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
@@ -1087,6 +1089,311 @@ export class SalesService {
     }
   }
 
+  async createFromServiceAgreements(dto: CreateSaleFromServiceAgreementsDto, user: string) {
+    const uniqueServiceOrderIds = Array.from(
+      new Set((dto.serviceOrderIds ?? []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)),
+    );
+    if (!uniqueServiceOrderIds.length) {
+      throw new BadRequestException('Debe seleccionar al menos una orden para facturar');
+    }
+
+    const serviceOrders = await this.serviceOrderRepo.find({
+      where: { id: In(uniqueServiceOrderIds) },
+      relations: ['client'],
+    });
+    if (serviceOrders.length !== uniqueServiceOrderIds.length) {
+      throw new NotFoundException('Una o más órdenes no existen');
+    }
+
+    const distinctClientIds = new Set(serviceOrders.map((order) => Number(order.clientId || 0)));
+    if (distinctClientIds.size > 1) {
+      throw new BadRequestException('Solo se pueden agrupar órdenes del mismo cliente operativo');
+    }
+
+    for (const order of serviceOrders) {
+      if (order.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
+        throw new BadRequestException(`La orden ${order.code} no está pendiente de pago`);
+      }
+    }
+
+    const agreements = await this.agreementRepo.find({
+      where: {
+        serviceOrderId: In(uniqueServiceOrderIds),
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+      },
+      relations: ['productItems', 'serviceItems'],
+      order: { agreedAt: 'DESC', createdAt: 'DESC' },
+    });
+
+    const agreementByOrderId = new Map<number, ServiceOrderAgreement>();
+    for (const agreement of agreements) {
+      const key = Number(agreement.serviceOrderId);
+      if (!agreementByOrderId.has(key)) {
+        agreementByOrderId.set(key, agreement);
+      }
+    }
+
+    const orderDrafts = serviceOrders.map((serviceOrder) => {
+      const agreement = agreementByOrderId.get(Number(serviceOrder.id));
+      if (!agreement) {
+        throw new BadRequestException(`La orden ${serviceOrder.code} no tiene acuerdo confirmado vigente`);
+      }
+      return {
+        serviceOrder,
+        agreement,
+        totalAmount: Number(agreement.totalAmount ?? 0),
+        items: this.buildDraftLinesFromAgreement(serviceOrder, agreement),
+      };
+    });
+
+    for (const draft of orderDrafts) {
+      const existingLink = await this.serviceOrderSaleLinkRepo.findOne({
+        where: {
+          serviceOrderId: Number(draft.serviceOrder.id),
+          agreementId: Number(draft.agreement.id),
+          deletedAt: IsNull(),
+        } as any,
+      });
+      if (existingLink) {
+        throw new BadRequestException(`La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado al acuerdo vigente`);
+      }
+    }
+
+    const groupedTotal = Number(
+      orderDrafts.reduce((sum, draft) => sum + Number(draft.totalAmount ?? 0), 0).toFixed(2),
+    );
+    const totalPayments = Number(
+      (dto.payments ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0).toFixed(2),
+    );
+    if (Math.abs(totalPayments - groupedTotal) > 0.01) {
+      throw new BadRequestException(
+        `El total de pagos (${totalPayments}) no coincide con el total de los acuerdos seleccionados (${groupedTotal})`,
+      );
+    }
+
+    const taxpayer = await this.clientRepo.findOne({
+      where: { id: Number(dto.taxpayerCustomerId) },
+      relations: ['documentType'],
+    });
+    if (!taxpayer) {
+      throw new NotFoundException('Contribuyente fiscal no encontrado');
+    }
+    this.validateTaxpayerAgainstDocumentType(taxpayer, dto.documentType);
+
+    let finalSeries: string | undefined;
+    let finalNumber: string | undefined;
+    let documentSeriesId: number | null = null;
+
+    const nextNumber = await this.documentSeriesService.getNextNumber(dto.companyId, dto.documentType);
+    finalSeries = nextNumber.series;
+    finalNumber = nextNumber.number;
+    const documentSeries = await this.documentSeriesService.getActiveByType(dto.companyId, dto.documentType);
+    documentSeriesId = documentSeries?.id || null;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const cashRegister = await queryRunner.manager.findOne(CashRegister, {
+        where: { companyId: dto.companyId, status: 'OPEN' },
+      });
+      if (!cashRegister) {
+        throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
+      }
+
+      const sale = await queryRunner.manager.save(
+        this.saleRepo.create({
+          companyId: dto.companyId,
+          customerId: Number(taxpayer.id),
+          cashRegisterId: cashRegister.id,
+          saleType: dto.saleType ?? SaleType.SERVICE,
+          documentType: dto.documentType as DocumentType,
+          documentSeriesId,
+          series: finalSeries,
+          number: finalNumber,
+          issueDate: dto.issueDate,
+          dueDate: dto.issueDate,
+          priceListCode: '',
+          applyAutoDiscounts: false,
+          baseSubtotal: groupedTotal,
+          subtotal: groupedTotal,
+          discountTotal: 0,
+          taxRate: 0,
+          taxAmount: 0,
+          total: groupedTotal,
+          status: 'CONFIRMED' as SaleStatus,
+          createdBy: user,
+          confirmedBy: user,
+          observations: dto.observations,
+          billingSnapshotName: taxpayer.name ?? null,
+          billingSnapshotTradeName: taxpayer.tradeName ?? null,
+          billingSnapshotDocumentTypeName: taxpayer.documentType?.name ?? null,
+          billingSnapshotDocumentNumber: taxpayer.documentNumber ?? null,
+          billingSnapshotAddress: taxpayer.address ?? null,
+          billingSnapshotEmail: taxpayer.email ?? null,
+        }),
+      );
+
+      const itemsWithAutoData: Array<{ productId: number; quantity: number; lotId: number | null; serialIds: number[] }> = [];
+      for (const draft of orderDrafts) {
+        for (const item of draft.items) {
+          if (isServiceOrderSaleDraftServiceItem(item)) {
+            await queryRunner.manager.save(
+              this.saleItemRepo.create({
+                saleId: sale.id,
+                itemType: 'SERVICE',
+                productId: null,
+                serviceId: null,
+                serviceCodeSnapshot: item.serviceCodeSnapshot ?? 'TECHNICAL_SERVICE',
+                serviceNameSnapshot: item.serviceNameSnapshot ?? 'Servicio técnico',
+                descriptionSnapshot: item.description ?? item.serviceNameSnapshot ?? 'Servicio técnico',
+                lotId: null,
+                baseUnitPrice: item.baseUnitPrice,
+                finalUnitPrice: item.finalUnitPrice,
+                quantity: item.quantity,
+                discountAmount: 0,
+                taxAmount: 0,
+                lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
+                serialCount: 0,
+                isComboItem: false,
+                comboId: null,
+              }),
+            );
+            continue;
+          }
+
+          if (!isServiceOrderSaleDraftProductItem(item) || !item.productId) {
+            throw new BadRequestException('Cada línea de producto requiere productId');
+          }
+
+          const lotsData = await this.getAutoLotAndSerials(item.productId, item.quantity);
+          for (const lotData of lotsData) {
+            itemsWithAutoData.push({
+              productId: item.productId,
+              quantity: lotData.quantityFromThisLot,
+              lotId: lotData.lotId,
+              serialIds: lotData.serialIds,
+            });
+          }
+
+          const firstLotData = lotsData[0];
+          await queryRunner.manager.save(
+            this.saleItemRepo.create({
+              saleId: sale.id,
+              itemType: 'PRODUCT',
+              productId: item.productId,
+              serviceId: null,
+              serviceCodeSnapshot: null,
+              serviceNameSnapshot: null,
+              descriptionSnapshot: item.description,
+              lotId: firstLotData?.lotId ?? null,
+              baseUnitPrice: item.baseUnitPrice,
+              finalUnitPrice: item.finalUnitPrice,
+              quantity: item.quantity,
+              discountAmount: 0,
+              taxAmount: 0,
+              lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
+              serialCount: firstLotData?.serialIds?.length || 0,
+              isComboItem: false,
+              comboId: null,
+            }),
+          );
+        }
+      }
+
+      let currentBalance = Number(cashRegister.currentBalance ?? 0);
+      for (const paymentDto of dto.payments ?? []) {
+        await queryRunner.manager.save(
+          this.salePaymentRepo.create({
+            saleId: sale.id,
+            method: paymentDto.method as PaymentMethod,
+            amount: paymentDto.amount,
+            reference: paymentDto.reference,
+            bankName: paymentDto.bankName,
+            cardType: paymentDto.cardType,
+            paymentDate: paymentDto.paymentDate ? new Date(paymentDto.paymentDate) : new Date(),
+          }),
+        );
+
+        const paymentAmount = Number(paymentDto.amount ?? 0);
+        switch (paymentDto.method) {
+          case 'CASH':
+            currentBalance += paymentAmount;
+            cashRegister.currentBalance = currentBalance;
+            cashRegister.expectedBalance = Number(cashRegister.expectedBalance ?? 0) + paymentAmount;
+            cashRegister.totalCash = Number(cashRegister.totalCash ?? 0) + paymentAmount;
+            break;
+          case 'CARD':
+            cashRegister.totalCard = Number(cashRegister.totalCard ?? 0) + paymentAmount;
+            break;
+          case 'TRANSFER':
+            cashRegister.totalTransfer = Number(cashRegister.totalTransfer ?? 0) + paymentAmount;
+            break;
+          case 'YAPE':
+            cashRegister.totalYape = Number(cashRegister.totalYape ?? 0) + paymentAmount;
+            break;
+          case 'PLIN':
+            cashRegister.totalPlin = Number(cashRegister.totalPlin ?? 0) + paymentAmount;
+            break;
+          case 'CREDIT':
+            break;
+        }
+
+        await queryRunner.manager.save(
+          this.transactionRepo.create({
+            cashRegisterId: cashRegister.id,
+            saleId: sale.id,
+            type: 'SALE_PAYMENT',
+            subtype: paymentDto.method as any,
+            amount: paymentAmount,
+            balanceAfter: currentBalance,
+            description: `Venta agrupada por acuerdos ${orderDrafts.map((draft) => draft.serviceOrder.code).join(', ')}`,
+            reference: `${finalSeries}-${finalNumber}`,
+            recordedBy: user,
+            recordedAt: new Date(),
+          } as any),
+        );
+      }
+
+      await queryRunner.manager.save(cashRegister);
+
+      for (const draft of orderDrafts) {
+        await queryRunner.manager.save(
+          this.serviceOrderSaleLinkRepo.create({
+            saleId: Number(sale.id),
+            serviceOrderId: Number(draft.serviceOrder.id),
+            agreementId: Number(draft.agreement.id),
+            linkedAmount: draft.totalAmount,
+            linkedBy: user,
+            linkedAt: new Date(),
+          }),
+        );
+        await queryRunner.manager.save(
+          ServiceOrder,
+          this.serviceOrderRepo.create({
+            ...draft.serviceOrder,
+            montoComprometidoVigente: draft.totalAmount,
+            montoReconciliado: draft.totalAmount,
+            economicStatus: ServiceOrderEconomicStatus.TOTAL,
+          }),
+        );
+      }
+
+      if (itemsWithAutoData.length) {
+        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user);
+      }
+
+      await queryRunner.commitTransaction();
+      return this.findOne(sale.id);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   // =========================
   // LISTAR VENTAS
   // =========================
@@ -1166,6 +1473,41 @@ export class SalesService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  private buildDraftLinesFromAgreement(
+    serviceOrder: ServiceOrder,
+    agreement: ServiceOrderAgreement,
+  ): ServiceOrderSaleDraftLine[] {
+    const orderLabel = `Orden ${serviceOrder.code}`;
+    return [
+      ...(agreement.productItems ?? []).map((item) => ({
+        itemType: SaleItemKindDto.PRODUCT as const,
+        productId: item.productId,
+        quantity: Number(item.quantity ?? 0),
+        baseUnitPrice: Number(item.unitPrice ?? 0),
+        finalUnitPrice: Number(item.unitPrice ?? 0),
+        description: `${item.productNameSnapshot} - ${orderLabel}`,
+      })),
+      ...(agreement.serviceItems ?? []).map((item) => ({
+        itemType: SaleItemKindDto.SERVICE as const,
+        quantity: 1,
+        baseUnitPrice: Number(item.unitPrice ?? 0),
+        finalUnitPrice: Number(item.unitPrice ?? 0),
+        description: `Servicio técnico - ${orderLabel}`,
+        serviceCodeSnapshot: item.serviceCodeSnapshot,
+        serviceNameSnapshot: item.serviceNameSnapshot,
+      })),
+    ];
+  }
+
+  private validateTaxpayerAgainstDocumentType(taxpayer: Client, documentType: DocumentType): void {
+    if (documentType === DocumentType.FACTURA && taxpayer.kind !== ClientKind.COMPANY) {
+      throw new BadRequestException('Una factura requiere un contribuyente empresa');
+    }
+    if (documentType === DocumentType.BOLETA && taxpayer.kind !== ClientKind.PERSON) {
+      throw new BadRequestException('Una boleta requiere un contribuyente persona natural');
+    }
   }
 
   // =========================

@@ -11,6 +11,7 @@ import { ServiceOrderSaleLink } from 'src/service-orders/entities/service-order-
 import { ServiceOrderAgreement } from 'src/service-orders/service-agreements/entities/service-agreement.entity';
 import { ServiceOrderAgreementStatus } from 'src/service-orders/service-agreements/service-agreement-status.enum';
 import { ServiceOrderEconomicStatus } from 'src/service-orders/enums';
+import { ClientKind } from 'src/clients/entities/client-kind.enum';
 
 type MockRepo = {
   findOne: jest.Mock;
@@ -304,5 +305,126 @@ describe('SalesService', () => {
     ).rejects.toThrow('La orden ya tiene un comprobante autoligado para el acuerdo vigente');
 
     expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+  });
+
+  it('crea una venta agrupada desde múltiples órdenes del mismo cliente con snapshot fiscal', async () => {
+    const serviceOrders = [
+      { id: 7, code: 'SO-001', clientId: 25, economicStatus: ServiceOrderEconomicStatus.PENDIENTE, montoComprometidoVigente: 120 } as any,
+      { id: 8, code: 'SO-002', clientId: 25, economicStatus: ServiceOrderEconomicStatus.PENDIENTE, montoComprometidoVigente: 80 } as any,
+    ];
+    const agreements = [
+      {
+        id: 44,
+        serviceOrderId: 7,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        totalAmount: 120,
+        productItems: [],
+        serviceItems: [{ serviceCodeSnapshot: 'TECHNICAL_SERVICE', serviceNameSnapshot: 'Servicio técnico', unitPrice: 120 }],
+      } as any,
+      {
+        id: 45,
+        serviceOrderId: 8,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        totalAmount: 80,
+        productItems: [],
+        serviceItems: [{ serviceCodeSnapshot: 'TECHNICAL_SERVICE', serviceNameSnapshot: 'Servicio técnico', unitPrice: 80 }],
+      } as any,
+    ];
+    const taxpayer = {
+      id: 99,
+      kind: ClientKind.COMPANY,
+      name: 'Universidad Nacional de Trujillo',
+      tradeName: 'UNT',
+      documentNumber: '20172557628',
+      address: 'Av. Juan Pablo II',
+      email: 'facturacion@unt.pe',
+      documentType: { name: 'RUC' },
+    } as any;
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 3,
+          companyId: 1,
+          status: 'OPEN',
+          currentBalance: 0,
+          expectedBalance: 0,
+          totalCash: 0,
+          totalCard: 0,
+          totalTransfer: 0,
+          totalYape: 0,
+          totalPlin: 0,
+        }),
+        save: jest.fn().mockImplementation(async (entity) => {
+          if ((entity as any).saleType) return { ...entity, id: 700 };
+          return entity;
+        }),
+      },
+    };
+
+    serviceOrderRepo.find.mockResolvedValue(serviceOrders);
+    agreementRepo.find.mockResolvedValue(agreements);
+    clientRepo.findOne.mockResolvedValue(taxpayer);
+    serviceOrderSaleLinkRepo.findOne.mockResolvedValue(null);
+    dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
+    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'F001', number: '000111' });
+    documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
+    salesInventory.registerSaleMovement = jest.fn().mockResolvedValue(undefined);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 700, total: 200 } as any);
+
+    const result = await service.createFromServiceAgreements(
+      {
+        serviceOrderIds: [7, 8],
+        companyId: 1,
+        taxpayerCustomerId: 99,
+        documentType: DocumentType.FACTURA,
+        issueDate: '2026-05-01',
+        payments: [{ method: PaymentMethod.CASH, amount: 200 }],
+      } as any,
+      'tester',
+    );
+
+    expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    expect(queryRunner.manager.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: 99,
+        billingSnapshotName: 'Universidad Nacional de Trujillo',
+        billingSnapshotTradeName: 'UNT',
+        billingSnapshotDocumentNumber: '20172557628',
+        total: 200,
+      }),
+    );
+    expect(queryRunner.manager.save).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceOrderId: 7, agreementId: 44, linkedAmount: 120, saleId: 700 }),
+    );
+    expect(queryRunner.manager.save).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceOrderId: 8, agreementId: 45, linkedAmount: 80, saleId: 700 }),
+    );
+    expect(result).toEqual(expect.objectContaining({ id: 700, total: 200 }));
+  });
+
+  it('rechaza venta agrupada cuando intenta facturar órdenes de clientes distintos', async () => {
+    serviceOrderRepo.find.mockResolvedValue([
+      { id: 7, code: 'SO-001', clientId: 25, economicStatus: ServiceOrderEconomicStatus.PENDIENTE } as any,
+      { id: 8, code: 'SO-002', clientId: 30, economicStatus: ServiceOrderEconomicStatus.PENDIENTE } as any,
+    ]);
+
+    await expect(
+      service.createFromServiceAgreements(
+        {
+          serviceOrderIds: [7, 8],
+          companyId: 1,
+          taxpayerCustomerId: 99,
+          documentType: DocumentType.BOLETA,
+          issueDate: '2026-05-01',
+          payments: [{ method: PaymentMethod.CASH, amount: 200 }],
+        } as any,
+        'tester',
+      ),
+    ).rejects.toThrow('Solo se pueden agrupar órdenes del mismo cliente operativo');
   });
 });

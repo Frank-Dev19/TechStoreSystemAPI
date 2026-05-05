@@ -10,6 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Client } from '../../clients/entities/client.entity';
+import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { User } from '../../users/entities/user.entity';
 import {
   EquipmentType,
@@ -126,6 +127,13 @@ export class ServiceOrder {
 
   @Column({ name: 'client_id', type: 'bigint', unsigned: true, nullable: true })
   clientId: number | null;
+
+  @ManyToOne(() => ClientContact, { eager: false, nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'client_contact_id' })
+  clientContact: ClientContact | null;
+
+  @Column({ name: 'client_contact_id', type: 'bigint', unsigned: true, nullable: true })
+  clientContactId: number | null;
 
   @Column({ name: 'client_snapshot_name', type: 'varchar', length: 150, nullable: true })
   clientSnapshotName: string | null;

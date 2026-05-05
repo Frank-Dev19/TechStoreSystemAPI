@@ -74,14 +74,14 @@ export class AuthService {
         };
         return this.jwt.sign(payload, {
             secret: this.cfg.get<string>('JWT_ACCESS_SECRET'),
-            expiresIn: this.cfg.get<string>('JWT_ACCESS_TTL') || '59m',
+            expiresIn: (this.cfg.get<string>('JWT_ACCESS_TTL') || '59m') as any,
         });
     }
 
     private signRefresh(userId: number, jti: string) {
         return this.jwt.sign(
             { sub: userId, jti },
-            { secret: this.cfg.get<string>('JWT_REFRESH_SECRET'), expiresIn: this.cfg.get<string>('JWT_REFRESH_TTL') || '30d' },
+            { secret: this.cfg.get<string>('JWT_REFRESH_SECRET'), expiresIn: (this.cfg.get<string>('JWT_REFRESH_TTL') || '30d') as any },
         );
     }
 

@@ -42,6 +42,24 @@ export class Sale {
     @JoinColumn({ name: 'customer_id' })
     customer: Client;
 
+    @Column({ name: 'billing_snapshot_name', type: 'varchar', length: 150, nullable: true })
+    billingSnapshotName?: string | null;
+
+    @Column({ name: 'billing_snapshot_trade_name', type: 'varchar', length: 150, nullable: true })
+    billingSnapshotTradeName?: string | null;
+
+    @Column({ name: 'billing_snapshot_document_type_name', type: 'varchar', length: 120, nullable: true })
+    billingSnapshotDocumentTypeName?: string | null;
+
+    @Column({ name: 'billing_snapshot_document_number', type: 'varchar', length: 20, nullable: true })
+    billingSnapshotDocumentNumber?: string | null;
+
+    @Column({ name: 'billing_snapshot_address', type: 'varchar', length: 255, nullable: true })
+    billingSnapshotAddress?: string | null;
+
+    @Column({ name: 'billing_snapshot_email', type: 'varchar', length: 150, nullable: true })
+    billingSnapshotEmail?: string | null;
+
     // Caja Registradora
     @Column({ name: 'cash_register_id', nullable: true })
     cashRegisterId?: number | null;

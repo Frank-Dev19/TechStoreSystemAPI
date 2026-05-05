@@ -14,6 +14,7 @@ describe('ServiceOrderController', () => {
   beforeEach(() => {
     serviceOrderService = {
       create: jest.fn(),
+      createBatch: jest.fn(),
       findAll: jest.fn(),
       findOne: jest.fn(),
       update: jest.fn(),
@@ -51,6 +52,31 @@ describe('ServiceOrderController', () => {
     await controller.create({ initialIssue: 'No enciende' } as any, 22);
 
     expect(serviceOrderService.create).toHaveBeenCalledWith(expect.objectContaining({ initialIssue: 'No enciende' }), 22);
+  });
+
+  it('rechaza createBatch si falta el usuario autenticado', () => {
+    expect(() => controller.createBatch({ sharedContext: {}, orders: [] } as any, undefined)).toThrow(BadRequestException);
+    expect(serviceOrderService.createBatch).not.toHaveBeenCalled();
+  });
+
+  it('delegates createBatch con dto y userId', async () => {
+    serviceOrderService.createBatch.mockResolvedValue({ createdOrders: [{ id: 1 }] } as any);
+
+    await controller.createBatch(
+      {
+        sharedContext: { requestOrigin: 'CLIENT' as any, clientId: 22 },
+        orders: [{ equipmentType: 'LAPTOP' as any, initialIssue: 'No enciende' }],
+      } as any,
+      22,
+    );
+
+    expect(serviceOrderService.createBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sharedContext: expect.objectContaining({ clientId: 22 }),
+        orders: [expect.objectContaining({ initialIssue: 'No enciende' })],
+      }),
+      22,
+    );
   });
 
   it('normaliza serviceOrderIds validos en billing-links/by-orders', async () => {

@@ -6,10 +6,13 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { DocumentType } from '../../catalogs/document-types/entities/document-type.entity';
+import { ClientContact } from './client-contact.entity';
+import { ClientKind } from './client-kind.enum';
 
 @Entity({ name: 'clients' })
 @Index(['companyId', 'documentTypeId', 'documentNumber'], { unique: true })
@@ -25,6 +28,14 @@ export class Client {
 
   @Column({ name: 'trade_name', length: 150, nullable: true })
   tradeName?: string;
+
+  @Column({
+    name: 'kind',
+    type: 'enum',
+    enum: ClientKind,
+    default: ClientKind.PERSON,
+  })
+  kind: ClientKind;
 
   @Column({ name: 'document_type_id', type: 'bigint', unsigned: true })
   documentTypeId: number;
@@ -50,6 +61,12 @@ export class Client {
 
   @Column({ name: 'country', length: 150, nullable: true })
   country?: string;
+
+  @OneToMany(() => ClientContact, (contact) => contact.client, {
+    eager: false,
+    cascade: false,
+  })
+  contacts?: ClientContact[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

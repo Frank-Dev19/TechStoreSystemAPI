@@ -25,6 +25,11 @@ export class CreateServiceOrderDto {
   @IsOptional()
   clientId?: number;
 
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  clientContactId?: number;
+
   @IsEnum(ServiceOrderPriority)
   @IsOptional()
   priority?: ServiceOrderPriority;

@@ -6,7 +6,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
+import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { Client } from '../../clients/entities/client.entity';
+import { ClientKind } from '../../clients/entities/client-kind.enum';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrderInboxThread } from '../inbox/entities/service-order-inbox-thread.entity';
@@ -20,9 +22,17 @@ import {
   ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
+import {
+  CreateServiceOrderBatchDto,
+  CreateServiceOrderBatchEntryDto,
+  CreateServiceOrderBatchSharedContextDto,
+} from '../dto/create-service-order-batch.dto';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
+import { ServiceOrderSlaDto } from '../dto/service-order-sla.dto';
+import { ServiceOrderTimeMetricsDto } from '../dto/service-order-time-metrics.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
@@ -42,6 +52,11 @@ type FindAllServiceOrdersQuery = {
   to?: string;
 };
 
+type ServiceOrderWithMetrics = ServiceOrder & {
+  sla: ServiceOrderSlaDto;
+  timeMetrics: ServiceOrderTimeMetricsDto;
+};
+
 @Injectable()
 export class ServiceOrderService {
   constructor(
@@ -49,6 +64,8 @@ export class ServiceOrderService {
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
+    @InjectRepository(ClientContact)
+    private readonly clientContactRepository: Repository<ClientContact>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     @InjectRepository(ServiceOrderEvent)
@@ -57,12 +74,14 @@ export class ServiceOrderService {
     private readonly threadRepository: Repository<ServiceOrderInboxThread>,
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly metricsFactory: ServiceOrderMetricsFactory,
   ) {}
 
-  async create(dto: CreateServiceOrderDto, creatorId: number): Promise<ServiceOrder> {
+  async create(dto: CreateServiceOrderDto, creatorId: number): Promise<ServiceOrderWithMetrics> {
     await this.ensureUser(creatorId);
     const requestOrigin = dto.requestOrigin ?? RequestOrigin.CLIENT;
     const client = await this.resolveClientForRequest(dto.clientId, requestOrigin);
+    const clientContact = await this.resolveClientContactForOrder(client, dto.clientContactId);
     const code = await this.generateUniqueCode();
     const now = new Date();
     const assignedToTechnicianId = await this.resolveAssignedTechnicianId(
@@ -79,6 +98,7 @@ export class ServiceOrderService {
       code,
       requestOrigin,
       clientId: client?.id ?? null,
+      clientContactId: clientContact?.id ?? null,
       createdBy: creatorId,
       priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
       operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
@@ -105,10 +125,28 @@ export class ServiceOrderService {
     });
 
     this.applyClientSnapshot(serviceOrder, client);
-    this.applyContactSnapshotOverrides(serviceOrder, dto);
+    this.applyContactSnapshotOverrides(serviceOrder, dto, clientContact);
     const saved = await this.serviceOrderRepository.save(serviceOrder);
     await this.workflowService.registerInitialAssignment(saved, creatorId);
     return this.findOne(saved.id);
+  }
+
+  async createBatch(
+    dto: CreateServiceOrderBatchDto,
+    creatorId: number,
+  ): Promise<{ createdOrders: ServiceOrderWithMetrics[] }> {
+    if (!dto.orders?.length) {
+      throw new BadRequestException('At least one order is required');
+    }
+
+    await this.preflightBatchCreateOrThrow(dto, creatorId);
+
+    const createdOrders: ServiceOrderWithMetrics[] = [];
+    for (const orderEntry of dto.orders) {
+      createdOrders.push(await this.create(this.mergeBatchEntry(dto.sharedContext, orderEntry), creatorId));
+    }
+
+    return { createdOrders };
   }
 
   async findAll(query: FindAllServiceOrdersQuery) {
@@ -203,10 +241,10 @@ export class ServiceOrderService {
 
     qb.orderBy('serviceOrder.createdAt', 'DESC').skip((page - 1) * limit).take(limit);
     const [data, total] = await qb.getManyAndCount();
-    return { data, total, page, limit };
+    return { data: data.map((serviceOrder) => this.enrichWithMetrics(serviceOrder)), total, page, limit };
   }
 
-  async findOne(id: number, withDeleted = false): Promise<ServiceOrder> {
+  async findOne(id: number, withDeleted = false): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.serviceOrderRepository.findOne({
       where: { id },
       relations: ['assignedTechnician', 'client'],
@@ -217,10 +255,10 @@ export class ServiceOrderService {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);
     }
 
-    return serviceOrder;
+    return this.enrichWithMetrics(serviceOrder);
   }
 
-  async update(id: number, dto: UpdateServiceOrderDto): Promise<ServiceOrder> {
+  async update(id: number, dto: UpdateServiceOrderDto): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.findOne(id, true);
     const previousOperativeStatus = serviceOrder.operativeStatus;
     const previousNormalizedClientPhone = this.normalizeComparablePhone(serviceOrder.clientSnapshotPhone);
@@ -233,8 +271,22 @@ export class ServiceOrderService {
         requestOrigin,
       );
       serviceOrder.clientId = client?.id ?? null;
+      serviceOrder.clientContactId = null;
       this.applyClientSnapshot(serviceOrder, client);
     }
+
+    const effectiveClient =
+      serviceOrder.clientId != null
+        ? await this.clientRepository.findOne({
+            where: { id: serviceOrder.clientId },
+            relations: ['documentType', 'contacts'],
+          })
+        : null;
+    const clientContact = await this.resolveClientContactForOrder(
+      effectiveClient,
+      dto.clientContactId ?? serviceOrder.clientContactId ?? undefined,
+    );
+    serviceOrder.clientContactId = clientContact?.id ?? null;
 
     if (dto.priority !== undefined) serviceOrder.priority = dto.priority;
     if (dto.equipmentType !== undefined) serviceOrder.equipmentType = dto.equipmentType;
@@ -263,7 +315,7 @@ export class ServiceOrderService {
       throw new BadRequestException('assignedToTechnicianId ya no se puede modificar por update; usa assign-technician');
     }
 
-    this.applyContactSnapshotOverrides(serviceOrder, dto);
+    this.applyContactSnapshotOverrides(serviceOrder, dto, clientContact);
 
     const saved = await this.serviceOrderRepository.save(serviceOrder);
     await this.syncInboxThreadClientPhoneSnapshotIfNeeded(saved.id, previousNormalizedClientPhone, saved.clientSnapshotPhone);
@@ -273,15 +325,21 @@ export class ServiceOrderService {
     ) {
       await this.messageMatrixService.notifySurveyRequest(saved);
     }
-    return saved;
+    return this.enrichWithMetrics(saved);
   }
 
-  async markAsDelivered(id: number, actorId?: number): Promise<ServiceOrder> {
+  async markAsDelivered(id: number, actorId?: number): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.findOne(id, true);
     const previousOperativeStatus = serviceOrder.operativeStatus;
 
     if (serviceOrder.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA) {
       throw new BadRequestException('Solo se pueden entregar ordenes listas para entrega');
+    }
+
+    const totalCommitted = Number(serviceOrder.montoComprometidoVigente ?? 0);
+    const totalReconciled = Number(serviceOrder.montoReconciliado ?? 0);
+    if (totalCommitted > 0 && totalReconciled + 0.01 < totalCommitted) {
+      throw new BadRequestException('La orden no puede entregarse hasta cubrir totalmente su acuerdo vigente');
     }
 
     serviceOrder.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;
@@ -297,7 +355,7 @@ export class ServiceOrderService {
       { deliveredAt: saved.deliveredAt?.toISOString() ?? null },
     );
     await this.messageMatrixService.notifySurveyRequest(saved);
-    return saved;
+    return this.enrichWithMetrics(saved);
   }
 
   async softDelete(id: number) {
@@ -403,7 +461,16 @@ export class ServiceOrderService {
   private applyContactSnapshotOverrides(
     serviceOrder: ServiceOrder,
     dto: Pick<CreateServiceOrderDto, 'contactName' | 'contactEmail' | 'contactPhone'>,
+    clientContact?: ClientContact | null,
   ): void {
+    if (clientContact) {
+      serviceOrder.clientSnapshotName = clientContact.name ?? serviceOrder.clientSnapshotName;
+      serviceOrder.clientSnapshotEmail = clientContact.email ?? null;
+      serviceOrder.clientSnapshotPhone = clientContact.phone ?? null;
+    } else if (!serviceOrder.clientId) {
+      serviceOrder.clientContactId = null;
+    }
+
     if (dto.contactName !== undefined) {
       serviceOrder.clientSnapshotName = this.normalizeOptionalValue(dto.contactName, 150);
     }
@@ -413,6 +480,91 @@ export class ServiceOrderService {
     if (dto.contactPhone !== undefined) {
       serviceOrder.clientSnapshotPhone = this.normalizeOptionalValue(dto.contactPhone, 20);
     }
+  }
+
+  private mergeBatchEntry(
+    sharedContext: CreateServiceOrderBatchSharedContextDto,
+    orderEntry: CreateServiceOrderBatchEntryDto,
+  ): CreateServiceOrderDto {
+    return {
+      requestOrigin: sharedContext.requestOrigin,
+      clientId: sharedContext.clientId,
+      clientContactId: sharedContext.clientContactId,
+      priority: sharedContext.priority,
+      assignedToTechnicianId: sharedContext.assignedToTechnicianId,
+      contactName: sharedContext.contactName,
+      contactEmail: sharedContext.contactEmail,
+      contactPhone: sharedContext.contactPhone,
+      equipmentType: orderEntry.equipmentType,
+      equipmentTypeOther: orderEntry.equipmentTypeOther,
+      brand: orderEntry.brand,
+      model: orderEntry.model,
+      serialNumber: orderEntry.serialNumber,
+      initialIssue: orderEntry.initialIssue,
+      accessories: orderEntry.accessories,
+      serviceType: orderEntry.serviceType,
+      estimatedRepairHours: orderEntry.estimatedRepairHours,
+      estimatedDeliveryDate: orderEntry.estimatedDeliveryDate,
+      notes: orderEntry.notes,
+    };
+  }
+
+  private async preflightBatchCreateOrThrow(
+    dto: CreateServiceOrderBatchDto,
+    creatorId: number,
+  ): Promise<void> {
+    await this.ensureUser(creatorId);
+
+    const requestOrigin = dto.sharedContext.requestOrigin ?? RequestOrigin.CLIENT;
+    const client = await this.resolveClientForRequest(dto.sharedContext.clientId, requestOrigin);
+    await this.resolveClientContactForOrder(client, dto.sharedContext.clientContactId);
+
+    if (dto.sharedContext.assignedToTechnicianId) {
+      await this.workflowService.ensureTechnicianAvailable(dto.sharedContext.assignedToTechnicianId);
+      return;
+    }
+
+    const checkedServiceTypes = new Set<ServiceType>();
+    for (const orderEntry of dto.orders) {
+      const serviceType = orderEntry.serviceType ?? ServiceType.DIAGNOSIS;
+      if (checkedServiceTypes.has(serviceType)) {
+        continue;
+      }
+      await this.resolveAssignedTechnicianId(undefined, serviceType);
+      checkedServiceTypes.add(serviceType);
+    }
+  }
+
+  private async resolveClientContactForOrder(
+    client: Client | null,
+    clientContactId?: number | null,
+  ): Promise<ClientContact | null> {
+    if (!client || client.kind !== ClientKind.COMPANY) {
+      return null;
+    }
+
+    const normalizedContactId = Number(clientContactId || 0) || null;
+    if (normalizedContactId) {
+      const selectedContact = await this.clientContactRepository.findOne({
+        where: { id: normalizedContactId, clientId: client.id },
+      });
+      if (!selectedContact) {
+        throw new BadRequestException('clientContactId does not belong to the selected client');
+      }
+      return selectedContact;
+    }
+
+    const primaryContact = await this.clientContactRepository.findOne({
+      where: { clientId: client.id, isPrimary: true, isActive: true },
+    });
+    if (primaryContact) {
+      return primaryContact;
+    }
+
+    return this.clientContactRepository.findOne({
+      where: { clientId: client.id, isActive: true },
+      order: { id: 'ASC' },
+    });
   }
 
   private normalizeOptionalValue(value: string | null | undefined, maxLength: number): string | null {
@@ -568,5 +720,13 @@ export class ServiceOrderService {
     }
 
     return `${prefix}${String(current + 1).padStart(4, '0')}`;
+  }
+
+  private enrichWithMetrics(serviceOrder: ServiceOrder): ServiceOrderWithMetrics {
+    const metrics = this.metricsFactory.build(serviceOrder);
+    return Object.assign(serviceOrder, {
+      sla: metrics.sla,
+      timeMetrics: metrics.timeMetrics,
+    }) as ServiceOrderWithMetrics;
   }
 }

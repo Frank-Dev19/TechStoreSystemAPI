@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
@@ -14,6 +15,7 @@ import {
   ServiceType,
 } from '../enums';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
+import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
 import { ServiceOrderService } from './service-order.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
@@ -100,15 +102,18 @@ describe('ServiceOrderService', () => {
   let service: ServiceOrderService;
   let serviceOrderRepository: MockRepo<ServiceOrder>;
   let clientRepository: MockRepo<Client>;
+  let clientContactRepository: MockRepo<ClientContact>;
   let userRepository: MockRepo<User>;
   let eventRepository: MockRepo<ServiceOrderEvent>;
   let threadRepository: MockRepo;
   let workflowService: jest.Mocked<ServiceOrderWorkflowService>;
   let messageMatrixService: jest.Mocked<ServiceOrderMessageMatrixService>;
+  let metricsFactory: jest.Mocked<ServiceOrderMetricsFactory>;
 
   beforeEach(() => {
     serviceOrderRepository = createMockRepo<ServiceOrder>();
     clientRepository = createMockRepo<Client>();
+    clientContactRepository = createMockRepo<ClientContact>();
     userRepository = createMockRepo<User>();
     eventRepository = createMockRepo<ServiceOrderEvent>();
     threadRepository = createMockRepo();
@@ -123,15 +128,166 @@ describe('ServiceOrderService', () => {
       notifySurveyRequest: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
 
+    metricsFactory = {
+      build: jest.fn((serviceOrder: ServiceOrder) => ({
+        sla: {
+          stage: 'service',
+          targetMinutes: 180,
+          elapsedMinutes: 60,
+          remainingMinutes: 120,
+          breached: false,
+        },
+        timeMetrics: {
+          timeToDiagnosis: { valueMinutes: 120, isComputable: true, missingTimestamps: [] },
+          timeToServiceStart: { valueMinutes: 240, isComputable: true, missingTimestamps: [] },
+          timeToService: { valueMinutes: 150, isComputable: true, missingTimestamps: [] },
+          timeToResolution: { valueMinutes: null, isComputable: false, missingTimestamps: ['resolvedAt'] },
+          timeToDelivery: { valueMinutes: null, isComputable: false, missingTimestamps: ['deliveredAt'] },
+        },
+      })),
+    } as unknown as jest.Mocked<ServiceOrderMetricsFactory>;
+
     service = new ServiceOrderService(
       serviceOrderRepository as any,
       clientRepository as any,
+      clientContactRepository as any,
       userRepository as any,
       eventRepository as any,
       threadRepository as any,
       workflowService,
       messageMatrixService,
+      metricsFactory,
     );
+  });
+
+  it('crea muchas ordenes desde un batch reutilizando el contexto compartido', async () => {
+    const firstOrder = createServiceOrder({ id: 201, code: 'SO-BATCH-001', clientId: 30, clientContactId: 88 });
+    const secondOrder = createServiceOrder({ id: 202, code: 'SO-BATCH-002', clientId: 30, clientContactId: 88 });
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
+    clientContactRepository.findOne.mockResolvedValue({
+      id: 88,
+      clientId: 30,
+      name: 'Carlos Avila',
+      isPrimary: true,
+      isActive: true,
+    } as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    const createSpy = jest
+      .spyOn(service, 'create')
+      .mockResolvedValueOnce(firstOrder as any)
+      .mockResolvedValueOnce(secondOrder as any);
+
+    const result = await service.createBatch(
+      {
+        sharedContext: {
+          requestOrigin: RequestOrigin.CLIENT,
+          clientId: 30,
+          clientContactId: 88,
+          priority: ServiceOrderPriority.HIGH,
+          contactName: 'Carlos Avila',
+        },
+        orders: [
+          {
+            equipmentType: EquipmentType.LAPTOP,
+            brand: 'Lenovo',
+            initialIssue: 'No enciende',
+          },
+          {
+            equipmentType: EquipmentType.PRINTER,
+            brand: 'Epson',
+            initialIssue: 'Atasco de papel',
+          },
+        ],
+      },
+      5,
+    );
+
+    expect(createSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        requestOrigin: RequestOrigin.CLIENT,
+        clientId: 30,
+        clientContactId: 88,
+        priority: ServiceOrderPriority.HIGH,
+        contactName: 'Carlos Avila',
+        equipmentType: EquipmentType.LAPTOP,
+        brand: 'Lenovo',
+        initialIssue: 'No enciende',
+      }),
+      5,
+    );
+    expect(createSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        requestOrigin: RequestOrigin.CLIENT,
+        clientId: 30,
+        clientContactId: 88,
+        priority: ServiceOrderPriority.HIGH,
+        contactName: 'Carlos Avila',
+        equipmentType: EquipmentType.PRINTER,
+        brand: 'Epson',
+        initialIssue: 'Atasco de papel',
+      }),
+      5,
+    );
+    expect(result.createdOrders).toEqual([firstOrder, secondOrder]);
+  });
+
+  it('rechaza batch sin ordenes candidatas', async () => {
+    await expect(
+      service.createBatch(
+        {
+          sharedContext: {
+            requestOrigin: RequestOrigin.INTERNAL,
+          },
+          orders: [],
+        },
+        5,
+      ),
+    ).rejects.toThrow('At least one order is required');
+  });
+
+  it('prevalida todo el batch antes de persistir para evitar creaciones parciales', async () => {
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    workflowService.getAssignmentSuggestion
+      .mockResolvedValueOnce({
+        serviceType: ServiceType.DIAGNOSIS,
+        suggestedTechnicianId: 7,
+        technicians: [],
+      })
+      .mockRejectedValueOnce(new BadRequestException('No hay tecnicos disponibles para asignar ordenes'));
+
+    const createSpy = jest.spyOn(service, 'create').mockResolvedValue(createServiceOrder() as any);
+
+    await expect(
+      service.createBatch(
+        {
+          sharedContext: {
+            requestOrigin: RequestOrigin.INTERNAL,
+          },
+          orders: [
+            {
+              equipmentType: EquipmentType.LAPTOP,
+              initialIssue: 'No enciende',
+              serviceType: ServiceType.DIAGNOSIS,
+            },
+            {
+              equipmentType: EquipmentType.PRINTER,
+              initialIssue: 'Atasco de papel',
+              serviceType: ServiceType.STANDARD_SERVICE,
+            },
+          ],
+        },
+        5,
+      ),
+    ).rejects.toThrow('No hay tecnicos disponibles para asignar ordenes');
+
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it('crea la orden con los ejes canónicos iniciales', async () => {
@@ -210,9 +366,58 @@ describe('ServiceOrderService', () => {
 
     expect(serviceOrderRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
+        clientContactId: null,
         clientSnapshotName: 'Contacto Manual',
         clientSnapshotEmail: 'contacto@test.com',
         clientSnapshotPhone: '999999999',
+      }),
+    );
+  });
+
+  it('usa clientContactId y snapshot del contacto al crear orden para empresa', async () => {
+    const client = { id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any;
+    const contact = { id: 88, clientId: 30, name: 'Ana Contacto', email: 'ana@corp.com', phone: '900111222', isPrimary: true, isActive: true };
+    const created = createServiceOrder({
+      id: 101,
+      clientId: 30,
+      clientContactId: 88,
+      clientSnapshotName: 'Ana Contacto',
+      clientSnapshotEmail: 'ana@corp.com',
+      clientSnapshotPhone: '900111222',
+    });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue(client);
+    clientContactRepository.findOne.mockResolvedValue(contact as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    serviceOrderRepository.create.mockImplementation((value) => value);
+    serviceOrderRepository.save.mockImplementation(async (value) => ({ ...value, id: 101 }));
+    serviceOrderRepository.findOne.mockResolvedValue(created);
+    jest.spyOn(service as any, 'generateUniqueCode').mockResolvedValue('SO-TEST-003');
+
+    await service.create(
+      {
+        requestOrigin: RequestOrigin.CLIENT,
+        clientId: 30,
+        clientContactId: 88,
+        equipmentType: EquipmentType.LAPTOP,
+        initialIssue: 'Empresa',
+        serviceType: ServiceType.DIAGNOSIS,
+      },
+      5,
+    );
+
+    expect(serviceOrderRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 30,
+        clientContactId: 88,
+        clientSnapshotName: 'Ana Contacto',
+        clientSnapshotEmail: 'ana@corp.com',
+        clientSnapshotPhone: '900111222',
       }),
     );
   });
@@ -238,6 +443,31 @@ describe('ServiceOrderService', () => {
       }),
     );
     expect(messageMatrixService.notifySurveyRequest).toHaveBeenCalledWith(result);
+  });
+
+  it('bloquea la entrega si el acuerdo vigente no está totalmente cubierto', async () => {
+    const order = createServiceOrder({
+      operativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+      montoComprometidoVigente: 120,
+      montoReconciliado: 80,
+      economicStatus: ServiceOrderEconomicStatus.PARCIAL,
+    });
+    serviceOrderRepository.findOne.mockResolvedValue(order);
+
+    await expect(service.markAsDelivered(order.id, 77)).rejects.toThrow(
+      'La orden no puede entregarse hasta cubrir totalmente su acuerdo vigente',
+    );
+  });
+
+  it('enriquece findOne con sla y timeMetrics listos para UI', async () => {
+    const order = createServiceOrder({ technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION });
+    serviceOrderRepository.findOne.mockResolvedValue(order);
+
+    const result = await service.findOne(order.id);
+
+    expect(metricsFactory.build).toHaveBeenCalledWith(order);
+    expect(result.sla.stage).toBe('service');
+    expect(result.timeMetrics.timeToService.valueMinutes).toBe(150);
   });
 
   it('no pisa deliveredAt existente al volver a marcar una orden entregada', async () => {
@@ -345,5 +575,25 @@ describe('ServiceOrderService', () => {
     expect(queryBuilder.andWhere).toHaveBeenCalledWith('serviceOrder.economicStatus IN (:...economicStatuses)', {
       economicStatuses: [ServiceOrderEconomicStatus.PENDIENTE],
     });
+  });
+
+  it('enriquece findAll con sla y timeMetrics por cada fila', async () => {
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      withDeleted: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[createServiceOrder()], 1]),
+    };
+    serviceOrderRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    const result = await service.findAll({ page: 1, limit: 10 });
+
+    expect(metricsFactory.build).toHaveBeenCalledTimes(1);
+    expect(result.data[0].sla.targetMinutes).toBe(180);
+    expect(result.data[0].timeMetrics.timeToDiagnosis.valueMinutes).toBe(120);
   });
 });

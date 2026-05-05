@@ -197,6 +197,29 @@ describe('ServiceOrderWorkflowService', () => {
     expect(result.serviceCompletedAt).toBeInstanceOf(Date);
   });
 
+  it('mantiene serviceStartedAt existente al volver a ejecutar una transición de ejecución', async () => {
+    const serviceStartedAt = new Date('2026-01-01T12:00:00.000Z');
+    const order = createServiceOrder({
+      technicalStatus: ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+      operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
+      serviceStartedAt,
+    });
+
+    serviceOrderRepository.findOne
+      .mockResolvedValueOnce(order)
+      .mockImplementationOnce(async () => order);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+
+    const result = await service.changeTechnicalStatus(
+      order.id,
+      ServiceOrderTechnicalStatus.EN_EJECUCION,
+      55,
+      'Retoma ejecución',
+    );
+
+    expect(result.serviceStartedAt).toBe(serviceStartedAt);
+  });
+
   it('al cerrar sin solución marca el estado operativo y guarda motivo', async () => {
     const order = createServiceOrder({
       technicalStatus: ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,

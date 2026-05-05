@@ -1,13 +1,24 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards } from '@nestjs/common';
-import { DocumentTypesService } from './document-types.service';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
+import { RolesGuard } from 'src/rbac/guards/roles.guard';
+import { BulkOperationsDto } from './dto/bulk-operations.dto';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
-import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
-import { RolesGuard } from 'src/rbac/guards/roles.guard';
-import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
-import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
-import { Permissions } from 'src/rbac/decorators/permissions.decorator';
-import { BulkOperationsDto } from './dto/bulk-operations.dto';
+import { DocumentTypesService } from './document-types.service';
+import type { FindAllQuery } from './document-types.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin')
@@ -23,7 +34,7 @@ export class DocumentTypesController {
 
   @Permissions('document-type.read')
   @Get()
-  findAll(@Query() q: any) {
+  findAll(@Query() q: FindAllQuery) {
     return this.documentTypesService.findAll(q);
   }
 
@@ -41,7 +52,10 @@ export class DocumentTypesController {
 
   @Permissions('document-type.update')
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDocumentTypeDto: UpdateDocumentTypeDto) {
+  update(
+    @Param('id') id: string,
+    @Body() updateDocumentTypeDto: UpdateDocumentTypeDto,
+  ) {
     return this.documentTypesService.update(+id, updateDocumentTypeDto);
   }
 
