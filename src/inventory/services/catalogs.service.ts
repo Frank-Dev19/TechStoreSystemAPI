@@ -11,6 +11,7 @@ import { UpdateProductDto } from '../dto/update-product.dto';
 import { FilterProductDto } from '../dto/filter-product.dto';
 import { FilterCategoryDto } from '../dto/filter-category.dto';
 import { FilterUnitDto } from '../dto/filter-unit.dto';
+import { ImportProductsDto } from '../dto/import-products.dto';
 
 @Injectable()
 export class CatalogsService {
@@ -110,6 +111,7 @@ export class CatalogsService {
 
         const product = this.prodRepo.create({
             sku: dto.sku, name: dto.name, description: dto.description,
+            brand: this.cleanBrand(dto.brand),
             categoryId: category.id, baseUnitId: baseUnit.id,
             isSerialized: dto.is_serialized, managesExpiration: dto.manages_expiration,
             minStock: dto.min_stock, maxStock: dto.max_stock, reorderPoint: dto.reorder_point,
@@ -128,6 +130,7 @@ export class CatalogsService {
             sku: dto.sku ?? product.sku,
             name: dto.name ?? product.name,
             description: dto.description ?? product.description,
+            brand: dto.brand !== undefined ? this.cleanBrand(dto.brand) : product.brand,
             isSerialized: dto.is_serialized ?? product.isSerialized,
             managesExpiration: dto.manages_expiration ?? product.managesExpiration,
             minStock: dto.min_stock ?? product.minStock,
@@ -136,6 +139,88 @@ export class CatalogsService {
         });
 
         return this.prodRepo.save(product);
+    }
+
+    async importProducts(dto: ImportProductsDto) {
+        const duplicateMode = dto.duplicateMode ?? 'skip';
+        const result = {
+            created: 0,
+            updated: 0,
+            skipped: 0,
+            errors: [] as { row: number; sku?: string; message: string }[],
+        };
+
+        for (let index = 0; index < dto.rows.length; index++) {
+            const row = dto.rows[index];
+            const rowNumber = index + 1;
+
+            try {
+                const sku = row.sku.trim();
+                const name = row.name.trim();
+                if (!sku || !name) {
+                    result.errors.push({ row: rowNumber, sku, message: 'SKU y nombre son obligatorios' });
+                    continue;
+                }
+
+                const category = await this.catRepo.findOneBy({ id: row.category_id });
+                const baseUnit = await this.unitRepo.findOneBy({ id: row.unit_id });
+                if (!category || !baseUnit) {
+                    result.errors.push({ row: rowNumber, sku, message: 'Categoría o unidad inválida' });
+                    continue;
+                }
+
+                const existing = await this.prodRepo.findOneBy({ sku });
+                if (existing && duplicateMode === 'skip') {
+                    result.skipped++;
+                    continue;
+                }
+
+                if (existing) {
+                    Object.assign(existing, {
+                        name,
+                        description: row.description ?? existing.description,
+                        brand: this.cleanBrand(row.brand),
+                        categoryId: category.id,
+                        baseUnitId: baseUnit.id,
+                        isSerialized: row.is_serialized,
+                        managesExpiration: row.manages_expiration,
+                        minStock: row.min_stock,
+                        maxStock: row.max_stock,
+                        reorderPoint: row.reorder_point,
+                    });
+                    await this.prodRepo.save(existing);
+                    result.updated++;
+                    continue;
+                }
+
+                const product = this.prodRepo.create({
+                    sku,
+                    name,
+                    description: row.description ?? null,
+                    brand: this.cleanBrand(row.brand),
+                    categoryId: category.id,
+                    baseUnitId: baseUnit.id,
+                    isSerialized: row.is_serialized,
+                    managesExpiration: row.manages_expiration,
+                    minStock: row.min_stock,
+                    maxStock: row.max_stock,
+                    reorderPoint: row.reorder_point,
+                });
+                await this.prodRepo.save(product);
+                result.created++;
+            } catch (error) {
+                result.errors.push({
+                    row: rowNumber,
+                    sku: row?.sku,
+                    message: error instanceof Error ? error.message : 'Error importando producto',
+                });
+            }
+        }
+
+        return {
+            ...result,
+            total: dto.rows.length,
+        };
     }
 
     async listProducts(filter: FilterProductDto) {
@@ -173,5 +258,12 @@ export class CatalogsService {
         }
 
         return this.prodRepo.remove(product);
+    }
+
+    private cleanBrand(value?: string | null): string | null {
+        const brand = (value ?? '').trim();
+        if (!brand || brand === '-' || brand === '_' || brand === '__') return null;
+        if (brand.toUpperCase() === 'N/A' || brand.toUpperCase() === 'S/M') return null;
+        return brand;
     }
 }

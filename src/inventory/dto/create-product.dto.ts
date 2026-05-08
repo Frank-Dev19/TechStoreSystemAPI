@@ -1,12 +1,14 @@
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+
 export class CreateProductDto {
     @IsString() @MaxLength(64) @IsNotEmpty() sku: string;
     @IsString() @MaxLength(256) @IsNotEmpty() name: string;
     @IsString() @IsOptional() description?: string;
+    @IsString() @IsOptional() @MaxLength(128) brand?: string | null;
 
-    // Front manda unit_id → lo aceptamos y mapeamos a baseUnitId.
+    // Front sends unit_id and we map it internally to baseUnitId.
     @IsInt() category_id: number;
-    @IsInt() unit_id: number; // mapeo interno a baseUnitId
+    @IsInt() unit_id: number;
 
     @IsBoolean() is_serialized: boolean;
     @IsBoolean() manages_expiration: boolean;

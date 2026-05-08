@@ -7,6 +7,7 @@ import { UpdateProductDto } from '../dto/update-product.dto';
 import { FilterProductDto } from '../dto/filter-product.dto';
 import { FilterCategoryDto } from '../dto/filter-category.dto';
 import { FilterUnitDto } from '../dto/filter-unit.dto';
+import { ImportProductsDto } from '../dto/import-products.dto';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 @UseGuards(JwtAccessGuard)
 @Controller('inventory/catalogs')
@@ -56,6 +57,9 @@ export class CatalogsController {
 
     @Post('products')
     createProduct(@Body() dto: CreateProductDto) { return this.svc.createProduct(dto); }
+
+    @Post('products/import')
+    importProducts(@Body() dto: ImportProductsDto) { return this.svc.importProducts(dto); }
 
     @Put('products/:id')
     updateProduct(@Param('id') id: number, @Body() dto: UpdateProductDto) { return this.svc.updateProduct(+id, dto); }

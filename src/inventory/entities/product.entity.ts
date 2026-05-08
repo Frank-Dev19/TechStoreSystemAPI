@@ -12,7 +12,8 @@ export class Product {
 
     @Column({ length: 64 }) sku: string;
     @Column({ length: 256 }) name: string;
-    @Column({ type: 'text', nullable: true }) description?: string;
+    @Column({ type: 'text', nullable: true }) description?: string | null;
+    @Column({ type: 'varchar', length: 128, nullable: true }) brand?: string | null;
 
     @ManyToOne(() => Category, { eager: true }) category: Category;
     @Column() categoryId: number;
