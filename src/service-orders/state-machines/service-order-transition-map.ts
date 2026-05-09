@@ -40,6 +40,7 @@ export const serviceOrderTransitionMap = {
     ],
     [ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION]: [ServiceOrderTechnicalStatus.EN_EJECUCION],
     [ServiceOrderTechnicalStatus.EN_EJECUCION]: [
+      ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL,
       ServiceOrderTechnicalStatus.BLOQUEADA,
       ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO,
       ServiceOrderTechnicalStatus.RESUELTA,

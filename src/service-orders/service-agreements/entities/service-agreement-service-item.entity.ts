@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { ServiceOrderAgreement } from './service-agreement.entity';
+import { ServiceOrderAgreementLineProvenance } from '../service-agreement-line-provenance.enum';
 
 @Entity('service_order_agreement_services')
 export class ServiceOrderAgreementServiceItem {
@@ -45,6 +46,17 @@ export class ServiceOrderAgreementServiceItem {
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
+
+  @Column({
+    name: 'provenance',
+    type: 'enum',
+    enum: ServiceOrderAgreementLineProvenance,
+    default: ServiceOrderAgreementLineProvenance.NEW,
+  })
+  provenance: ServiceOrderAgreementLineProvenance;
+
+  @Column({ name: 'derived_from_agreement_service_item_id', type: 'bigint', unsigned: true, nullable: true })
+  derivedFromAgreementServiceItemId: number | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

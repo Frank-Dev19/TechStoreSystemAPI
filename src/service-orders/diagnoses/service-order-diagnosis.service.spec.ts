@@ -136,6 +136,48 @@ describe('ServiceOrderDiagnosisService', () => {
     );
   });
 
+  it('mueve un rediagnóstico reparable desde servicio en ejecución a definición comercial', async () => {
+    const serviceOrder = createServiceOrder({
+      technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+      commercialStatus: ServiceOrderCommercialStatus.AUTORIZADA,
+      serviceType: ServiceType.DIAGNOSIS,
+    });
+    const previousDiagnosis = { id: 20, serviceOrderId: serviceOrder.id } as ServiceOrderDiagnosis;
+    const newDiagnosis = {
+      id: 21,
+      serviceOrderId: serviceOrder.id,
+      sequenceNumber: 3,
+      status: ServiceOrderDiagnosisStatus.CURRENT,
+      outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
+      summary: 'Fallo adicional detectado',
+    } as ServiceOrderDiagnosis;
+
+    diagnosisRepository.findOne.mockResolvedValue(previousDiagnosis);
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+
+    const updateQueryBuilder = createUpdateQueryBuilder();
+    transactionRepository.createQueryBuilder.mockReturnValue(updateQueryBuilder);
+    transactionRepository.save.mockResolvedValue(newDiagnosis);
+
+    await service.create({
+      serviceOrderId: serviceOrder.id,
+      sequenceNumber: 3,
+      outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
+      summary: 'Fallo adicional detectado',
+    });
+
+    expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
+      serviceOrder.id,
+      ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL,
+    );
+    expect(serviceOrderRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: serviceOrder.id,
+        commercialStatus: ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA,
+      }),
+    );
+  });
+
   it('marca sin solución como estado técnico sin solución y comercial no requiere', async () => {
     const serviceOrder = createServiceOrder();
     const newDiagnosis = {

@@ -113,7 +113,7 @@ export class ServiceOrderDiagnosisService {
       return repository.save(entity);
     });
 
-    const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(diagnosis.outcome);
+    const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(diagnosis.outcome, serviceOrder.technicalStatus);
     await this.workflowService.changeTechnicalStatus(dto.serviceOrderId, nextTechnicalStatus);
     await this.applyCommercialStatusFromDiagnosis(dto.serviceOrderId, diagnosis.outcome);
     await this.messageMatrixService.notifyDiagnosisUpdated(
@@ -208,7 +208,17 @@ export class ServiceOrderDiagnosisService {
     return { ok: true, message: `${toRestore.length} service order diagnoses restored successfully` };
   }
 
-  private resolveTechnicalStatusFromOutcome(outcome: ServiceOrderDiagnosisOutcome): ServiceOrderTechnicalStatus {
+  private resolveTechnicalStatusFromOutcome(
+    outcome: ServiceOrderDiagnosisOutcome,
+    currentTechnicalStatus: ServiceOrderTechnicalStatus,
+  ): ServiceOrderTechnicalStatus {
+    if (
+      currentTechnicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION &&
+      [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
+    ) {
+      return ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL;
+    }
+
     return [
       ServiceOrderDiagnosisOutcome.REPAIRABLE,
       ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,

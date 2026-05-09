@@ -53,6 +53,25 @@ describe('ServiceOrderAgreementsController', () => {
     expect(service.void).toHaveBeenCalledWith(9, 'cliente rechazó');
   });
 
+  it('delegates the derived create/update contract unchanged', async () => {
+    service.create.mockResolvedValue({ id: 12 } as any);
+    service.update.mockResolvedValue({ id: 12 } as any);
+
+    await controller.create({ serviceOrderId: 10, diagnosisId: 91, baseAgreementId: 44 } as any);
+    await controller.update(12, {
+      notes: 'Nueva versión',
+      technicalServiceAmount: 95,
+      newProducts: [{ productId: 7, quantity: 1, unitPrice: 55 }],
+    } as any);
+
+    expect(service.create).toHaveBeenCalledWith({ serviceOrderId: 10, diagnosisId: 91, baseAgreementId: 44 });
+    expect(service.update).toHaveBeenCalledWith(12, {
+      notes: 'Nueva versión',
+      technicalServiceAmount: 95,
+      newProducts: [{ productId: 7, quantity: 1, unitPrice: 55 }],
+    });
+  });
+
   it('delegates diagnosis-fee-auto endpoint with parsed serviceOrderId', async () => {
     service.createDiagnosisFeeAgreement.mockResolvedValue({ id: 88 } as any);
 

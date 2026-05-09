@@ -37,8 +37,14 @@ export class CreateServiceOrderAgreementDto {
   @Type(() => ServiceOrderAgreementProductItemDto)
   products?: ServiceOrderAgreementProductItemDto[];
 
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  baseAgreementId?: number;
+
+  @IsOptional()
   @IsNumber()
   @Min(20)
-  technicalServiceAmount: number;
+  technicalServiceAmount?: number;
 }
 

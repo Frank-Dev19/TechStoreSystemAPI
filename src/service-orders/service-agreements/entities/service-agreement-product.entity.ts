@@ -10,6 +10,7 @@
 } from 'typeorm';
 import { ServiceOrderAgreement } from './service-agreement.entity';
 import { Product } from '../../../inventory/entities/product.entity';
+import { ServiceOrderAgreementLineProvenance } from '../service-agreement-line-provenance.enum';
 
 @Entity('service_order_agreement_products')
 export class ServiceOrderAgreementProduct {
@@ -53,6 +54,17 @@ export class ServiceOrderAgreementProduct {
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
+
+  @Column({
+    name: 'provenance',
+    type: 'enum',
+    enum: ServiceOrderAgreementLineProvenance,
+    default: ServiceOrderAgreementLineProvenance.NEW,
+  })
+  provenance: ServiceOrderAgreementLineProvenance;
+
+  @Column({ name: 'derived_from_agreement_product_item_id', type: 'bigint', unsigned: true, nullable: true })
+  derivedFromAgreementProductItemId: number | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

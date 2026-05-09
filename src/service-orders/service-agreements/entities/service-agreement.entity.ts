@@ -35,6 +35,9 @@ export class ServiceOrderAgreement {
   @Column({ name: 'diagnosis_id', type: 'bigint', unsigned: true, nullable: true })
   diagnosisId: number | null;
 
+  @Column({ name: 'derived_from_agreement_id', type: 'bigint', unsigned: true, nullable: true })
+  derivedFromAgreementId: number | null;
+
   @Column({ name: 'sequence_number', type: 'int', unsigned: true, default: 1 })
   sequenceNumber: number;
 
