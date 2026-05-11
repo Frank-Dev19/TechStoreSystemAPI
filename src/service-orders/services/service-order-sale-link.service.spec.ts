@@ -5,6 +5,8 @@ import { ServiceOrderSaleLink } from '../entities/service-order-sale-link.entity
 import { ServiceOrderAgreement } from '../service-agreements/entities/service-agreement.entity';
 import { ServiceOrderAgreementStatus } from '../service-agreements/service-agreement-status.enum';
 import { ServiceOrderEconomicStatus } from '../enums';
+import { ServiceOrderOperativeStatus } from '../enums/service-order-operative-status.enum';
+import { ServiceOrderTechnicalStatus } from '../enums/service-order-technical-status.enum';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderSaleLinkService } from './service-order-sale-link.service';
 
@@ -95,6 +97,8 @@ describe('ServiceOrderSaleLinkService', () => {
       code: 'SO-008',
       clientId: 5,
       economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+      operativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+      technicalStatus: ServiceOrderTechnicalStatus.RESUELTA,
       montoComprometidoVigente: 120,
       montoReconciliado: 0,
     } as any;
@@ -143,5 +147,68 @@ describe('ServiceOrderSaleLinkService', () => {
     );
     expect(messageMatrixService.notifyInvoiceLinked).toHaveBeenCalledWith(order, sale);
     expect(result).toHaveLength(1);
+  });
+
+  it('rechaza billing-links manuales para órdenes pendientes que no quedaron listas para entrega', async () => {
+    saleRepository.findOne.mockResolvedValue({
+      id: 12,
+      customerId: 5,
+      total: 120,
+      status: 'CONFIRMED',
+      deletedAt: null,
+    } as any);
+    serviceOrderRepository.find.mockResolvedValue([
+      {
+        id: 8,
+        code: 'SO-008',
+        clientId: 5,
+        economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+        operativeStatus: ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION,
+        technicalStatus: ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      } as any,
+    ]);
+
+    agreementRepository.find.mockResolvedValue([
+      {
+        id: 20,
+        serviceOrderId: 8,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        totalAmount: 120,
+        productItems: [],
+        serviceItems: [],
+      } as any,
+    ]);
+    linkRepository.findOne.mockResolvedValue(null);
+    linkRepository.save.mockImplementation(async (value) => value);
+    linkRepository.find.mockResolvedValue([
+      {
+        id: 99,
+        saleId: 12,
+        serviceOrderId: 8,
+        agreementId: 20,
+        linkedAmount: 120,
+        deletedAt: null,
+      } as any,
+    ]);
+    agreementRepository.findOne.mockResolvedValue({
+      id: 20,
+      serviceOrderId: 8,
+      totalAmount: 120,
+    } as any);
+    serviceOrderRepository.findOne.mockResolvedValue({
+      id: 8,
+      code: 'SO-008',
+      clientId: 5,
+      economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+      operativeStatus: ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION,
+      technicalStatus: ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      montoComprometidoVigente: 120,
+      montoReconciliado: 0,
+    } as any);
+    serviceOrderRepository.save.mockImplementation(async (value) => value);
+
+    await expect(
+      service.linkSaleToServiceOrders({ saleId: 12, serviceOrderIds: [8] }),
+    ).rejects.toThrow('La orden SO-008 no está lista para entrega al cliente');
   });
 });

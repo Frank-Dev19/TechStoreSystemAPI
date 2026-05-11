@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In, IsNull } from 'typeorm';
+import { Repository, DataSource, In, IsNull, Brackets } from 'typeorm';
 import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
@@ -40,6 +40,10 @@ import { ServiceOrderSaleLink } from 'src/service-orders/entities/service-order-
 import { ServiceOrderEconomicStatus } from 'src/service-orders/enums';
 import { ServiceOrderAgreement } from 'src/service-orders/service-agreements/entities/service-agreement.entity';
 import { ServiceOrderAgreementStatus } from 'src/service-orders/service-agreements/service-agreement-status.enum';
+import {
+  applyServiceOrderSaleEligibilityFilters,
+  assertServiceOrderEligibleForSale,
+} from 'src/service-orders/services/service-order-sale-eligibility.util';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -72,6 +76,14 @@ type ServiceOrderSaleDraftServiceItem = {
 
 type ServiceOrderSaleDraftLine = ServiceOrderSaleDraftItem | ServiceOrderSaleDraftServiceItem;
 
+type FindEligibleServiceOrdersQuery = {
+  clientId?: number | string;
+  serviceOrderIds?: string;
+  search?: string;
+  page?: number | string;
+  limit?: number | string;
+};
+
 function isServiceOrderSaleDraftServiceItem(
   item: ServiceOrderSaleDraftLine,
 ): item is ServiceOrderSaleDraftServiceItem {
@@ -83,6 +95,14 @@ function isServiceOrderSaleDraftProductItem(
 ): item is ServiceOrderSaleDraftItem {
   return item.itemType === SaleItemKindDto.PRODUCT;
 }
+
+type IncludedTaxBreakdown = {
+  baseSubtotal: number;
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+};
 
 @Injectable()
 export class SalesService {
@@ -131,6 +151,33 @@ export class SalesService {
     private readonly pricingEngine: PricingEngineService,
     private readonly taxConfigService: TaxConfigService,
   ) { }
+
+  private async breakdownIncludedTax(totalIncluded: number): Promise<IncludedTaxBreakdown> {
+    const total = Number(Number(totalIncluded ?? 0).toFixed(2));
+    const igvRatePct = Number(await this.taxConfigService.getIGVRate());
+    const taxRate = Number((igvRatePct / 100).toFixed(4));
+
+    if (taxRate <= 0) {
+      return {
+        baseSubtotal: total,
+        subtotal: total,
+        taxRate: 0,
+        taxAmount: 0,
+        total,
+      };
+    }
+
+    const subtotal = Number((total / (1 + taxRate)).toFixed(2));
+    const taxAmount = Number((total - subtotal).toFixed(2));
+
+    return {
+      baseSubtotal: subtotal,
+      subtotal,
+      taxRate,
+      taxAmount,
+      total,
+    };
+  }
 
   // =========================
   // SIMULACIÓN
@@ -820,14 +867,64 @@ export class SalesService {
     }
   }
 
+  async findEligibleServiceOrders(query: FindEligibleServiceOrdersQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const qb = this.serviceOrderRepo
+      .createQueryBuilder('serviceOrder')
+      .leftJoinAndSelect('serviceOrder.client', 'client');
+
+    applyServiceOrderSaleEligibilityFilters(qb, 'serviceOrder');
+
+    if (query.clientId !== undefined) {
+      const clientId = Number(query.clientId);
+      if (!Number.isFinite(clientId) || clientId <= 0) {
+        throw new BadRequestException('clientId debe ser un número positivo');
+      }
+      qb.andWhere('serviceOrder.clientId = :clientId', { clientId });
+    }
+
+    const serviceOrderIds = String(query.serviceOrderIds ?? '')
+      .split(',')
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (serviceOrderIds.length) {
+      qb.andWhere('serviceOrder.id IN (:...serviceOrderIds)', { serviceOrderIds });
+    }
+
+    const search = String(query.search ?? '').trim().toLowerCase();
+    if (search) {
+      qb.andWhere(
+        new Brackets((expr) => {
+          expr
+            .where('LOWER(serviceOrder.code) LIKE :search')
+            .orWhere('LOWER(serviceOrder.serialNumber) LIKE :search')
+            .orWhere('LOWER(serviceOrder.initialIssue) LIKE :search')
+            .orWhere('LOWER(serviceOrder.brand) LIKE :search')
+            .orWhere('LOWER(serviceOrder.model) LIKE :search')
+            .orWhere('LOWER(serviceOrder.clientSnapshotName) LIKE :search')
+            .orWhere('LOWER(client.name) LIKE :search')
+            .orWhere('LOWER(client.documentNumber) LIKE :search');
+        }),
+      ).setParameter('search', `%${search}%`);
+    }
+
+    const [data, total] = await qb
+      .orderBy('serviceOrder.readyForPickupAt', 'ASC')
+      .addOrderBy('serviceOrder.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { data, total, page, limit };
+  }
+
   async createFromServiceOrder(dto: any, user: string) {
     const serviceOrder = await this.serviceOrderRepo.findOne({ where: { id: Number(dto.serviceOrderId) } });
     if (!serviceOrder) {
       throw new NotFoundException('Orden de servicio no encontrada');
     }
-    if (serviceOrder.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
-      throw new BadRequestException('Solo se puede facturar desde órdenes pendientes de pago');
-    }
+    assertServiceOrderEligibleForSale(serviceOrder);
 
     const confirmedAgreements = await this.agreementRepo.find({
       where: {
@@ -843,6 +940,7 @@ export class SalesService {
     }
 
     const totalAmount = Number(agreement.totalAmount ?? 0);
+    const fiscalBreakdown = await this.breakdownIncludedTax(totalAmount);
     const totalPayments = (dto.payments ?? []).reduce(
       (sum: number, payment: { amount?: number }) => sum + Number(payment.amount ?? 0),
       0,
@@ -922,11 +1020,12 @@ export class SalesService {
           dueDate: dto.dueDate ?? dto.issueDate,
           priceListCode: '',
           applyAutoDiscounts: false,
-          subtotal: totalAmount,
+          baseSubtotal: fiscalBreakdown.baseSubtotal,
+          subtotal: fiscalBreakdown.subtotal,
           discountTotal: 0,
-          taxRate: 0,
-          taxAmount: 0,
-          total: totalAmount,
+          taxRate: fiscalBreakdown.taxRate,
+          taxAmount: fiscalBreakdown.taxAmount,
+          total: fiscalBreakdown.total,
           status: 'CONFIRMED' as SaleStatus,
           createdBy: user,
           confirmedBy: user,
@@ -1111,9 +1210,7 @@ export class SalesService {
     }
 
     for (const order of serviceOrders) {
-      if (order.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
-        throw new BadRequestException(`La orden ${order.code} no está pendiente de pago`);
-      }
+      assertServiceOrderEligibleForSale(order);
     }
 
     const agreements = await this.agreementRepo.find({
@@ -1162,6 +1259,7 @@ export class SalesService {
     const groupedTotal = Number(
       orderDrafts.reduce((sum, draft) => sum + Number(draft.totalAmount ?? 0), 0).toFixed(2),
     );
+    const fiscalBreakdown = await this.breakdownIncludedTax(groupedTotal);
     const totalPayments = Number(
       (dto.payments ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0).toFixed(2),
     );
@@ -1216,12 +1314,12 @@ export class SalesService {
           dueDate: dto.issueDate,
           priceListCode: '',
           applyAutoDiscounts: false,
-          baseSubtotal: groupedTotal,
-          subtotal: groupedTotal,
+          baseSubtotal: fiscalBreakdown.baseSubtotal,
+          subtotal: fiscalBreakdown.subtotal,
           discountTotal: 0,
-          taxRate: 0,
-          taxAmount: 0,
-          total: groupedTotal,
+          taxRate: fiscalBreakdown.taxRate,
+          taxAmount: fiscalBreakdown.taxAmount,
+          total: fiscalBreakdown.total,
           status: 'CONFIRMED' as SaleStatus,
           createdBy: user,
           confirmedBy: user,

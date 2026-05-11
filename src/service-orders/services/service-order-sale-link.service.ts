@@ -9,6 +9,7 @@ import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.d
 import { ServiceOrderSaleLink } from '../entities/service-order-sale-link.entity';
 import { ServiceOrderEconomicStatus } from '../enums';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
+import { assertServiceOrderEligibleForSale } from './service-order-sale-eligibility.util';
 
 type SearchSalesQuery = {
   companyId?: number | string;
@@ -127,11 +128,7 @@ export class ServiceOrderSaleLinkService {
     }
 
     for (const order of serviceOrders) {
-      if (order.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
-        throw new BadRequestException(
-          `La orden ${order.code} solo puede reconciliarse manualmente si está pendiente de pago`,
-        );
-      }
+      assertServiceOrderEligibleForSale(order);
 
       const agreement = activeAgreementByOrderId.get(Number(order.id));
       if (!agreement || Number(agreement.totalAmount || 0) <= 0) {

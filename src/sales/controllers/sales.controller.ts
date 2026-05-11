@@ -85,6 +85,11 @@ export class SalesController {
         );
     }
 
+    @Get('eligible-service-orders')
+    findEligibleServiceOrders(@Query() query: any) {
+        return this.salesService.findEligibleServiceOrders(query);
+    }
+
     // @Permissions('sales.read')
     @Get(':id')
     findOne(@Param('id') id: string) {
