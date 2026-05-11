@@ -130,6 +130,34 @@ describe('ServiceOrderInboxService', () => {
       ),
     ).rejects.toThrow('meta-text-failed');
   });
+
+  it('ordena threads sin usar expresiones que TypeORM no puede resolver como alias', async () => {
+    const qb = {
+      innerJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    threadRepository.createQueryBuilder.mockReturnValue(qb as any);
+
+    const result = await service.listThreads(
+      { page: 1, limit: 6 },
+      { role: 'ADMIN', userId: 1, displayName: 'Administrador' },
+    );
+
+    expect(qb.orderBy).toHaveBeenCalledWith('thread.lastMessageAt', 'DESC');
+    expect(qb.addOrderBy).toHaveBeenCalledWith('thread.createdAt', 'DESC');
+    expect(result).toEqual({
+      data: [],
+      total: 0,
+      page: 1,
+      limit: 6,
+    });
+  });
 });
 
 function createThread(overrides: Partial<ServiceOrderInboxThread> = {}): ServiceOrderInboxThread {

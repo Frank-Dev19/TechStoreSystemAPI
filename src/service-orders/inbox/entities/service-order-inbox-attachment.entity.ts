@@ -18,7 +18,11 @@ export class ServiceOrderInboxAttachment {
   @Column({ name: 'message_id', type: 'bigint', unsigned: true })
   messageId: number;
 
-  @ManyToOne(() => ServiceOrderInboxMessage, { eager: false, nullable: false, onDelete: 'CASCADE' })
+  @ManyToOne(() => ServiceOrderInboxMessage, (message) => message.attachments, {
+    eager: false,
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'message_id' })
   message: ServiceOrderInboxMessage;
 

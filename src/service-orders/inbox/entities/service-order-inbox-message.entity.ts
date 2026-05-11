@@ -4,6 +4,7 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -13,6 +14,7 @@ import {
   ServiceOrderInboxDeliveryStatus,
   ServiceOrderInboxDirection,
 } from '../service-order-inbox.types';
+import { ServiceOrderInboxAttachment } from './service-order-inbox-attachment.entity';
 
 @Entity('service_order_inbox_messages')
 export class ServiceOrderInboxMessage {
@@ -62,6 +64,11 @@ export class ServiceOrderInboxMessage {
 
   @Column({ name: 'provider_payload', type: 'text', nullable: true })
   providerPayload: string | null;
+
+  @OneToMany(() => ServiceOrderInboxAttachment, (attachment) => attachment.message, {
+    eager: false,
+  })
+  attachments?: ServiceOrderInboxAttachment[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

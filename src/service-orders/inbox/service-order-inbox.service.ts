@@ -151,7 +151,7 @@ export class ServiceOrderInboxService {
       );
     }
 
-    qb.orderBy('COALESCE(thread.lastMessageAt, thread.createdAt)', 'DESC')
+    qb.orderBy('thread.lastMessageAt', 'DESC')
       .addOrderBy('thread.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
