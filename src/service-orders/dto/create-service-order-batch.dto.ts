@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -12,8 +12,10 @@ import {
   MaxLength,
   ValidateIf,
   ValidateNested,
+  Matches,
 } from 'class-validator';
 import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
+import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
 
 export class CreateServiceOrderBatchSharedContextDto {
   @IsEnum(RequestOrigin)
@@ -54,8 +56,14 @@ export class CreateServiceOrderBatchSharedContextDto {
   contactEmail?: string;
 
   @IsString()
-  @MaxLength(20)
+  @MaxLength(16)
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    const normalized = normalizePhoneInputForValidation(value);
+    return (normalized ?? String(value).trim()) || undefined;
+  })
+  @Matches(E164_PHONE_REGEX, { message: 'contactPhone must be a valid E.164 phone number' })
   contactPhone?: string;
 }
 

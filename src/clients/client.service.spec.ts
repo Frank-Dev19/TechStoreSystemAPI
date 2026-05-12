@@ -83,11 +83,15 @@ describe('ClientService', () => {
       name: 'Juan Perez',
       documentTypeId: 1,
       documentNumber: '12345678',
-      phone: '999999999',
+      phone: '+51 999 999 999',
     });
 
     expect(transactionClientRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: ClientKind.PERSON, name: 'Juan Perez' }),
+      expect.objectContaining({
+        kind: ClientKind.PERSON,
+        name: 'Juan Perez',
+        phone: '+51999999999',
+      }),
     );
     expect(transactionClientContactRepository.save).not.toHaveBeenCalled();
     expect(result.kind).toBe(ClientKind.PERSON);
@@ -113,13 +117,33 @@ describe('ClientService', () => {
       tradeName: 'Mi Empresa',
       documentTypeId: 2,
       documentNumber: '12345678901',
-      contacts: [{ name: 'Ana', phone: '900111222' }],
+      contacts: [{ name: 'Ana', phone: '+51 900 111 222' }],
     });
 
     expect(transactionClientContactRepository.save).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ name: 'Ana', isPrimary: true })]),
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Ana', phone: '+51900111222', isPrimary: true }),
+      ]),
     );
     expect(result.kind).toBe(ClientKind.COMPANY);
+  });
+
+  it('rechaza teléfonos no E.164 al crear cliente', async () => {
+    documentTypeRepository.findOne.mockResolvedValue({ id: 1, digits: 8 });
+    clientRepository.findOne.mockResolvedValueOnce(null);
+
+    await expect(
+      service.create({
+        companyId: 1,
+        kind: ClientKind.PERSON,
+        name: 'Juan Perez',
+        documentTypeId: 1,
+        documentNumber: '12345678',
+        phone: '999999999',
+      }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(clientRepository.manager.transaction).not.toHaveBeenCalled();
   });
 
   it('rechaza empresa sin contactos sin persistir cliente', async () => {
@@ -155,7 +179,7 @@ describe('ClientService', () => {
         name: 'Empresa con rollback',
         documentTypeId: 2,
         documentNumber: '10987654321',
-        contacts: [{ name: 'Principal', phone: '999111222', isPrimary: true }],
+        contacts: [{ name: 'Principal', phone: '+51999111222', isPrimary: true }],
       }),
     ).rejects.toThrow('contact save failed');
 

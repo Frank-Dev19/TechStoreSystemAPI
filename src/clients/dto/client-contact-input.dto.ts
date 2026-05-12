@@ -4,8 +4,10 @@ import {
   IsEmail,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
+import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
 
 export class ClientContactInputDto {
   @Type(() => Number)
@@ -23,9 +25,16 @@ export class ClientContactInputDto {
   @IsOptional()
   email?: string;
 
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const normalized = normalizePhoneInputForValidation(value);
+    return (normalized ?? value.trim()) || undefined;
+  })
   @IsString()
-  @MaxLength(20)
+  @MaxLength(16)
+  @Matches(E164_PHONE_REGEX, { message: 'phone must be a valid E.164 phone number' })
   @IsOptional()
   phone?: string;
 

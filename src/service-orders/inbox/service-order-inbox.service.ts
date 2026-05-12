@@ -18,6 +18,7 @@ import {
   TECHNICIAN_ROLE_NAMES,
   hasRoleName,
 } from '../../common/constants/role-names';
+import { normalizeComparablePhone as normalizeComparablePhoneValue } from '../../common/utils/phone.util';
 import { ServiceOrderInboxThread } from './entities/service-order-inbox-thread.entity';
 import { ServiceOrderInboxMessage } from './entities/service-order-inbox-message.entity';
 import { ServiceOrderInboxAttachment } from './entities/service-order-inbox-attachment.entity';
@@ -1000,10 +1001,7 @@ export class ServiceOrderInboxService {
   }
 
   private normalizeComparablePhone(phone: string | null | undefined): string | null {
-    const normalized = String(phone ?? '')
-      .replace(/\D+/g, '')
-      .trim();
-    return normalized || null;
+    return normalizeComparablePhoneValue(phone) ?? null;
   }
 
   private normalizePositiveNumber(value: number | undefined, fallback: number, max: number): number {

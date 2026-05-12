@@ -1,5 +1,6 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+import { normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
 
 export class ImportClientRowDto {
   @Type(() => Number)
@@ -29,6 +30,13 @@ export class ImportClientRowDto {
   tradeName?: string;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const normalized = normalizePhoneInputForValidation(value);
+    return (normalized ?? value.trim()) || undefined;
+  })
   @IsString()
   @MaxLength(20)
   phone?: string;

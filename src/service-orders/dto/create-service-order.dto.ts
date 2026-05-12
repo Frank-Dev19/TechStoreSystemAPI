@@ -1,10 +1,9 @@
-import {
-  Transform,
-} from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
   IsEmail,
+  Matches,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -12,6 +11,7 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
+import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
 import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
 
 export class CreateServiceOrderDto {
@@ -98,9 +98,16 @@ export class CreateServiceOrderDto {
   @IsOptional()
   contactEmail?: string;
 
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const normalized = normalizePhoneInputForValidation(value);
+    return (normalized ?? value.trim()) || undefined;
+  })
   @IsString()
-  @MaxLength(20)
+  @MaxLength(16)
+  @Matches(E164_PHONE_REGEX, { message: 'contactPhone must be a valid E.164 phone number' })
   @IsOptional()
   contactPhone?: string;
 }

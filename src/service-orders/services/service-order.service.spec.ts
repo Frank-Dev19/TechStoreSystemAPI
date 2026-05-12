@@ -337,7 +337,7 @@ describe('ServiceOrderService', () => {
       code: 'SO-TEST-002',
       clientSnapshotName: 'Contacto Manual',
       clientSnapshotEmail: 'contacto@test.com',
-      clientSnapshotPhone: '999999999',
+      clientSnapshotPhone: '+51999999999',
     });
 
     userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
@@ -359,7 +359,7 @@ describe('ServiceOrderService', () => {
         serviceType: ServiceType.DIAGNOSIS,
         contactName: 'Contacto Manual',
         contactEmail: 'contacto@test.com',
-        contactPhone: '999999999',
+        contactPhone: '+51 999 999 999',
       },
       5,
     );
@@ -369,21 +369,21 @@ describe('ServiceOrderService', () => {
         clientContactId: null,
         clientSnapshotName: 'Contacto Manual',
         clientSnapshotEmail: 'contacto@test.com',
-        clientSnapshotPhone: '999999999',
+        clientSnapshotPhone: '+51999999999',
       }),
     );
   });
 
   it('usa clientContactId y snapshot del contacto al crear orden para empresa', async () => {
     const client = { id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any;
-    const contact = { id: 88, clientId: 30, name: 'Ana Contacto', email: 'ana@corp.com', phone: '900111222', isPrimary: true, isActive: true };
+    const contact = { id: 88, clientId: 30, name: 'Ana Contacto', email: 'ana@corp.com', phone: '+51900111222', isPrimary: true, isActive: true };
     const created = createServiceOrder({
       id: 101,
       clientId: 30,
       clientContactId: 88,
       clientSnapshotName: 'Ana Contacto',
       clientSnapshotEmail: 'ana@corp.com',
-      clientSnapshotPhone: '900111222',
+      clientSnapshotPhone: '+51900111222',
     });
 
     userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
@@ -417,7 +417,7 @@ describe('ServiceOrderService', () => {
         clientContactId: 88,
         clientSnapshotName: 'Ana Contacto',
         clientSnapshotEmail: 'ana@corp.com',
-        clientSnapshotPhone: '900111222',
+        clientSnapshotPhone: '+51900111222',
       }),
     );
   });
@@ -517,26 +517,26 @@ describe('ServiceOrderService', () => {
   });
 
   it('resincroniza el telefono del hilo cuando cambia el contacto de la orden', async () => {
-    const order = createServiceOrder({ clientSnapshotPhone: '999 111 222' });
-    const updated = createServiceOrder({ clientSnapshotPhone: '988777666' });
+    const order = createServiceOrder({ clientSnapshotPhone: '+51999111222' });
+    const updated = createServiceOrder({ clientSnapshotPhone: '+51988777666' });
     serviceOrderRepository.findOne.mockResolvedValue(order);
     serviceOrderRepository.save.mockResolvedValue(updated);
 
-    await service.update(order.id, { contactPhone: '988-777-666' });
+    await service.update(order.id, { contactPhone: '+51 988 777 666' });
 
     expect(threadRepository.update).toHaveBeenCalledWith(
       { serviceOrderId: order.id },
-      { clientPhoneSnapshot: '988777666' },
+      { clientPhoneSnapshot: '+51988777666' },
     );
   });
 
   it('no toca el hilo si el telefono canonico no cambió', async () => {
-    const order = createServiceOrder({ clientSnapshotPhone: '999111222' });
-    const updated = createServiceOrder({ clientSnapshotPhone: '999111222' });
+    const order = createServiceOrder({ clientSnapshotPhone: '+51999111222' });
+    const updated = createServiceOrder({ clientSnapshotPhone: '+51999111222' });
     serviceOrderRepository.findOne.mockResolvedValue(order);
     serviceOrderRepository.save.mockResolvedValue(updated);
 
-    await service.update(order.id, { contactPhone: '999 111 222' });
+    await service.update(order.id, { contactPhone: '+51 999 111 222' });
 
     expect(threadRepository.update).not.toHaveBeenCalled();
   });

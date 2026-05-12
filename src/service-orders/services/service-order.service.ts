@@ -9,6 +9,10 @@ import { Brackets, Repository } from 'typeorm';
 import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { ClientKind } from '../../clients/entities/client-kind.enum';
+import {
+  normalizeComparablePhone as normalizeComparablePhoneValue,
+  normalizePhoneToE164,
+} from '../../common/utils/phone.util';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrderInboxThread } from '../inbox/entities/service-order-inbox-thread.entity';
@@ -478,7 +482,7 @@ export class ServiceOrderService {
       serviceOrder.clientSnapshotEmail = this.normalizeOptionalValue(dto.contactEmail, 150);
     }
     if (dto.contactPhone !== undefined) {
-      serviceOrder.clientSnapshotPhone = this.normalizeOptionalValue(dto.contactPhone, 20);
+      serviceOrder.clientSnapshotPhone = this.normalizePhoneSnapshot(dto.contactPhone);
     }
   }
 
@@ -574,11 +578,21 @@ export class ServiceOrderService {
     return normalized.slice(0, maxLength);
   }
 
+  private normalizePhoneSnapshot(value: string | null | undefined): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const normalized = normalizePhoneToE164(value);
+    if (!normalized) {
+      throw new BadRequestException('contactPhone must be a valid E.164 phone number');
+    }
+
+    return normalized;
+  }
+
   private normalizeComparablePhone(phone: string | null | undefined): string | null {
-    const normalized = String(phone ?? '')
-      .replace(/\D+/g, '')
-      .trim();
-    return normalized || null;
+    return normalizeComparablePhoneValue(phone) ?? null;
   }
 
   private async syncInboxThreadClientPhoneSnapshotIfNeeded(

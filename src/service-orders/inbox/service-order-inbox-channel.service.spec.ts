@@ -75,4 +75,16 @@ describe('ServiceOrderInboxChannelService', () => {
       }),
     );
   });
+
+  it('usa el número E.164 persistido sin inferencias extra al enviar a Meta', () => {
+    const service = createService({ NODE_ENV: 'development' });
+
+    expect((service as any).normalizeRecipientPhone('+51999111222')).toBe('51999111222');
+  });
+
+  it('aplica fallback +51 solo para números históricos sin código al enviar a Meta', () => {
+    const service = createService({ NODE_ENV: 'development' });
+
+    expect((service as any).normalizeRecipientPhone('999111222')).toBe('51999111222');
+  });
 });

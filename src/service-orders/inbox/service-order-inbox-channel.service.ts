@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { normalizePhoneForMetaRecipient } from '../../common/utils/phone.util';
 import { ServiceOrderInboxAttachmentType } from './service-order-inbox.types';
 import { ServiceOrderInboxWebhookAttachmentDto } from './dto/service-order-inbox-webhook.dto';
 import { ServiceOrderInboxWebhookStatusDto } from './dto/service-order-inbox-webhook-status.dto';
@@ -437,7 +438,7 @@ export class ServiceOrderInboxChannelService {
   }
 
   private normalizeRecipientPhone(phone: string | null): string {
-    const normalized = String(phone ?? '').replace(/\D+/g, '');
+    const normalized = normalizePhoneForMetaRecipient(phone);
     if (!normalized) {
       throw new BadRequestException('The thread does not have a valid client phone');
     }

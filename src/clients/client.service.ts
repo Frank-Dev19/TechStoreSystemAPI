@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, In, IsNull, Not, Repository } from 'typeorm';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import { normalizePhoneToE164 } from 'src/common/utils/phone.util';
 import { ClientContactInputDto } from './dto/client-contact-input.dto';
 import { ClientContact } from './entities/client-contact.entity';
 import { Client } from './entities/client.entity';
@@ -95,10 +96,24 @@ export class ClientService {
       id: contact.id ? Number(contact.id) : undefined,
       name: this.normalizeOptionalText(contact.name),
       email: this.normalizeOptionalText(contact.email),
-      phone: this.normalizeOptionalText(contact.phone),
+      phone: this.normalizePhoneOrThrow(contact.phone, 'contact.phone'),
       isPrimary: Boolean(contact.isPrimary),
       isActive: contact.isActive !== undefined ? Boolean(contact.isActive) : true,
     };
+  }
+
+  private normalizePhoneOrThrow(value: unknown, fieldLabel: string): string | undefined {
+    const raw = this.normalizeOptionalText(value);
+    if (!raw) {
+      return undefined;
+    }
+
+    const normalized = normalizePhoneToE164(raw);
+    if (!normalized) {
+      throw new BadRequestException(`${fieldLabel} must be a valid E.164 phone number`);
+    }
+
+    return normalized;
   }
 
   private async saveClientContacts(
@@ -230,6 +245,10 @@ export class ClientService {
         errors.push('Completa la razón social o nombre del cliente.');
       }
 
+      if (row.phone && !normalizePhoneToE164(row.phone)) {
+        errors.push('El teléfono debe estar en formato E.164.');
+      }
+
       const duplicateKey =
         docTypeId && row.documentNumber
           ? `${companyId}:${docTypeId}:${row.documentNumber}`
@@ -296,6 +315,7 @@ export class ClientService {
     }
 
     const kind = createClientDto.kind ?? this.inferClientKind(createClientDto.documentNumber);
+    const normalizedPhone = this.normalizePhoneOrThrow(createClientDto.phone, 'phone');
     if (kind === ClientKind.COMPANY) {
       const normalizedContacts = (createClientDto.contacts ?? [])
         .map((contact) => this.normalizeContactInput(contact))
@@ -314,6 +334,7 @@ export class ClientService {
         ...createClientDto,
         companyId,
         kind,
+        phone: normalizedPhone,
       });
 
       const createdClient = await transactionClientRepository.save(entity);
@@ -450,7 +471,11 @@ export class ClientService {
 
     const kind = updateClientDto.kind ?? client.kind ?? this.inferClientKind(updateClientDto.documentNumber ?? client.documentNumber);
     const { contacts, ...clientPatch } = updateClientDto;
-    Object.assign(client, { ...clientPatch, kind });
+    const nextPhone =
+      updateClientDto.phone !== undefined
+        ? this.normalizePhoneOrThrow(updateClientDto.phone, 'phone') ?? null
+        : client.phone ?? null;
+    Object.assign(client, { ...clientPatch, kind, phone: nextPhone });
     const saved = await this.clientRepository.save(client);
     if (kind === ClientKind.PERSON) {
       await this.clientContactRepository.delete({ clientId: saved.id });
@@ -538,7 +563,7 @@ export class ClientService {
           tradeName: row.tradeName,
           documentTypeId: Number(row.documentTypeId),
           documentNumber: row.documentNumber!,
-          phone: row.phone,
+          phone: row.phone ? normalizePhoneToE164(row.phone) : undefined,
           address: row.address,
           city: row.city,
           country: row.country,
