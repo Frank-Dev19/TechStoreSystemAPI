@@ -214,6 +214,8 @@ export class ServiceOrderAgreementsService {
       ? await this.resolveDerivedBaseAgreement(serviceOrder, diagnosis, dto.baseAgreementId)
       : null;
 
+    this.ensureCreatePayloadCompatibility(dto, Boolean(baseAgreement));
+
     if (!baseAgreement) {
       this.ensureTechnicalServiceAmount(dto.technicalServiceAmount);
     }
@@ -226,9 +228,13 @@ export class ServiceOrderAgreementsService {
     }
 
     const agreement = await this.agreementRepository.manager.transaction(async (manager) => {
-      const productItems = baseAgreement
+      const inheritedProductItems = baseAgreement
         ? this.cloneInheritedProductItems(baseAgreement.productItems ?? [], manager)
+        : [];
+      const additionalProductItems = baseAgreement
+        ? await this.buildNewProductItems(dto.newProducts, manager, serviceOrder.serviceType)
         : await this.buildProductItems(dto.products, manager, serviceOrder.serviceType);
+      const productItems = [...inheritedProductItems, ...additionalProductItems];
       const serviceItems = baseAgreement
         ? this.cloneInheritedServiceItems(
             baseAgreement.serviceItems ?? [],
@@ -851,6 +857,22 @@ export class ServiceOrderAgreementsService {
     const isZeroBillingService =
       serviceType === ServiceType.CUSTOMER_SERVICE || serviceType === ServiceType.WARRANTY_SERVICE;
     return isZeroBillingService ? 0 : Number(amount.toFixed(2));
+  }
+
+  private ensureCreatePayloadCompatibility(
+    dto: CreateServiceOrderAgreementDto,
+    isDerivedAgreement: boolean,
+  ) {
+    if (isDerivedAgreement) {
+      if (dto.products?.length) {
+        throw new BadRequestException('products is not allowed when baseAgreementId is provided');
+      }
+      return;
+    }
+
+    if (dto.newProducts?.length) {
+      throw new BadRequestException('newProducts is only allowed for derived agreements');
+    }
   }
 
   private ensureNoLegacyUpdateFields(dto: Record<string, unknown>) {

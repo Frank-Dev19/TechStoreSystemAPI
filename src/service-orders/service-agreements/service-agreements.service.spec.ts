@@ -476,6 +476,141 @@ describe('ServiceOrderAgreementsService', () => {
     ]);
   });
 
+  it('crea un draft derivado con nuevos productos en un solo POST', async () => {
+    const serviceOrder = createServiceOrder({
+      serviceType: ServiceType.DIAGNOSIS,
+      technicalStatus: ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL,
+    });
+    const inheritedProduct = createAgreementProduct({
+      id: 71,
+      serviceOrderAgreementId: 44,
+      provenance: ServiceOrderAgreementLineProvenance.NEW,
+      lineTotal: 40,
+    });
+    const inheritedService = createAgreementServiceItem({
+      id: 81,
+      serviceOrderAgreementId: 44,
+      provenance: ServiceOrderAgreementLineProvenance.NEW,
+      unitPrice: 80,
+      lineTotal: 80,
+    });
+    const baseAgreement = createAgreement({
+      id: 44,
+      status: ServiceOrderAgreementStatus.CONFIRMED,
+      sequenceNumber: 3,
+      notes: 'Acuerdo vigente',
+      productItems: [inheritedProduct],
+      serviceItems: [inheritedService],
+    });
+    const savedAgreement = createAgreement({
+      id: 56,
+      status: ServiceOrderAgreementStatus.DRAFT,
+      sequenceNumber: 4,
+      totalAmount: 194.98,
+      notes: 'Acuerdo vigente',
+      derivedFromAgreementId: 44,
+    });
+
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 2 } as any);
+    agreementRepository.findOne.mockResolvedValue(baseAgreement);
+
+    const insertedProducts: Array<Record<string, unknown>> = [];
+    const insertedServices: Array<Record<string, unknown>> = [];
+    const agreementRepoInTx = {
+      save: jest.fn().mockResolvedValue(savedAgreement),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        withDeleted: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ max: '3' }),
+        execute: jest.fn().mockResolvedValue(undefined),
+      }),
+      create: jest.fn((value) => value),
+      findOne: jest.fn().mockResolvedValue(baseAgreement),
+    };
+    const agreementProductRepoInTx = {
+      insert: jest.fn().mockImplementation(async (items) => insertedProducts.push(...items)),
+      create: jest.fn((value) => value),
+      find: jest.fn().mockResolvedValue([]),
+    };
+    const agreementServiceItemRepoInTx = {
+      insert: jest.fn().mockImplementation(async (items) => insertedServices.push(...items)),
+      create: jest.fn((value) => value),
+      find: jest.fn().mockResolvedValue([]),
+    };
+    const inventoryProductRepo = {
+      find: jest.fn().mockResolvedValue([
+        {
+          id: 501,
+          code: 'P-501',
+          name: 'Bisagra',
+          description: 'Repuesto nuevo',
+          salePrice: 30,
+        },
+      ]),
+    };
+    const manager = {
+      getRepository: (entity: unknown) => {
+        if (entity === ServiceOrderAgreement) return agreementRepoInTx;
+        if (entity === ServiceOrderAgreementProduct) return agreementProductRepoInTx;
+        if (entity === ServiceOrderAgreementServiceItem) return agreementServiceItemRepoInTx;
+        if (entity === Product) return inventoryProductRepo;
+        return {
+          find: jest.fn().mockResolvedValue([]),
+          insert: jest.fn().mockResolvedValue(undefined),
+          create: jest.fn((value) => value),
+        };
+      },
+    };
+
+    agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
+    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement as any);
+
+    await service.create({
+      serviceOrderId: serviceOrder.id,
+      diagnosisId: 91,
+      baseAgreementId: 44,
+      technicalServiceAmount: 100,
+      newProducts: [{ productId: 501, quantity: 1, unitPrice: 54.98, requiresPurchase: true }],
+    } as any);
+
+    expect(agreementRepoInTx.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        derivedFromAgreementId: 44,
+        totalAmount: 194.98,
+        notes: 'Acuerdo vigente',
+      }),
+    );
+    expect(insertedProducts).toEqual([
+      expect.objectContaining({
+        provenance: ServiceOrderAgreementLineProvenance.INHERITED,
+        derivedFromAgreementProductItemId: 71,
+        lineTotal: 40,
+      }),
+      expect.objectContaining({
+        provenance: ServiceOrderAgreementLineProvenance.NEW,
+        derivedFromAgreementProductItemId: null,
+        productId: 501,
+        unitPrice: 54.98,
+        lineTotal: 54.98,
+        requiresPurchase: true,
+      }),
+    ]);
+    expect(insertedServices).toEqual([
+      expect.objectContaining({
+        provenance: ServiceOrderAgreementLineProvenance.INHERITED,
+        derivedFromAgreementServiceItemId: 81,
+        unitPrice: 100,
+        lineTotal: 100,
+      }),
+    ]);
+  });
+
   it('deriva siempre desde el último acuerdo confirmado activo cuando existe historial reemplazado', async () => {
     const serviceOrder = createServiceOrder({
       serviceType: ServiceType.DIAGNOSIS,
@@ -570,6 +705,41 @@ describe('ServiceOrderAgreementsService', () => {
         technicalServiceAmount: 80,
       } as any),
     ).rejects.toThrow('Derived agreements are only allowed for rediagnosis flows');
+  });
+
+  it('rechaza newProducts en create normal sin baseAgreementId', async () => {
+    const serviceOrder = createServiceOrder({ serviceType: ServiceType.STANDARD_SERVICE });
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+
+    await expect(
+      service.create({
+        serviceOrderId: serviceOrder.id,
+        technicalServiceAmount: 80,
+        newProducts: [{ productId: 501, quantity: 1, unitPrice: 30 }],
+      } as any),
+    ).rejects.toThrow('newProducts is only allowed for derived agreements');
+  });
+
+  it('rechaza products cuando el create es derivado', async () => {
+    const serviceOrder = createServiceOrder({ serviceType: ServiceType.DIAGNOSIS });
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 2 } as any);
+    agreementRepository.findOne.mockResolvedValue(
+      createAgreement({
+        id: 44,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        sequenceNumber: 3,
+      }),
+    );
+
+    await expect(
+      service.create({
+        serviceOrderId: serviceOrder.id,
+        diagnosisId: 91,
+        baseAgreementId: 44,
+        products: [{ productId: 501, quantity: 1, unitPrice: 30 }],
+      } as any),
+    ).rejects.toThrow('products is not allowed when baseAgreementId is provided');
   });
 
   it('recalcula el estado comercial/económico canónico al actualizar un acuerdo draft', async () => {

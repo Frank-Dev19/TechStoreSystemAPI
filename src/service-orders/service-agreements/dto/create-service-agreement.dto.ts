@@ -38,6 +38,12 @@ export class CreateServiceOrderAgreementDto {
   products?: ServiceOrderAgreementProductItemDto[];
 
   @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceOrderAgreementProductItemDto)
+  newProducts?: ServiceOrderAgreementProductItemDto[];
+
+  @IsOptional()
   @IsNumber()
   @IsPositive()
   baseAgreementId?: number;
