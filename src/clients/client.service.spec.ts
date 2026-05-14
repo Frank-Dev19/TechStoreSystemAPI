@@ -128,6 +128,49 @@ describe('ClientService', () => {
     expect(result.kind).toBe(ClientKind.COMPANY);
   });
 
+  it('crea cliente COMPANY preservando teléfono y correo de empresa separados del contacto', async () => {
+    documentTypeRepository.findOne.mockResolvedValue({ id: 2, digits: 11 });
+    clientRepository.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: 11,
+      companyId: 1,
+      kind: ClientKind.COMPANY,
+      email: 'ventas@empresa.com',
+      phone: '+51987654321',
+      contacts: [{ id: 51, name: 'Ana', email: 'ana@empresa.com', phone: '+51900111222', isPrimary: true }],
+    });
+    transactionClientRepository.create.mockImplementation((value) => value);
+    transactionClientRepository.save.mockImplementation(async (value) => ({ ...value, id: 11 }));
+    transactionClientContactRepository.create.mockImplementation((value) => value);
+    transactionClientContactRepository.save.mockImplementation(async (value) => value);
+
+    await service.create({
+      companyId: 1,
+      kind: ClientKind.COMPANY,
+      name: 'Mi Empresa SAC',
+      documentTypeId: 2,
+      documentNumber: '12345678901',
+      email: 'ventas@empresa.com',
+      phone: '+51 987 654 321',
+      contacts: [{ name: 'Ana', email: 'ana@empresa.com', phone: '+51 900 111 222' }],
+    });
+
+    expect(transactionClientRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'ventas@empresa.com',
+        phone: '+51987654321',
+      }),
+    );
+    expect(transactionClientContactRepository.save).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Ana',
+          email: 'ana@empresa.com',
+          phone: '+51900111222',
+        }),
+      ]),
+    );
+  });
+
   it('rechaza teléfonos no E.164 al crear cliente', async () => {
     documentTypeRepository.findOne.mockResolvedValue({ id: 1, digits: 8 });
     clientRepository.findOne.mockResolvedValueOnce(null);
@@ -225,6 +268,63 @@ describe('ClientService', () => {
     expect(clientContactRepository.save).toHaveBeenCalledWith([
       expect.objectContaining({ id: 70, isPrimary: false }),
       expect.objectContaining({ id: 71, isPrimary: true }),
+    ]);
+  });
+
+  it('actualiza cliente COMPANY sin perder teléfono y correo top-level cuando también actualiza contactos', async () => {
+    const currentClient = {
+      id: 16,
+      companyId: 1,
+      kind: ClientKind.COMPANY,
+      documentTypeId: 2,
+      documentNumber: '12345678901',
+      email: 'legacy@empresa.com',
+      phone: '+51911111111',
+      deletedAt: null,
+    } as Client;
+
+    clientRepository.findOne
+      .mockResolvedValueOnce(currentClient)
+      .mockResolvedValueOnce({
+        ...currentClient,
+        email: 'ventas@empresa.com',
+        phone: '+51987654321',
+        contacts: [
+          { id: 80, name: 'Principal', email: 'principal@empresa.com', phone: '+51900111222', isPrimary: true },
+        ],
+      });
+    clientRepository.save.mockImplementation(async (value) => value);
+    clientContactRepository.save.mockImplementation(async (value) => value);
+
+    await service.update(16, {
+      kind: ClientKind.COMPANY,
+      email: 'ventas@empresa.com',
+      phone: '+51 987 654 321',
+      contacts: [
+        {
+          id: 80,
+          name: 'Principal',
+          email: 'principal@empresa.com',
+          phone: '+51 900 111 222',
+          isPrimary: true,
+        },
+      ],
+    });
+
+    expect(clientRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 16,
+        email: 'ventas@empresa.com',
+        phone: '+51987654321',
+      }),
+    );
+    expect(clientContactRepository.save).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 80,
+        email: 'principal@empresa.com',
+        phone: '+51900111222',
+        isPrimary: true,
+      }),
     ]);
   });
 });
