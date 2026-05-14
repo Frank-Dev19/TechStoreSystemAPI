@@ -100,4 +100,31 @@ describe('ServiceOrderInboxController', () => {
     expect(inboxService.updateDeliveryStatus).toHaveBeenCalledWith({ externalMessageId: 'wamid-1', status: 'delivered' });
     expect(result).toEqual({ ok: true, receivedMessages: 1, receivedStatuses: 1 });
   });
+
+  it('no rompe el webhook cuando llega un status para un wamid desconocido', async () => {
+    channelService.normalizeWebhookPayload.mockReturnValue({
+      messages: [],
+      statuses: [{ externalMessageId: 'wamid-missing', status: 'delivered' }],
+    } as any);
+    inboxService.updateDeliveryStatus.mockResolvedValue({ ok: false, reason: 'unknown-external-message-id' } as any);
+
+    const result = await controller.receiveWebhook({ entry: [] }, 'sha256=firma', { rawBody: Buffer.from('raw') });
+
+    expect(result).toEqual({ ok: true, receivedMessages: 0, receivedStatuses: 1 });
+  });
+
+  it('procesa statuses aunque un inbound message falle por routing de dominio', async () => {
+    channelService.normalizeWebhookPayload.mockReturnValue({
+      messages: [{ externalMessageId: 'wamid-inbound-1' }],
+      statuses: [{ externalMessageId: 'wamid-1', status: 'delivered' }],
+    } as any);
+    inboxService.receiveInboundMessage.mockRejectedValue(new Error('No se pudo resolver el hilo del mensaje entrante (missing-routing-data)'));
+    inboxService.updateDeliveryStatus.mockResolvedValue({ ok: true } as any);
+
+    await expect(
+      controller.receiveWebhook({ entry: [] }, 'sha256=firma', { rawBody: Buffer.from('raw') }),
+    ).rejects.toThrow('missing-routing-data');
+
+    expect(inboxService.updateDeliveryStatus).toHaveBeenCalledWith({ externalMessageId: 'wamid-1', status: 'delivered' });
+  });
 });

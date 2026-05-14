@@ -158,6 +158,124 @@ describe('ServiceOrderInboxService', () => {
       limit: 6,
     });
   });
+
+  it('procesa inbound con contextToken real y crea mensaje RECEIVED', async () => {
+    const thread = createThread({ externalThreadKey: 'ctx-real' });
+    const createdMessage = createMessage({
+      id: 91,
+      threadId: thread.id,
+      direction: ServiceOrderInboxDirection.INBOUND,
+      authorRole: ServiceOrderInboxAuthorRole.CLIENT,
+      authorDisplayName: 'Cliente Demo',
+      text: 'hola desde whatsapp',
+      deliveryStatus: ServiceOrderInboxDeliveryStatus.RECEIVED,
+      externalMessageId: 'wamid-inbound-1',
+    });
+
+    messageRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createdMessage as any);
+    threadRepository.findOne.mockResolvedValue(thread as any);
+
+    const result = await service.receiveInboundMessage({
+      externalMessageId: 'wamid-inbound-1',
+      contextToken: 'ctx-real',
+      from: '+51999111222',
+      senderName: 'Cliente Demo',
+      text: 'hola desde whatsapp',
+      attachments: [],
+    });
+
+    expect(result.deliveryStatus).toBe(ServiceOrderInboxDeliveryStatus.RECEIVED);
+    expect(result.direction).toBe(ServiceOrderInboxDirection.INBOUND);
+    expect(messageRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: thread.id,
+        direction: ServiceOrderInboxDirection.INBOUND,
+        authorRole: ServiceOrderInboxAuthorRole.CLIENT,
+        text: 'hola desde whatsapp',
+        deliveryStatus: ServiceOrderInboxDeliveryStatus.RECEIVED,
+        externalMessageId: 'wamid-inbound-1',
+      }),
+    );
+  });
+
+  it('resuelve inbound por replyToExternalMessageId cuando no llega contextToken', async () => {
+    const thread = createThread();
+    const createdMessage = createMessage({
+      id: 92,
+      threadId: thread.id,
+      direction: ServiceOrderInboxDirection.INBOUND,
+      authorRole: ServiceOrderInboxAuthorRole.CLIENT,
+      text: 'respuesta del cliente',
+      deliveryStatus: ServiceOrderInboxDeliveryStatus.RECEIVED,
+      externalMessageId: 'wamid-inbound-2',
+    });
+
+    messageRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        thread,
+      } as any)
+      .mockResolvedValueOnce(createdMessage as any);
+
+    const result = await service.receiveInboundMessage({
+      externalMessageId: 'wamid-inbound-2',
+      replyToExternalMessageId: 'wamid-outbound-1',
+      from: '+51999111222',
+      text: 'respuesta del cliente',
+      attachments: [],
+    });
+
+    expect(result.id).toBe(92);
+    expect(messageRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: thread.id,
+        externalMessageId: 'wamid-inbound-2',
+      }),
+    );
+  });
+
+  it('rechaza inbound con teléfono ambiguo indicando ambiguous-phone', async () => {
+    threadRepository.find.mockResolvedValue([
+      createThread({ id: 11, clientPhoneSnapshot: '51999111222' }),
+      createThread({ id: 12, clientPhoneSnapshot: '51999111222' }),
+    ] as any);
+
+    await expect(
+      service.receiveInboundMessage({
+        externalMessageId: 'wamid-inbound-3',
+        from: '+51999111222',
+        text: 'hola',
+        attachments: [],
+      }),
+    ).rejects.toThrow('ambiguous-phone');
+  });
+
+  it('rechaza sample sin routeable data indicando missing-routing-data', async () => {
+    await expect(
+      service.receiveInboundMessage({
+        externalMessageId: 'ABGGFlA5Fpa',
+        from: '16315551181',
+        text: 'this is a text message',
+        attachments: [],
+      }),
+    ).rejects.toThrow('missing-routing-data');
+  });
+
+  it('ignora status webhook de wamid desconocido sin romper el endpoint', async () => {
+    messageRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.updateDeliveryStatus({
+        externalMessageId: 'wamid-missing',
+        status: 'delivered',
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'unknown-external-message-id',
+    });
+  });
 });
 
 function createThread(overrides: Partial<ServiceOrderInboxThread> = {}): ServiceOrderInboxThread {

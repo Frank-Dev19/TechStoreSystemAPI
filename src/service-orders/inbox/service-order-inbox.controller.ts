@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Logger,
   Param,
   ParseIntPipe,
   Post,
@@ -32,6 +33,8 @@ import { SendServiceOrderInboxMessageDto } from './dto/send-service-order-inbox-
 
 @Controller('service-orders/inbox')
 export class ServiceOrderInboxController {
+  private readonly logger = new Logger(ServiceOrderInboxController.name);
+
   constructor(
     private readonly inboxService: ServiceOrderInboxService,
     private readonly channelService: ServiceOrderInboxChannelService,
@@ -114,13 +117,25 @@ export class ServiceOrderInboxController {
   ) {
     this.channelService.assertWebhookSignature(req.rawBody as Buffer | undefined, signature);
     const normalizedPayload = this.channelService.normalizeWebhookPayload(payload);
+    let firstMessageError: unknown = null;
 
     for (const message of normalizedPayload.messages) {
-      await this.inboxService.receiveInboundMessage(message);
+      try {
+        await this.inboxService.receiveInboundMessage(message);
+      } catch (error) {
+        firstMessageError ??= error;
+        this.logger.warn(
+          `service-order-inbox webhook message rejected externalMessageId=${String(message.externalMessageId ?? '').trim() || 'unknown'} error=${error instanceof Error ? error.message : 'unknown-error'}`,
+        );
+      }
     }
 
     for (const status of normalizedPayload.statuses) {
       await this.inboxService.updateDeliveryStatus(status);
+    }
+
+    if (firstMessageError) {
+      throw firstMessageError;
     }
 
     return {

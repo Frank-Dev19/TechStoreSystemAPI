@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -87,6 +88,8 @@ const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
 
 @Injectable()
 export class ServiceOrderInboxService {
+  private readonly logger = new Logger(ServiceOrderInboxService.name);
+
   constructor(
     @InjectRepository(ServiceOrderInboxThread)
     private readonly threadRepository: Repository<ServiceOrderInboxThread>,
@@ -389,7 +392,8 @@ export class ServiceOrderInboxService {
     const normalizedText = payload.text?.trim() || null;
     const attachments = payload.attachments ?? [];
     if (!normalizedText && !attachments.length) {
-      throw new BadRequestException('El webhook no contiene texto ni adjuntos');
+      this.logWebhookRoutingIssue('invalid-message-content', payload);
+      throw new BadRequestException('El webhook no contiene texto ni adjuntos (invalid-message-content)');
     }
 
     const message = await this.messageRepository.save(
@@ -431,7 +435,10 @@ export class ServiceOrderInboxService {
       where: { externalMessageId: payload.externalMessageId },
     });
     if (!message) {
-      throw new NotFoundException('Mensaje no encontrado');
+      this.logger.warn(
+        `service-order-inbox webhook-status ignored reason=unknown-external-message-id externalMessageId=${payload.externalMessageId} status=${String(payload.status ?? '').trim().toUpperCase() || 'UNKNOWN'}`,
+      );
+      return { ok: false, reason: 'unknown-external-message-id' };
     }
 
     message.deliveryStatus = this.normalizeDeliveryStatus(payload.status);
@@ -598,7 +605,9 @@ export class ServiceOrderInboxService {
 
   private async resolveInboundThread(payload: NormalizedInboundMessage) {
     const contextToken = payload.contextToken?.trim() || payload.externalThreadKey?.trim() || null;
+    let hadContextToken = false;
     if (contextToken) {
+      hadContextToken = true;
       const existing = await this.threadRepository.findOne({
         where: { externalThreadKey: contextToken },
         relations: ['serviceOrder', 'serviceOrder.assignedTechnician'],
@@ -609,7 +618,9 @@ export class ServiceOrderInboxService {
     }
 
     const replyToExternalMessageId = payload.replyToExternalMessageId?.trim() || null;
+    let hadReplyReference = false;
     if (replyToExternalMessageId) {
+      hadReplyReference = true;
       const referencedMessage = await this.messageRepository.findOne({
         where: { externalMessageId: replyToExternalMessageId },
         relations: ['thread', 'thread.serviceOrder', 'thread.serviceOrder.assignedTechnician'],
@@ -631,15 +642,47 @@ export class ServiceOrderInboxService {
         return activePhoneMatches[0];
       }
       if (activePhoneMatches.length > 1) {
-        throw new BadRequestException('No se pudo resolver el hilo entrante de forma univoca');
+        this.logWebhookRoutingIssue('ambiguous-phone', payload, {
+          normalizedFrom: normalizedPhone,
+          matchedThreads: activePhoneMatches.length,
+        });
+        throw new BadRequestException('No se pudo resolver el hilo entrante de forma univoca (ambiguous-phone)');
       }
     }
 
     if (!payload.serviceOrderId) {
-      throw new BadRequestException('No se pudo resolver el hilo del mensaje entrante');
+      const reason = hadContextToken
+        ? 'unmatched-context-token'
+        : hadReplyReference
+          ? 'unmatched-reply-reference'
+          : normalizedPhone
+            ? 'missing-routing-data'
+            : 'missing-routing-data';
+      this.logWebhookRoutingIssue(reason, payload, {
+        normalizedFrom: normalizedPhone,
+        hasContextToken: hadContextToken,
+        hasReplyReference: hadReplyReference,
+      });
+      throw new BadRequestException(`No se pudo resolver el hilo del mensaje entrante (${reason})`);
     }
 
     return this.ensureThreadForOrder(payload.serviceOrderId, { role: 'SUPERVISOR', userId: null, displayName: null });
+  }
+
+  private logWebhookRoutingIssue(
+    reason: string,
+    payload: NormalizedInboundMessage,
+    extra?: Record<string, unknown>,
+  ): void {
+    const metadata = {
+      externalMessageId: payload.externalMessageId,
+      contextToken: payload.contextToken?.trim() || payload.externalThreadKey?.trim() || null,
+      from: payload.from ?? null,
+      replyToExternalMessageId: payload.replyToExternalMessageId ?? null,
+      serviceOrderId: payload.serviceOrderId ?? null,
+      ...extra,
+    };
+    this.logger.warn(`service-order-inbox inbound rejected reason=${reason} metadata=${JSON.stringify(metadata)}`);
   }
 
   private async persistUploadedAttachments(
