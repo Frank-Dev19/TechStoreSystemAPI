@@ -260,7 +260,7 @@ describe('ServiceOrderAgreementsService', () => {
     };
 
     agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
-    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement);
+    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement as any);
 
     await service.create({
       serviceOrderId: serviceOrder.id,
@@ -342,7 +342,7 @@ describe('ServiceOrderAgreementsService', () => {
     };
 
     agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
-    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement);
+    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement as any);
 
     const result = await service.create({
       serviceOrderId: serviceOrder.id,
@@ -771,7 +771,7 @@ describe('ServiceOrderAgreementsService', () => {
       };
 
     agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
-    jest.spyOn(service, 'findOne').mockResolvedValue(updatedAgreement);
+    jest.spyOn(service, 'findOne').mockResolvedValue(updatedAgreement as any);
 
     const result = await service.update(agreement.id, {
       technicalServiceAmount: 150,
@@ -894,7 +894,7 @@ describe('ServiceOrderAgreementsService', () => {
     };
 
     agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
-    jest.spyOn(service, 'findOne').mockResolvedValue(updatedAgreement);
+    jest.spyOn(service, 'findOne').mockResolvedValue(updatedAgreement as any);
 
     const result = await service.update(agreement.id, {
       notes: 'Nuevo texto de versión',
@@ -946,7 +946,7 @@ describe('ServiceOrderAgreementsService', () => {
         })),
       }),
     );
-    jest.spyOn(service, 'findOne').mockResolvedValue(confirmedAgreement);
+    jest.spyOn(service, 'findOne').mockResolvedValue(confirmedAgreement as any);
 
     await service.confirm(agreement.id);
 
@@ -1035,7 +1035,7 @@ describe('ServiceOrderAgreementsService', () => {
     agreementRepository.find.mockResolvedValue([]);
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
     serviceOrderRepository.save.mockImplementation(async (entity) => entity);
-    jest.spyOn(service, 'findOne').mockResolvedValue(createAgreement({ status: ServiceOrderAgreementStatus.VOIDED }));
+    jest.spyOn(service, 'findOne').mockResolvedValue(createAgreement({ status: ServiceOrderAgreementStatus.VOIDED }) as any);
 
     await service.void(agreement.id, 'Cliente desistió');
 
@@ -1062,7 +1062,7 @@ describe('ServiceOrderAgreementsService', () => {
     agreementRepository.find.mockResolvedValue([]);
     serviceOrderRepository.save.mockImplementation(async (entity) => entity);
     jest.spyOn(service as any, 'createAutomaticTechnicalServiceAgreement').mockResolvedValue(undefined);
-    jest.spyOn(service, 'findOne').mockResolvedValue(createAgreement({ status: ServiceOrderAgreementStatus.VOIDED }));
+    jest.spyOn(service, 'findOne').mockResolvedValue(createAgreement({ status: ServiceOrderAgreementStatus.VOIDED }) as any);
 
     await service.void(agreement.id, 'Cliente rechazó');
 
