@@ -75,7 +75,10 @@ describe('ClientService', () => {
       contacts: [],
     });
     transactionClientRepository.create.mockImplementation((value) => value);
-    transactionClientRepository.save.mockImplementation(async (value) => ({ ...value, id: 1 }));
+    transactionClientRepository.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 1,
+    }));
 
     const result = await service.create({
       companyId: 1,
@@ -93,6 +96,11 @@ describe('ClientService', () => {
         phone: '+51999999999',
       }),
     );
+    expect(transactionClientRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiresContactCompletion: false,
+      }),
+    );
     expect(transactionClientContactRepository.save).not.toHaveBeenCalled();
     expect(result.kind).toBe(ClientKind.PERSON);
   });
@@ -106,9 +114,16 @@ describe('ClientService', () => {
       contacts: [{ id: 50, name: 'Ana', isPrimary: true }],
     });
     transactionClientRepository.create.mockImplementation((value) => value);
-    transactionClientRepository.save.mockImplementation(async (value) => ({ ...value, id: 10 }));
-    transactionClientContactRepository.create.mockImplementation((value) => value);
-    transactionClientContactRepository.save.mockImplementation(async (value) => value);
+    transactionClientRepository.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 10,
+    }));
+    transactionClientContactRepository.create.mockImplementation(
+      (value) => value,
+    );
+    transactionClientContactRepository.save.mockImplementation(
+      async (value) => value,
+    );
 
     const result = await service.create({
       companyId: 1,
@@ -122,8 +137,15 @@ describe('ClientService', () => {
 
     expect(transactionClientContactRepository.save).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ name: 'Ana', phone: '+51900111222', isPrimary: true }),
+        expect.objectContaining({
+          name: 'Ana',
+          phone: '+51900111222',
+          isPrimary: true,
+        }),
       ]),
+    );
+    expect(transactionClientRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresContactCompletion: false }),
     );
     expect(result.kind).toBe(ClientKind.COMPANY);
   });
@@ -136,12 +158,27 @@ describe('ClientService', () => {
       kind: ClientKind.COMPANY,
       email: 'ventas@empresa.com',
       phone: '+51987654321',
-      contacts: [{ id: 51, name: 'Ana', email: 'ana@empresa.com', phone: '+51900111222', isPrimary: true }],
+      contacts: [
+        {
+          id: 51,
+          name: 'Ana',
+          email: 'ana@empresa.com',
+          phone: '+51900111222',
+          isPrimary: true,
+        },
+      ],
     });
     transactionClientRepository.create.mockImplementation((value) => value);
-    transactionClientRepository.save.mockImplementation(async (value) => ({ ...value, id: 11 }));
-    transactionClientContactRepository.create.mockImplementation((value) => value);
-    transactionClientContactRepository.save.mockImplementation(async (value) => value);
+    transactionClientRepository.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 11,
+    }));
+    transactionClientContactRepository.create.mockImplementation(
+      (value) => value,
+    );
+    transactionClientContactRepository.save.mockImplementation(
+      async (value) => value,
+    );
 
     await service.create({
       companyId: 1,
@@ -151,7 +188,9 @@ describe('ClientService', () => {
       documentNumber: '12345678901',
       email: 'ventas@empresa.com',
       phone: '+51 987 654 321',
-      contacts: [{ name: 'Ana', email: 'ana@empresa.com', phone: '+51 900 111 222' }],
+      contacts: [
+        { name: 'Ana', email: 'ana@empresa.com', phone: '+51 900 111 222' },
+      ],
     });
 
     expect(transactionClientRepository.save).toHaveBeenCalledWith(
@@ -211,9 +250,16 @@ describe('ClientService', () => {
     documentTypeRepository.findOne.mockResolvedValue({ id: 2, digits: 11 });
     clientRepository.findOne.mockResolvedValueOnce(null);
     transactionClientRepository.create.mockImplementation((value) => value);
-    transactionClientRepository.save.mockImplementation(async (value) => ({ ...value, id: 21 }));
-    transactionClientContactRepository.create.mockImplementation((value) => value);
-    transactionClientContactRepository.save.mockRejectedValue(new Error('contact save failed'));
+    transactionClientRepository.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 21,
+    }));
+    transactionClientContactRepository.create.mockImplementation(
+      (value) => value,
+    );
+    transactionClientContactRepository.save.mockRejectedValue(
+      new Error('contact save failed'),
+    );
 
     await expect(
       service.create({
@@ -222,7 +268,9 @@ describe('ClientService', () => {
         name: 'Empresa con rollback',
         documentTypeId: 2,
         documentNumber: '10987654321',
-        contacts: [{ name: 'Principal', phone: '+51999111222', isPrimary: true }],
+        contacts: [
+          { name: 'Principal', phone: '+51999111222', isPrimary: true },
+        ],
       }),
     ).rejects.toThrow('contact save failed');
 
@@ -262,9 +310,11 @@ describe('ClientService', () => {
       ],
     });
 
-    expect(clientRepository.save).toHaveBeenCalledWith(expect.not.objectContaining({
-      contacts: expect.anything(),
-    }));
+    expect(clientRepository.save).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        contacts: expect.anything(),
+      }),
+    );
     expect(clientContactRepository.save).toHaveBeenCalledWith([
       expect.objectContaining({ id: 70, isPrimary: false }),
       expect.objectContaining({ id: 71, isPrimary: true }),
@@ -290,7 +340,13 @@ describe('ClientService', () => {
         email: 'ventas@empresa.com',
         phone: '+51987654321',
         contacts: [
-          { id: 80, name: 'Principal', email: 'principal@empresa.com', phone: '+51900111222', isPrimary: true },
+          {
+            id: 80,
+            name: 'Principal',
+            email: 'principal@empresa.com',
+            phone: '+51900111222',
+            isPrimary: true,
+          },
         ],
       });
     clientRepository.save.mockImplementation(async (value) => value);
@@ -326,5 +382,33 @@ describe('ClientService', () => {
         isPrimary: true,
       }),
     ]);
+  });
+  it('importa empresas legacy sin contactos y las marca pendientes de completar contacto', async () => {
+    clientRepository.find.mockResolvedValue([]);
+    clientRepository.save.mockImplementation(async (value) => value);
+    documentTypeRepository.find.mockResolvedValue([
+      { id: 2, digits: 11, kind: ClientKind.COMPANY, name: 'RUC' },
+    ]);
+
+    const result = await service.commitImport({
+      companyId: 1,
+      rows: [
+        {
+          rowNumber: 1,
+          documentTypeId: 2,
+          documentNumber: '20123456789',
+          name: 'Empresa Legacy SAC',
+          phone: '+51987654321',
+        },
+      ],
+    });
+
+    expect(clientRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: ClientKind.COMPANY,
+        requiresContactCompletion: true,
+      }),
+    );
+    expect(result.createdCount).toBe(1);
   });
 });

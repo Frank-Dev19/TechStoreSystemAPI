@@ -40,7 +40,11 @@ export class Client {
   @Column({ name: 'document_type_id', type: 'bigint', unsigned: true })
   documentTypeId: number;
 
-  @ManyToOne(() => DocumentType, { eager: false, nullable: false, onDelete: 'RESTRICT' })
+  @ManyToOne(() => DocumentType, {
+    eager: false,
+    nullable: false,
+    onDelete: 'RESTRICT',
+  })
   @JoinColumn({ name: 'document_type_id' })
   documentType: DocumentType;
 
@@ -61,6 +65,13 @@ export class Client {
 
   @Column({ name: 'country', length: 150, nullable: true })
   country?: string;
+
+  @Column({
+    name: 'requires_contact_completion',
+    type: 'boolean',
+    default: false,
+  })
+  requiresContactCompletion: boolean;
 
   @OneToMany(() => ClientContact, (contact) => contact.client, {
     eager: false,
