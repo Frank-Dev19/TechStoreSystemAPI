@@ -50,6 +50,17 @@ export class DocumentSeriesController {
         return this.documentSeriesService.getActive(companyId, documentType);
     }
 
+    @Get('preview-next-number')
+    async previewNextNumber(
+        @Query('companyId') companyId: number,
+        @Query('documentType') documentType: DocumentType,
+    ) {
+        if (!companyId || !documentType) {
+            throw new Error('companyId y documentType son requeridos');
+        }
+        return this.documentSeriesService.previewNextNumber(Number(companyId), documentType);
+    }
+
     @Get('next-number')
     async getNextNumber(
         @Query('companyId') companyId: number,
@@ -58,7 +69,7 @@ export class DocumentSeriesController {
         if (!companyId || !documentType) {
             throw new Error('companyId y documentType son requeridos');
         }
-        return this.documentSeriesService.getNextNumber(companyId, documentType);
+        return this.documentSeriesService.getNextNumber(Number(companyId), documentType);
     }
 
     @Get('next-number-formatted')
@@ -69,7 +80,7 @@ export class DocumentSeriesController {
         if (!companyId || !documentType) {
             throw new Error('companyId y documentType son requeridos');
         }
-        const formatted = await this.documentSeriesService.getNextNumberForCompany(companyId, documentType);
+        const formatted = await this.documentSeriesService.previewNextNumberForCompany(Number(companyId), documentType);
         return { formatted };
     }
 

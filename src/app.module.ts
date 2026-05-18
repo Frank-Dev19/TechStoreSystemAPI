@@ -28,6 +28,7 @@ import { ServiceOrdersModule } from './service-orders/service-orders.module';
 import { ServiceOrderAgreementsModule } from './service-orders/service-agreements/service-agreements.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SupplierModule } from './suppliers/supplier.module';
+import { BusinessProfileModule } from './business-profile/business-profile.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -95,6 +96,7 @@ import { SupplierModule } from './suppliers/supplier.module';
     ServiceOrderAgreementsModule,
     PricingModule,
     SalesModule,
+    BusinessProfileModule,
   ],
 })
 export class AppModule {}

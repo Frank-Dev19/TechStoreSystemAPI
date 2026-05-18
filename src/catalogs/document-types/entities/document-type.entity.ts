@@ -19,6 +19,12 @@ export class DocumentType {
 
     @Column({ name: 'digits', type: 'int'})
     digits: number;
+
+    @Column({ name: 'sunat_code', type: 'varchar', length: 4, nullable: true })
+    sunatCode?: string | null;
+
+    @Column({ name: 'kind', type: 'varchar', length: 16, nullable: true })
+    kind?: 'PERSON' | 'COMPANY' | null;
     
     @Column({ name:'description', length: 255})
     description: string;

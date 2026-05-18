@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsIn, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 
 export class CreateDocumentTypeDto {
     @IsString()
@@ -8,6 +8,15 @@ export class CreateDocumentTypeDto {
     @IsNumber()
     @IsOptional()
     digits: number;
+
+    @IsString()
+    @MaxLength(4)
+    @IsOptional()
+    sunatCode?: string;
+
+    @IsIn(['PERSON', 'COMPANY'])
+    @IsOptional()
+    kind?: 'PERSON' | 'COMPANY';
 
     @IsString()
     @MaxLength(255)

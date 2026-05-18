@@ -441,6 +441,10 @@ export class SalesService {
     }
 
     // Obtener serie y número si no se especifican
+    if (![DocumentType.BOLETA, DocumentType.FACTURA].includes(createSaleDto.documentType)) {
+      throw new BadRequestException('Las ventas directas solo pueden emitirse como BOLETA o FACTURA.');
+    }
+
     let finalSeries = createSaleDto.series;
     let finalNumber = createSaleDto.number;
     let documentSeriesId: number | null = null;

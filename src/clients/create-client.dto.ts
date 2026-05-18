@@ -30,12 +30,42 @@ export class CreateClientDto {
   email?: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   phone: string;
 
   @IsString()
   @IsOptional()
   address?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{6}$/, {
+    message: 'ubigeo must contain exactly 6 digits',
+  })
+  ubigeo?: string;
+
+  @IsString()
+  @IsOptional()
+  department?: string;
+
+  @IsString()
+  @IsOptional()
+  province?: string;
+
+  @IsString()
+  @IsOptional()
+  district?: string;
+
+  @IsString()
+  @IsOptional()
+  urbanization?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^[A-Z]{2}$/, {
+    message: 'countryCode must contain two uppercase letters',
+  })
+  countryCode?: string;
 
   @IsString()
   @IsOptional()

@@ -24,7 +24,7 @@ import { CashRegister } from './cash-register.entity';
 
 // export type SaleStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED' | 'REFUNDED';
 // export type SaleType = 'PRODUCT' | 'COMBO' | 'MIXED';
-// export type DocumentType = 'NOTA_PEDIDO' | 'BOLETA' | 'FACTURA';
+// Tipo tributario interno alineado a comprobantes SUNAT.
 
 @Entity({ name: 'sales' })
 @Index(['companyId', 'series', 'number'], { unique: true })

@@ -36,6 +36,12 @@ type NormalizedImportRow = {
   tradeName?: string;
   phone?: string;
   address?: string;
+  ubigeo?: string;
+  department?: string;
+  province?: string;
+  district?: string;
+  urbanization?: string;
+  countryCode?: string;
   city?: string;
   country?: string;
 };
@@ -78,6 +84,12 @@ export class ClientService {
       tradeName: this.normalizeOptionalText(row.tradeName),
       phone: this.normalizeOptionalText(row.phone),
       address: this.normalizeOptionalText(row.address),
+      ubigeo: this.normalizeDocumentNumber(row.ubigeo),
+      department: this.normalizeOptionalText(row.department),
+      province: this.normalizeOptionalText(row.province),
+      district: this.normalizeOptionalText(row.district),
+      urbanization: this.normalizeOptionalText(row.urbanization),
+      countryCode: this.normalizeOptionalText(row.countryCode)?.toUpperCase(),
       city: this.normalizeOptionalText(row.city),
       country: this.normalizeOptionalText(row.country),
     };
@@ -150,6 +162,14 @@ export class ClientService {
 
       if (!row.name) {
         errors.push('Completa la razón social o nombre del cliente.');
+      }
+
+      if (row.ubigeo && !/^\d{6}$/.test(row.ubigeo)) {
+        errors.push('El ubigeo debe tener 6 dígitos.');
+      }
+
+      if (row.countryCode && !/^[A-Z]{2}$/.test(row.countryCode)) {
+        errors.push('El código de país debe tener 2 letras.');
       }
 
       const duplicateKey =
@@ -420,6 +440,12 @@ export class ClientService {
           documentNumber: row.documentNumber!,
           phone: row.phone,
           address: row.address,
+          ubigeo: row.ubigeo,
+          department: row.department,
+          province: row.province,
+          district: row.district,
+          urbanization: row.urbanization,
+          countryCode: row.countryCode,
           city: row.city,
           country: row.country,
         }),
@@ -442,6 +468,12 @@ export class ClientService {
               tradeName: entity.tradeName,
               phone: entity.phone,
               address: entity.address,
+              ubigeo: entity.ubigeo ?? undefined,
+              department: entity.department ?? undefined,
+              province: entity.province ?? undefined,
+              district: entity.district ?? undefined,
+              urbanization: entity.urbanization ?? undefined,
+              countryCode: entity.countryCode ?? undefined,
               city: entity.city,
               country: entity.country,
               status: 'error',

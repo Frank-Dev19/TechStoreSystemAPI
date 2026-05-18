@@ -40,6 +40,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
       { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
       { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
+      { moduleKey: 'business-profile', label: 'Empresa Emisora', sortOrder: 40, icon: 'fas fa-building' },
       { moduleKey: 'auditoria', label: 'Auditoria', sortOrder: 90, icon: 'fas fa-history' },
       { moduleKey: 'service-category', label: 'Categorias de Servicios', sortOrder: 105, icon: 'fas fa-spa' },
       { moduleKey: 'service', label: 'Servicios', sortOrder: 110, icon: 'fas fa-spa' },
@@ -90,6 +91,10 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'suppliers', actionKey: 'update', description: 'Actualizar proveedores', sortOrder: 30 },
       { moduleKey: 'suppliers', actionKey: 'delete', description: 'Eliminar un proveedor', sortOrder: 60 },
       { moduleKey: 'suppliers', actionKey: 'restore', description: 'Restaurar un proveedor', sortOrder: 70 },
+
+      // Business profile
+      { moduleKey: 'business-profile', actionKey: 'read', description: 'Ver datos de empresa emisora', sortOrder: 10 },
+      { moduleKey: 'business-profile', actionKey: 'update', description: 'Actualizar datos de empresa emisora', sortOrder: 20 },
 
       // Auditoria (demo; ajusta si lo implementas)
       { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoria', sortOrder: 10 },
@@ -174,14 +179,20 @@ export class BootstrapService implements OnModuleInit {
   // ---------- helpers ----------
 
   private async ensureDefaultDocumentTypes() {
-    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad');
-    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes');
+    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad', '1', 'PERSON');
+    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes', '6', 'COMPANY');
   }
 
-  private async ensureDocumentType(name: string, digits: number, description: string) {
+  private async ensureDocumentType(
+    name: string,
+    digits: number,
+    description: string,
+    sunatCode?: string,
+    kind?: 'PERSON' | 'COMPANY',
+  ) {
     let dt = await this.docTypesRepo.findOne({ where: { name }, withDeleted: true });
     if (!dt) {
-      dt = this.docTypesRepo.create({ name, digits, description });
+      dt = this.docTypesRepo.create({ name, digits, description, sunatCode, kind });
       await this.docTypesRepo.save(dt);
       this.log.log(`DocumentType "${name}" creado.`);
       return;
@@ -198,6 +209,14 @@ export class BootstrapService implements OnModuleInit {
     }
     if (dt.description !== description) {
       dt.description = description;
+      dirty = true;
+    }
+    if (sunatCode && dt.sunatCode !== sunatCode) {
+      dt.sunatCode = sunatCode;
+      dirty = true;
+    }
+    if (kind && dt.kind !== kind) {
+      dt.kind = kind;
       dirty = true;
     }
 
