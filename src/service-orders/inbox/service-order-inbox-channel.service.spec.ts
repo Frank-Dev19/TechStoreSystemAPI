@@ -87,4 +87,38 @@ describe('ServiceOrderInboxChannelService', () => {
 
     expect((service as any).normalizeRecipientPhone('999111222')).toBe('51999111222');
   });
+
+  it('dispatches a whatsapp template with document header', async () => {
+    const service = createService({
+      NODE_ENV: 'development',
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: '1075203729009969',
+      WHATSAPP_CLOUD_ACCESS_TOKEN: 'token',
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ messages: [{ id: 'wamid.1' }] }),
+    });
+    global.fetch = fetchMock as any;
+
+    const result = await service.dispatchTemplateMessage({
+      clientPhone: '+51932998578',
+      templateName: 'ordenes_ingresadas_asignadas',
+      languageCode: 'es',
+      documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/token',
+      documentFileName: 'resumen-ordenes.pdf',
+      bodyParameters: ['Juan Pérez', 'tu orden TS-10452'],
+      quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
+      contextToken: 'thread-1',
+    });
+
+    expect(result.status).toBe('SENT');
+    expect(result.externalMessageId).toBe('wamid.1');
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/messages'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"type":"template"'),
+      }),
+    );
+  });
 });

@@ -1,8 +1,12 @@
+import { ForbiddenException } from '@nestjs/common';
+import { promises as fs } from 'fs';
 import { ServiceOrderInboxService } from './service-order-inbox.service';
 import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.service';
 import { ServiceOrderInboxAttachment } from './entities/service-order-inbox-attachment.entity';
 import { ServiceOrderInboxMessage } from './entities/service-order-inbox-message.entity';
+import { ServiceOrderInboxMessageOrderLink } from './entities/service-order-inbox-message-order-link.entity';
 import { ServiceOrderInboxThread } from './entities/service-order-inbox-thread.entity';
+import { ServiceOrderInboxThreadOrderLink } from './entities/service-order-inbox-thread-order-link.entity';
 import { ServiceOrderInboxAuthorRole, ServiceOrderInboxDeliveryStatus, ServiceOrderInboxDirection } from './service-order-inbox.types';
 
 type MockRepo<T = any> = {
@@ -11,6 +15,8 @@ type MockRepo<T = any> = {
   create: jest.Mock;
   find: jest.Mock;
   update: jest.Mock;
+  delete: jest.Mock;
+  remove: jest.Mock;
   createQueryBuilder: jest.Mock;
 };
 
@@ -20,6 +26,8 @@ const createMockRepo = <T = any>(): MockRepo<T> => ({
   create: jest.fn((value) => value),
   find: jest.fn(),
   update: jest.fn(),
+  delete: jest.fn(),
+  remove: jest.fn(),
   createQueryBuilder: jest.fn(),
 });
 
@@ -28,6 +36,8 @@ describe('ServiceOrderInboxService', () => {
   let threadRepository: MockRepo<ServiceOrderInboxThread>;
   let messageRepository: MockRepo<ServiceOrderInboxMessage>;
   let attachmentRepository: MockRepo<ServiceOrderInboxAttachment>;
+  let threadOrderLinkRepository: MockRepo<ServiceOrderInboxThreadOrderLink>;
+  let messageOrderLinkRepository: MockRepo<ServiceOrderInboxMessageOrderLink>;
   let serviceOrderRepository: MockRepo;
   let channelService: jest.Mocked<ServiceOrderInboxChannelService>;
   let messageIdSequence: number;
@@ -36,6 +46,8 @@ describe('ServiceOrderInboxService', () => {
     threadRepository = createMockRepo<ServiceOrderInboxThread>();
     messageRepository = createMockRepo<ServiceOrderInboxMessage>();
     attachmentRepository = createMockRepo<ServiceOrderInboxAttachment>();
+    threadOrderLinkRepository = createMockRepo<ServiceOrderInboxThreadOrderLink>();
+    messageOrderLinkRepository = createMockRepo<ServiceOrderInboxMessageOrderLink>();
     serviceOrderRepository = createMockRepo();
     messageIdSequence = 1;
 
@@ -57,6 +69,8 @@ describe('ServiceOrderInboxService', () => {
       threadRepository as any,
       messageRepository as any,
       attachmentRepository as any,
+      threadOrderLinkRepository as any,
+      messageOrderLinkRepository as any,
       serviceOrderRepository as any,
       channelService,
     );
@@ -74,6 +88,7 @@ describe('ServiceOrderInboxService', () => {
     });
 
     jest.spyOn(service as any, 'getThreadWithAccess').mockResolvedValue(thread);
+    jest.spyOn(service, 'hasCustomerServiceWindow').mockResolvedValue(true);
     jest.spyOn(service as any, 'persistUploadedAttachment').mockResolvedValue({
       entity: {
         id: 501,
@@ -119,6 +134,7 @@ describe('ServiceOrderInboxService', () => {
     const thread = createThread();
 
     jest.spyOn(service as any, 'getThreadWithAccess').mockResolvedValue(thread);
+    jest.spyOn(service, 'hasCustomerServiceWindow').mockResolvedValue(true);
     channelService.dispatchTextMessage.mockRejectedValue(new Error('meta-text-failed'));
 
     await expect(
@@ -131,6 +147,24 @@ describe('ServiceOrderInboxService', () => {
     ).rejects.toThrow('meta-text-failed');
   });
 
+  it('rechaza mensajes manuales cuando la ventana de 24h está cerrada', async () => {
+    const thread = createThread();
+
+    jest.spyOn(service as any, 'getThreadWithAccess').mockResolvedValue(thread);
+    jest.spyOn(service, 'hasCustomerServiceWindow').mockResolvedValue(false);
+
+    await expect(
+      service.sendMessage(
+        thread.id,
+        { text: 'hola cliente' },
+        [],
+        { role: 'RECEPTION', userId: 22, displayName: 'Recepcion' },
+      ),
+    ).rejects.toThrow('No se pueden enviar mensajes manuales porque la ventana de 24 horas de WhatsApp está cerrada.');
+
+    expect(channelService.dispatchTextMessage).not.toHaveBeenCalled();
+  });
+
   it('ordena threads sin usar expresiones que TypeORM no puede resolver como alias', async () => {
     const qb = {
       innerJoinAndSelect: jest.fn().mockReturnThis(),
@@ -138,6 +172,7 @@ describe('ServiceOrderInboxService', () => {
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       addOrderBy: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
@@ -217,6 +252,9 @@ describe('ServiceOrderInboxService', () => {
       .mockResolvedValueOnce({
         thread,
       } as any)
+      .mockResolvedValueOnce({
+        orderLinks: [],
+      } as any)
       .mockResolvedValueOnce(createdMessage as any);
 
     const result = await service.receiveInboundMessage({
@@ -236,20 +274,51 @@ describe('ServiceOrderInboxService', () => {
     );
   });
 
-  it('rechaza inbound con teléfono ambiguo indicando ambiguous-phone', async () => {
+  it('consolida hilos por teléfono y acepta inbound ambiguo en bandeja unificada', async () => {
     threadRepository.find.mockResolvedValue([
       createThread({ id: 11, clientPhoneSnapshot: '51999111222' }),
       createThread({ id: 12, clientPhoneSnapshot: '51999111222' }),
     ] as any);
-
-    await expect(
-      service.receiveInboundMessage({
-        externalMessageId: 'wamid-inbound-3',
-        from: '+51999111222',
+    threadOrderLinkRepository.find.mockResolvedValue([]);
+    threadRepository.findOne.mockResolvedValue(createThread({ id: 11, clientPhoneSnapshot: '51999111222' }) as any);
+    messageRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createMessage({
+        id: 93,
+        threadId: 11,
+        direction: ServiceOrderInboxDirection.INBOUND,
+        authorRole: ServiceOrderInboxAuthorRole.CLIENT,
         text: 'hola',
-        attachments: [],
-      }),
-    ).rejects.toThrow('ambiguous-phone');
+        deliveryStatus: ServiceOrderInboxDeliveryStatus.RECEIVED,
+        externalMessageId: 'wamid-inbound-3',
+      }) as any);
+
+    const result = await service.receiveInboundMessage({
+      externalMessageId: 'wamid-inbound-3',
+      from: '+51999111222',
+      text: 'hola',
+      attachments: [],
+    });
+
+    expect(result.id).toBe(93);
+    expect(threadRepository.delete).toHaveBeenCalledWith({ id: 12 });
+  });
+
+  it('puede consolidar hilos históricos duplicados por teléfono de forma explícita', async () => {
+    threadRepository.find
+      .mockResolvedValueOnce([
+        createThread({ id: 21, clientPhoneSnapshot: '51999111222' }),
+        createThread({ id: 22, clientPhoneSnapshot: '51999111222' }),
+        createThread({ id: 23, clientPhoneSnapshot: '51988777666' }),
+      ] as any)
+      .mockResolvedValueOnce([]);
+    threadOrderLinkRepository.find.mockResolvedValue([]);
+    threadRepository.findOne.mockResolvedValue(createThread({ id: 21, clientPhoneSnapshot: '51999111222' }) as any);
+
+    const consolidated = await service.consolidateHistoricalThreads();
+
+    expect(consolidated).toBe(1);
+    expect(threadRepository.delete).toHaveBeenCalledWith({ id: 22 });
   });
 
   it('rechaza sample sin routeable data indicando missing-routing-data', async () => {
@@ -276,17 +345,239 @@ describe('ServiceOrderInboxService', () => {
       reason: 'unknown-external-message-id',
     });
   });
+
+  it('expone la conversación completa del cliente a técnicos con una orden activa asignada en el hilo', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 7, displayName: 'Tecnico 7' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, code: 'SO-001', assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, code: 'SO-002', assignedToTechnicianId: 8 }) }),
+      ],
+    });
+    const visibleMessage = createMessage({
+      id: 1,
+      threadId: thread.id,
+      text: 'visible',
+      orderLinks: [createMessageOrderLink({ messageId: 1, serviceOrderId: 10 })],
+    });
+    const hiddenMessage = createMessage({
+      id: 2,
+      threadId: thread.id,
+      text: 'hidden',
+      orderLinks: [createMessageOrderLink({ messageId: 2, serviceOrderId: 11 })],
+    });
+    const ambiguousMessage = createMessage({ id: 3, threadId: thread.id, text: 'ambiguous', orderLinks: [] });
+
+    jest.spyOn(service as any, 'getThreadWithAccess').mockResolvedValue(thread);
+    messageRepository.find.mockResolvedValue([visibleMessage, hiddenMessage, ambiguousMessage] as any);
+
+    const result = await service.getMessages(thread.id, technicianViewer);
+    const orders = await service.listThreadOrders(thread.id, technicianViewer);
+
+    expect(result.thread.serviceOrderIds).toEqual([10, 11]);
+    expect(result.messages).toEqual([
+      expect.objectContaining({ id: 1, serviceOrderIds: [10] }),
+      expect.objectContaining({ id: 2, serviceOrderIds: [11] }),
+      expect.objectContaining({ id: 3, serviceOrderIds: [] }),
+    ]);
+    expect(orders.map((order) => order.id)).toEqual([10, 11]);
+  });
+
+  it('resume el último mensaje real del canal para técnicos aunque pertenezca a otra orden activa del hilo', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 7, displayName: 'Tecnico 7' };
+    const thread = createThread({
+      lastMessageText: 'hidden latest',
+      lastMessageAt: new Date('2026-04-05T14:00:00.000Z'),
+      lastCustomerMessageAt: new Date('2026-04-05T14:00:00.000Z'),
+      lastMessageDirection: ServiceOrderInboxDirection.INBOUND,
+      lastMessageAuthorRole: ServiceOrderInboxAuthorRole.CLIENT,
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, code: 'SO-001', assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, code: 'SO-002', assignedToTechnicianId: 8 }) }),
+      ],
+    });
+    const qb = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[thread], 1]),
+    };
+    threadRepository.createQueryBuilder.mockReturnValue(qb as any);
+    messageRepository.find.mockResolvedValue([
+      createMessage({
+        id: 1,
+        threadId: thread.id,
+        text: 'visible older',
+        createdAt: new Date('2026-04-05T13:00:00.000Z'),
+        direction: ServiceOrderInboxDirection.OUTBOUND,
+        authorRole: ServiceOrderInboxAuthorRole.TECHNICIAN,
+        orderLinks: [createMessageOrderLink({ messageId: 1, serviceOrderId: 10 })],
+      }),
+      createMessage({
+        id: 2,
+        threadId: thread.id,
+        text: 'hidden latest',
+        createdAt: new Date('2026-04-05T14:00:00.000Z'),
+        direction: ServiceOrderInboxDirection.INBOUND,
+        authorRole: ServiceOrderInboxAuthorRole.CLIENT,
+        orderLinks: [createMessageOrderLink({ messageId: 2, serviceOrderId: 11 })],
+      }),
+    ] as any);
+
+    const result = await service.listThreads({ page: 1, limit: 10 }, technicianViewer);
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        serviceOrderIds: [10, 11],
+        lastMessageText: 'hidden latest',
+        lastMessageAt: '2026-04-05T14:00:00.000Z',
+        lastCustomerMessageAt: '2026-04-05T14:00:00.000Z',
+        lastMessageDirection: ServiceOrderInboxDirection.INBOUND,
+        lastMessageAuthorRole: ServiceOrderInboxAuthorRole.CLIENT,
+      }),
+    );
+  });
+
+  it('permite descargar adjuntos del hilo cuando el técnico tiene una orden activa asignada en ese canal', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 7, displayName: 'Tecnico 7' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, assignedToTechnicianId: 8 }) }),
+      ],
+    });
+    attachmentRepository.findOne.mockResolvedValue({
+      id: 501,
+      fileName: 'secreto.pdf',
+      mimeType: 'application/pdf',
+      cachedFilePath: 'C:/tmp/secreto.pdf',
+      providerMediaId: null,
+      attachmentType: 'pdf',
+      message: {
+        id: 22,
+        threadId: thread.id,
+        thread,
+        orderLinks: [createMessageOrderLink({ messageId: 22, serviceOrderId: 11 })],
+      },
+    } as any);
+
+    const accessSpy = jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+
+    await expect(service.downloadAttachment(501, technicianViewer)).resolves.toEqual({
+      fileName: 'secreto.pdf',
+      mimeType: 'application/pdf',
+      absolutePath: 'C:\\tmp\\secreto.pdf',
+    });
+
+    accessSpy.mockRestore();
+  });
+
+  it('rechaza que un técnico quite o reemplace vínculos de mensajes ajenos dentro del mismo hilo consolidado', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 7, displayName: 'Tecnico 7' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, assignedToTechnicianId: 8 }) }),
+      ],
+    });
+    messageRepository.findOne.mockResolvedValue({
+      id: 31,
+      threadId: thread.id,
+      thread,
+      orderLinks: [createMessageOrderLink({ messageId: 31, serviceOrderId: 11 })],
+    } as any);
+
+    await expect(service.replaceMessageOrderLinks(31, [], technicianViewer)).rejects.toThrow(ForbiddenException);
+    await expect(service.replaceMessageOrderLinks(31, [10], technicianViewer)).rejects.toThrow(ForbiddenException);
+    expect(messageOrderLinkRepository.remove).not.toHaveBeenCalled();
+  });
+
+  it('rechaza que un técnico envíe mensajes asociados a órdenes no asignadas del mismo hilo', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 7, displayName: 'Tecnico 7' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, assignedToTechnicianId: 8 }) }),
+      ],
+    });
+
+    jest.spyOn(service as any, 'getThreadWithAccess').mockResolvedValue(thread);
+
+    await expect(
+      service.sendMessage(thread.id, { text: 'hola', serviceOrderIds: [11] }, [], technicianViewer),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rechaza acceso al hilo para un técnico sin ninguna orden activa asignada en ese canal', async () => {
+    const technicianViewer = { role: 'TECHNICIAN' as const, userId: 9, displayName: 'Tecnico 9' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, assignedToTechnicianId: 8 }) }),
+      ],
+    });
+
+    threadRepository.findOne.mockResolvedValue(thread as any);
+
+    await expect(service.getMessages(thread.id, technicianViewer)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('mantiene capacidad de relink completo para roles elevados en hilos compartidos', async () => {
+    const adminViewer = { role: 'ADMIN' as const, userId: 1, displayName: 'Admin' };
+    const thread = createThread({
+      orderLinks: [
+        createThreadOrderLink({ serviceOrderId: 10, serviceOrder: createServiceOrderStub({ id: 10, assignedToTechnicianId: 7 }) }),
+        createThreadOrderLink({ serviceOrderId: 11, serviceOrder: createServiceOrderStub({ id: 11, assignedToTechnicianId: 8 }) }),
+      ],
+    });
+
+    messageRepository.findOne.mockResolvedValue({
+      id: 31,
+      threadId: thread.id,
+      thread,
+      orderLinks: [createMessageOrderLink({ messageId: 31, serviceOrderId: 11 })],
+    } as any);
+    messageOrderLinkRepository.find.mockResolvedValue([
+      createMessageOrderLink({ id: 901, messageId: 31, serviceOrderId: 11 }),
+    ] as any);
+
+    await expect(service.replaceMessageOrderLinks(31, [10], adminViewer)).resolves.toEqual({
+      ok: true,
+      messageId: 31,
+      serviceOrderIds: [10],
+    });
+
+    expect(messageOrderLinkRepository.remove).toHaveBeenCalled();
+    expect(messageOrderLinkRepository.save).toHaveBeenCalledWith([
+      expect.objectContaining({ messageId: 31, serviceOrderId: 10 }),
+    ]);
+  });
+
+  it('trata admin + technician como acceso elevado y no como técnico restringido', () => {
+    expect(
+      service.buildViewerContext({ sub: 99, roles: [{ name: 'admin' }, { name: 'technician' }] }),
+    ).toEqual({
+      userId: 99,
+      displayName: null,
+      role: 'ADMIN',
+    });
+  });
 });
 
 function createThread(overrides: Partial<ServiceOrderInboxThread> = {}): ServiceOrderInboxThread {
   return {
     id: 1,
-    serviceOrderId: 10,
-    serviceOrder: { id: 10, assignedToTechnicianId: null, clientId: null } as any,
+    clientId: 20,
     clientPhoneSnapshot: '999111222',
+    clientDisplayNameSnapshot: 'Cliente Demo',
     externalThreadKey: 'ctx-123',
     lastMessageText: null,
     lastMessageAt: null,
+    lastCustomerMessageAt: null,
     lastMessageDirection: null,
     lastMessageAuthorRole: null,
     unreadForReception: 0,
@@ -294,6 +585,15 @@ function createThread(overrides: Partial<ServiceOrderInboxThread> = {}): Service
     unreadForSupervisor: 0,
     createdAt: new Date('2026-04-05T12:00:00.000Z'),
     updatedAt: new Date('2026-04-05T12:00:00.000Z'),
+    orderLinks: [
+      {
+        id: 401,
+        threadId: 1,
+        serviceOrderId: 10,
+        serviceOrder: { id: 10, code: 'SO-001', assignedToTechnicianId: null, clientId: 20, operativeStatus: 'ABIERTA' } as any,
+        createdAt: new Date('2026-04-05T12:00:00.000Z'),
+      } as any,
+    ],
     ...overrides,
   } as ServiceOrderInboxThread;
 }
@@ -314,8 +614,50 @@ function createMessage(overrides: Partial<ServiceOrderInboxMessage & { attachmen
     createdAt: new Date('2026-04-05T12:00:00.000Z'),
     updatedAt: new Date('2026-04-05T12:00:00.000Z'),
     attachments: [],
+    orderLinks: [],
     ...overrides,
   };
+}
+
+function createThreadOrderLink(overrides: Partial<ServiceOrderInboxThreadOrderLink> = {}): ServiceOrderInboxThreadOrderLink {
+  return {
+    id: 401,
+    threadId: 1,
+    serviceOrderId: 10,
+    serviceOrder: createServiceOrderStub(),
+    createdAt: new Date('2026-04-05T12:00:00.000Z'),
+    ...overrides,
+  } as ServiceOrderInboxThreadOrderLink;
+}
+
+function createMessageOrderLink(overrides: Partial<ServiceOrderInboxMessageOrderLink> = {}): ServiceOrderInboxMessageOrderLink {
+  return {
+    id: 801,
+    messageId: 1,
+    serviceOrderId: 10,
+    createdAt: new Date('2026-04-05T12:00:00.000Z'),
+    ...overrides,
+  } as ServiceOrderInboxMessageOrderLink;
+}
+
+function createServiceOrderStub(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 10,
+    code: 'SO-001',
+    assignedToTechnicianId: null,
+    assignedTechnician: null,
+    clientId: 20,
+    operativeStatus: 'ABIERTA',
+    technicalStatus: 'PENDIENTE_ASIGNACION',
+    commercialStatus: 'NO_REQUIERE',
+    economicStatus: 'NO_APLICA',
+    equipmentType: 'LAPTOP',
+    equipmentTypeOther: null,
+    brand: null,
+    model: null,
+    clientSnapshotName: 'Cliente Demo',
+    ...overrides,
+  } as any;
 }
 
 function createUploadedFile() {

@@ -1,3 +1,4 @@
+export const ADMIN_ROLE_NAMES = ['admin'] as const;
 export const RECEPTIONIST_ROLE_NAMES = ['receptionist', 'recepcionista', 'recepcionist'] as const;
 export const TECHNICIAN_ROLE_NAMES = ['technician', 'tecnico'] as const;
 export const SUPERVISOR_ROLE_NAMES = ['supervisor'] as const;
@@ -19,3 +20,11 @@ export const hasRoleName = (
     return normalized ? allowed.includes(normalized) : false;
   });
 };
+
+export const hasElevatedServiceOrderRole = (roles: NamedRole[] | undefined | null): boolean =>
+  hasRoleName(roles, ADMIN_ROLE_NAMES) ||
+  hasRoleName(roles, SUPERVISOR_ROLE_NAMES) ||
+  hasRoleName(roles, RECEPTIONIST_ROLE_NAMES);
+
+export const isTechnicianScopedRoleSet = (roles: NamedRole[] | undefined | null): boolean =>
+  hasRoleName(roles, TECHNICIAN_ROLE_NAMES) && !hasElevatedServiceOrderRole(roles);

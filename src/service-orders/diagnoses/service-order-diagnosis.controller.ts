@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ServiceOrderDiagnosisService } from './service-order-diagnosis.service';
@@ -33,8 +34,8 @@ export class ServiceOrderDiagnosisController {
 
   @Permissions('service-order-diagnosis.read')
   @Get()
-  findAll(@Query() query: any) {
-    return this.serviceOrderDiagnosisService.findAll(query);
+  findAll(@Query() query: any, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.findAll(query, req.user);
   }
 
   @Permissions('service-order-diagnosis.read')
@@ -42,43 +43,44 @@ export class ServiceOrderDiagnosisController {
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @Query('withDeleted') withDeleted?: string,
+    @Req() req?: any,
   ) {
-    return this.serviceOrderDiagnosisService.findOne(id, withDeleted === 'true');
+    return this.serviceOrderDiagnosisService.findOne(id, withDeleted === 'true', req?.user);
   }
 
   @Permissions('service-order-diagnosis.create')
   @Post()
-  create(@Body() dto: CreateServiceOrderDiagnosisDto) {
-    return this.serviceOrderDiagnosisService.create(dto);
+  create(@Body() dto: CreateServiceOrderDiagnosisDto, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.create(dto, req.user);
   }
 
   @Permissions('service-order-diagnosis.update')
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDiagnosisDto) {
-    return this.serviceOrderDiagnosisService.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDiagnosisDto, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.update(id, dto, req.user);
   }
 
   @Permissions('service-order-diagnosis.delete')
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.serviceOrderDiagnosisService.softDelete(id);
+  remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.softDelete(id, req.user);
   }
 
   @Permissions('service-order-diagnosis.restore')
   @Patch(':id/restore')
-  restore(@Param('id', ParseIntPipe) id: number) {
-    return this.serviceOrderDiagnosisService.restore(id);
+  restore(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.restore(id, req.user);
   }
 
   @Permissions('service-order-diagnosis.delete')
   @Post('bulk-delete')
-  bulkDelete(@Body() dto: BulkOperationsDto) {
-    return this.serviceOrderDiagnosisService.bulkSoftDelete(dto.ids);
+  bulkDelete(@Body() dto: BulkOperationsDto, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.bulkSoftDelete(dto.ids, req.user);
   }
 
   @Permissions('service-order-diagnosis.restore')
   @Post('bulk-restore')
-  bulkRestore(@Body() dto: BulkOperationsDto) {
-    return this.serviceOrderDiagnosisService.bulkRestore(dto.ids);
+  bulkRestore(@Body() dto: BulkOperationsDto, @Req() req: any) {
+    return this.serviceOrderDiagnosisService.bulkRestore(dto.ids, req.user);
   }
 }

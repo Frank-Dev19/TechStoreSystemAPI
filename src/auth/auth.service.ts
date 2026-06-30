@@ -86,9 +86,10 @@ export class AuthService {
     }
 
     private setRefreshCookie(res: Response, token: string) {
+        const isProduction = this.cfg.get<string>('NODE_ENV') === 'production';
         res.cookie(this.cookieName, token, {
             httpOnly: true,
-            secure: false,
+            secure: isProduction,
             sameSite: (this.cfg.get<string>('COOKIE_SAMESITE') as any) || 'lax',
             path: '/auth/refresh',
             maxAge: 1000 * 60 * 60 * 24 * 30,

@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderCommercialStatus, ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceType } from '../enums/service-type.enum';
@@ -235,5 +235,54 @@ describe('ServiceOrderDiagnosisService', () => {
     expect(diagnosisRepository.manager.transaction).not.toHaveBeenCalled();
     expect(workflowService.changeTechnicalStatus).not.toHaveBeenCalled();
     expect(serviceOrderRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('impide que un técnico cree diagnósticos para órdenes ajenas', async () => {
+    serviceOrderRepository.findOne.mockResolvedValue(createServiceOrder({ assignedToTechnicianId: 5 }));
+
+    await expect(
+      service.create(
+        {
+          serviceOrderId: 1,
+          sequenceNumber: 1,
+          outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
+          summary: 'Intento no autorizado',
+        },
+        { sub: 9, roles: [{ name: 'technician' }] } as any,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(diagnosisRepository.manager.transaction).not.toHaveBeenCalled();
+  });
+
+  it('permite que recepción con rol técnico adicional cree diagnósticos para órdenes ajenas', async () => {
+    const serviceOrder = createServiceOrder({ assignedToTechnicianId: 33 });
+    const newDiagnosis = {
+      id: 13,
+      serviceOrderId: serviceOrder.id,
+      sequenceNumber: 4,
+      status: ServiceOrderDiagnosisStatus.CURRENT,
+      outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
+      summary: 'Se puede reparar',
+    } as ServiceOrderDiagnosis;
+
+    diagnosisRepository.findOne.mockResolvedValue(null);
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+
+    const updateQueryBuilder = createUpdateQueryBuilder();
+    transactionRepository.createQueryBuilder.mockReturnValue(updateQueryBuilder);
+    transactionRepository.save.mockResolvedValue(newDiagnosis);
+
+    await expect(
+      service.create(
+        {
+          serviceOrderId: serviceOrder.id,
+          sequenceNumber: 4,
+          summary: 'Se puede reparar',
+          outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
+        },
+        { sub: 77, roles: [{ name: 'recepcionist' }, { name: 'technician' }] } as any,
+      ),
+    ).resolves.toBe(newDiagnosis);
   });
 });

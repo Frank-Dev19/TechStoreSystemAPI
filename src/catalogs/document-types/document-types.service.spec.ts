@@ -152,6 +152,26 @@ describe('DocumentTypesService', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('usa búsqueda compatible con MySQL normalizando a lowercase', async () => {
+    const queryBuilder = {
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    repository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    await service.findAll({ search: 'DNI' });
+
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'LOWER(documentType.name) LIKE :search',
+      { search: '%dni%' },
+    );
+  });
+
   it('lanza not found al buscar un id inexistente', async () => {
     repository.findOne.mockResolvedValue(null);
 

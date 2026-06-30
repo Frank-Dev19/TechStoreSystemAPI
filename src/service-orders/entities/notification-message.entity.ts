@@ -15,12 +15,12 @@ export class NotificationMessage {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 
-  @ManyToOne(() => ServiceOrder, { eager: false, nullable: false, onDelete: 'CASCADE' })
+  @ManyToOne(() => ServiceOrder, { eager: false, nullable: true, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'service_order_id' })
-  serviceOrder: ServiceOrder;
+  serviceOrder: ServiceOrder | null;
 
-  @Column({ name: 'service_order_id', type: 'bigint', unsigned: true })
-  serviceOrderId: number;
+  @Column({ name: 'service_order_id', type: 'bigint', unsigned: true, nullable: true })
+  serviceOrderId: number | null;
 
   @Column({ name: 'channel', type: 'varchar', length: 30 })
   channel: string;
@@ -39,6 +39,12 @@ export class NotificationMessage {
 
   @Column({ name: 'status', type: 'varchar', length: 30, default: 'PENDING' })
   status: string;
+
+  @Column({ name: 'scope', type: 'varchar', length: 20, default: 'ORDER' })
+  scope: string;
+
+  @Column({ name: 'metadata_json', type: 'longtext', nullable: true })
+  metadataJson: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -265,11 +265,21 @@ export class ServiceOrderAgreementsService {
     });
 
     await this.syncCanonicalCommercialAfterAgreementCreate(serviceOrder.id, targetStatus, agreement.totalAmount);
-    if (targetStatus === ServiceOrderAgreementStatus.CONFIRMED) {
-      await this.messageMatrixService.notifyAgreementConfirmed(
-        await this.ensureServiceOrder(serviceOrder.id),
-        agreement.id,
-      );
+    if (targetStatus === ServiceOrderAgreementStatus.DRAFT && serviceOrder.serviceType === ServiceType.DIAGNOSIS) {
+      const freshServiceOrder = await this.ensureServiceOrder(serviceOrder.id);
+      if (baseAgreement) {
+        await this.messageMatrixService.notifyRediagnosisAgreementAvailable(
+          freshServiceOrder,
+          agreement.id,
+          agreement.totalAmount,
+        );
+      } else {
+        await this.messageMatrixService.notifyAgreementAvailable(
+          freshServiceOrder,
+          agreement.id,
+          agreement.totalAmount,
+        );
+      }
     }
     return this.findOne(agreement.id);
   }
@@ -343,7 +353,14 @@ export class ServiceOrderAgreementsService {
       throw new BadRequestException('Only draft agreements can be confirmed');
     }
 
+    this.workflowService.assertTransitionAllowed(
+      agreement.serviceOrder.technicalStatus,
+      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+    );
+
     await this.agreementRepository.manager.transaction(async (manager) => {
+      const serviceOrder = await this.ensureServiceOrder(agreement.serviceOrderId, manager);
+
       await manager
         .getRepository(ServiceOrderAgreement)
         .createQueryBuilder()
@@ -360,18 +377,28 @@ export class ServiceOrderAgreementsService {
         status: ServiceOrderAgreementStatus.CONFIRMED,
         agreedAt: new Date(),
       });
+
+      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.AUTORIZADA;
+      serviceOrder.technicalStatus = ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
+      serviceOrder.montoComprometidoVigente = Number(agreement.totalAmount ?? 0);
+      serviceOrder.economicStatus = Number(agreement.totalAmount ?? 0) > 0
+        ? ServiceOrderEconomicStatus.PENDIENTE
+        : ServiceOrderEconomicStatus.NO_APLICA;
+
+      await manager.getRepository(ServiceOrder).save(serviceOrder);
     });
 
-    await this.workflowService.changeTechnicalStatus(
-      agreement.serviceOrderId,
-      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
-    );
-    await this.syncCanonicalCommercialAfterConfirmation(agreement.serviceOrderId, agreement.totalAmount);
-    await this.messageMatrixService.notifyAgreementConfirmed(
-      await this.ensureServiceOrder(agreement.serviceOrderId),
-      agreement.id,
-    );
-    return this.findOne(id);
+    const confirmedAgreement = await this.findOne(id);
+    try {
+      await this.messageMatrixService.notifyAgreementConfirmed(
+        await this.ensureServiceOrder(agreement.serviceOrderId),
+        agreement.id,
+      );
+    } catch {
+      // Keep committed financial state even if notification delivery fails.
+    }
+
+    return confirmedAgreement;
   }
 
   async void(id: number, notes?: string) {
@@ -388,6 +415,11 @@ export class ServiceOrderAgreementsService {
       await this.createAutomaticTechnicalServiceAgreement(agreement.serviceOrderId, notes);
     }
     await this.syncCanonicalCommercialAfterVoid(agreement.serviceOrderId);
+    if (agreement.serviceOrder?.serviceType === ServiceType.DIAGNOSIS) {
+      await this.messageMatrixService.notifyCancellationWithDiagnosisFee(
+        await this.ensureServiceOrder(agreement.serviceOrderId),
+      );
+    }
     return this.findOne(id);
   }
 
@@ -518,8 +550,9 @@ export class ServiceOrderAgreementsService {
     return agreement;
   }
 
-  private async ensureServiceOrder(id: number) {
-    const serviceOrder = await this.serviceOrderRepository.findOne({ where: { id } });
+  private async ensureServiceOrder(id: number, manager?: EntityManager) {
+    const repository = manager?.getRepository(ServiceOrder) ?? this.serviceOrderRepository;
+    const serviceOrder = await repository.findOne({ where: { id } });
     if (!serviceOrder) throw new NotFoundException(`ServiceOrder with id ${id} not found`);
     return serviceOrder;
   }

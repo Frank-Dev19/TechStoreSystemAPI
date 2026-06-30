@@ -7,13 +7,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { promises as fs } from 'fs';
 import { basename, extname, join, resolve } from 'path';
 import { randomUUID } from 'crypto';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderOperativeStatus } from '../enums';
 import {
+  ADMIN_ROLE_NAMES,
   RECEPTIONIST_ROLE_NAMES,
   SUPERVISOR_ROLE_NAMES,
   TECHNICIAN_ROLE_NAMES,
@@ -23,6 +24,8 @@ import { normalizeComparablePhone as normalizeComparablePhoneValue } from '../..
 import { ServiceOrderInboxThread } from './entities/service-order-inbox-thread.entity';
 import { ServiceOrderInboxMessage } from './entities/service-order-inbox-message.entity';
 import { ServiceOrderInboxAttachment } from './entities/service-order-inbox-attachment.entity';
+import { ServiceOrderInboxThreadOrderLink } from './entities/service-order-inbox-thread-order-link.entity';
+import { ServiceOrderInboxMessageOrderLink } from './entities/service-order-inbox-message-order-link.entity';
 import {
   DispatchOutboundResult,
   NormalizedInboundMessage,
@@ -49,6 +52,10 @@ type InboxViewerContext = {
 type StoredAttachmentPayload = {
   entity: ServiceOrderInboxAttachment;
   base64Data?: string | null;
+};
+
+type ThreadWithRelations = ServiceOrderInboxThread & {
+  orderLinks?: ServiceOrderInboxThreadOrderLink[];
 };
 
 type UploadedFile = {
@@ -97,6 +104,10 @@ export class ServiceOrderInboxService {
     private readonly messageRepository: Repository<ServiceOrderInboxMessage>,
     @InjectRepository(ServiceOrderInboxAttachment)
     private readonly attachmentRepository: Repository<ServiceOrderInboxAttachment>,
+    @InjectRepository(ServiceOrderInboxThreadOrderLink)
+    private readonly threadOrderLinkRepository: Repository<ServiceOrderInboxThreadOrderLink>,
+    @InjectRepository(ServiceOrderInboxMessageOrderLink)
+    private readonly messageOrderLinkRepository: Repository<ServiceOrderInboxMessageOrderLink>,
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     private readonly channelService: ServiceOrderInboxChannelService,
@@ -107,6 +118,9 @@ export class ServiceOrderInboxService {
     const userId = Number(user?.sub ?? user?.id ?? 0) || null;
     const displayName = typeof user?.name === 'string' ? user.name : null;
 
+    if (hasRoleName(roles, ADMIN_ROLE_NAMES)) {
+      return { userId, displayName, role: 'ADMIN' };
+    }
     if (hasRoleName(roles, SUPERVISOR_ROLE_NAMES)) {
       return { userId, displayName, role: 'SUPERVISOR' };
     }
@@ -117,6 +131,132 @@ export class ServiceOrderInboxService {
       return { userId, displayName, role: 'TECHNICIAN' };
     }
     return { userId, displayName, role: 'ADMIN' };
+  }
+
+  async getThreadForServiceOrder(serviceOrderId: number, viewer: InboxViewerContext) {
+    const thread = await this.ensureThreadForOrder(serviceOrderId, viewer);
+    return this.mapThreadSummary(thread, viewer);
+  }
+
+  async listThreadOrders(threadId: number, viewer: InboxViewerContext) {
+    const thread = await this.getThreadWithAccess(threadId, viewer);
+    return this.mapThreadOrders(thread, viewer);
+  }
+
+  async replaceMessageOrderLinks(messageId: number, serviceOrderIds: number[], viewer: InboxViewerContext) {
+    const message = await this.messageRepository.findOne({
+      where: { id: messageId },
+      relations: ['thread', 'thread.orderLinks', 'thread.orderLinks.serviceOrder', 'orderLinks'],
+    });
+    if (!message?.thread) {
+      throw new NotFoundException('Mensaje no encontrado');
+    }
+
+    await this.ensureThreadAccess(message.thread as ThreadWithRelations, viewer, true);
+    this.ensureMessageScopedAccess(message, message.thread as ThreadWithRelations, viewer, true);
+
+    const normalizedIds = this.resolveRequestedServiceOrderIds(message.thread as ThreadWithRelations, serviceOrderIds, viewer);
+
+    const existingLinks = await this.messageOrderLinkRepository.find({ where: { messageId } });
+    if (existingLinks.length) {
+      await this.messageOrderLinkRepository.remove(existingLinks);
+    }
+
+    if (normalizedIds.length) {
+      await this.messageOrderLinkRepository.save(
+        normalizedIds.map((serviceOrderId) =>
+          this.messageOrderLinkRepository.create({
+            messageId,
+            serviceOrderId,
+          }),
+        ),
+      );
+    }
+
+    return {
+      ok: true,
+      messageId,
+      serviceOrderIds: normalizedIds,
+    };
+  }
+
+  async hasThreadActivity(serviceOrderId: number): Promise<boolean> {
+    const thread = await this.findThreadByServiceOrderId(serviceOrderId);
+    return !!thread?.lastMessageAt;
+  }
+
+  async hasCustomerServiceWindow(serviceOrderId: number): Promise<boolean> {
+    const thread = await this.findThreadByServiceOrderId(serviceOrderId);
+    if (!thread?.lastCustomerMessageAt) {
+      return false;
+    }
+
+    return Date.now() - thread.lastCustomerMessageAt.getTime() <= 24 * 60 * 60 * 1000;
+  }
+
+  private async hasManualOutboundWindow(
+    thread: ThreadWithRelations,
+    primaryServiceOrderId: number | null,
+  ): Promise<boolean> {
+    if (primaryServiceOrderId) {
+      return this.hasCustomerServiceWindow(primaryServiceOrderId);
+    }
+
+    if (!thread.lastCustomerMessageAt) {
+      return false;
+    }
+
+    return Date.now() - thread.lastCustomerMessageAt.getTime() <= 24 * 60 * 60 * 1000;
+  }
+
+  async syncThreadClientPhoneSnapshotForOrder(serviceOrderId: number, nextPhone: string | null | undefined): Promise<void> {
+    const thread = await this.findThreadByServiceOrderId(serviceOrderId);
+    if (!thread) {
+      return;
+    }
+
+    const normalizedNextPhone = this.normalizeComparablePhone(nextPhone);
+    if (thread.clientPhoneSnapshot === normalizedNextPhone) {
+      return;
+    }
+
+    thread.clientPhoneSnapshot = normalizedNextPhone;
+    await this.threadRepository.save(thread);
+  }
+
+  async consolidateHistoricalThreads(): Promise<number> {
+    const threads = (await this.threadRepository.find({
+      relations: [
+        'orderLinks',
+        'orderLinks.serviceOrder',
+        'orderLinks.serviceOrder.assignedTechnician',
+        'orderLinks.serviceOrder.client',
+      ],
+    })) as ThreadWithRelations[];
+
+    const grouped = new Map<string, ThreadWithRelations[]>();
+    for (const thread of threads) {
+      const phone = this.normalizeComparablePhone(thread.clientPhoneSnapshot);
+      if (!phone) {
+        continue;
+      }
+
+      const existing = grouped.get(phone) ?? [];
+      existing.push(thread);
+      grouped.set(phone, existing);
+    }
+
+    let consolidatedCount = 0;
+    for (const duplicates of grouped.values()) {
+      if (duplicates.length <= 1) {
+        continue;
+      }
+
+      await this.consolidateThreads(duplicates);
+      consolidatedCount += duplicates.length - 1;
+    }
+
+    return consolidatedCount;
   }
 
   async listThreads(query: ServiceOrderInboxQueryDto, viewer: InboxViewerContext) {
@@ -130,14 +270,15 @@ export class ServiceOrderInboxService {
 
     const qb = this.threadRepository
       .createQueryBuilder('thread')
-      .innerJoinAndSelect('thread.serviceOrder', 'serviceOrder')
+      .leftJoinAndSelect('thread.orderLinks', 'orderLink')
+      .leftJoinAndSelect('orderLink.serviceOrder', 'serviceOrder')
       .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
       .leftJoinAndSelect('serviceOrder.client', 'client');
 
     this.applyViewerScope(qb, viewer);
 
     if (serviceOrderId) {
-      qb.andWhere('thread.serviceOrderId = :serviceOrderId', { serviceOrderId });
+      qb.andWhere('orderLink.serviceOrderId = :serviceOrderId', { serviceOrderId });
     }
 
     const search = query.search?.trim().toLowerCase();
@@ -149,13 +290,15 @@ export class ServiceOrderInboxService {
             .orWhere('LOWER(serviceOrder.clientSnapshotName) LIKE :search')
             .orWhere('LOWER(serviceOrder.clientSnapshotDocumentNumber) LIKE :search')
             .orWhere('LOWER(serviceOrder.brand) LIKE :search')
-            .orWhere('LOWER(serviceOrder.model) LIKE :search');
+            .orWhere('LOWER(serviceOrder.model) LIKE :search')
+            .orWhere('LOWER(thread.clientDisplayNameSnapshot) LIKE :search');
         }),
         { search: `%${search}%` },
       );
     }
 
-    qb.orderBy('thread.lastMessageAt', 'DESC')
+    qb.distinct(true)
+      .orderBy('thread.lastMessageAt', 'DESC')
       .addOrderBy('thread.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -163,7 +306,7 @@ export class ServiceOrderInboxService {
     const [threads, total] = await qb.getManyAndCount();
 
     return {
-      data: threads.map((thread) => this.mapThreadSummary(thread, viewer)),
+      data: await Promise.all(threads.map((thread) => this.mapThreadSummary(thread as ThreadWithRelations, viewer))),
       total,
       page,
       limit,
@@ -174,13 +317,13 @@ export class ServiceOrderInboxService {
     const thread = await this.getThreadWithAccess(threadId, viewer);
     const messages = await this.messageRepository.find({
       where: { threadId: thread.id },
-      relations: ['attachments'],
+      relations: ['attachments', 'orderLinks'],
       order: { createdAt: 'ASC', id: 'ASC' },
     });
 
     return {
-      thread: this.mapThreadSummary(thread, viewer),
-      messages: messages.map((message) => this.mapMessage(message)),
+      thread: await this.mapThreadSummary(thread, viewer, messages),
+      messages: this.filterVisibleMessages(messages, thread, viewer).map((message) => this.mapMessage(message, viewer, thread)),
     };
   }
 
@@ -219,9 +362,20 @@ export class ServiceOrderInboxService {
       throw new BadRequestException('Debes enviar texto o al menos un adjunto');
     }
 
+    const requestedServiceOrderIds = this.resolveRequestedServiceOrderIds(thread, dto.serviceOrderIds, viewer);
+    const effectiveServiceOrderIds =
+      requestedServiceOrderIds.length > 0 ? requestedServiceOrderIds : this.resolveDefaultMessageServiceOrderIds(thread, viewer);
+    const primaryServiceOrderId = effectiveServiceOrderIds[0] ?? this.resolvePrimaryServiceOrderId(thread, viewer);
+    const hasCustomerServiceWindow = await this.hasManualOutboundWindow(thread, primaryServiceOrderId);
+    if (!hasCustomerServiceWindow) {
+      throw new BadRequestException(
+        'No se pueden enviar mensajes manuales porque la ventana de 24 horas de WhatsApp está cerrada.',
+      );
+    }
+
     const dispatchPayload = {
       threadId: thread.id,
-      serviceOrderId: thread.serviceOrderId,
+      serviceOrderId: primaryServiceOrderId ?? 0,
       contextToken: thread.externalThreadKey,
       clientPhone: thread.clientPhoneSnapshot,
       authorRole: this.resolveAuthorRole(viewer.role),
@@ -251,6 +405,7 @@ export class ServiceOrderInboxService {
           deliveryStatus: ServiceOrderInboxDeliveryStatus.QUEUED,
         }),
       );
+      await this.associateMessageWithOrders(textMessage.id, effectiveServiceOrderIds);
 
       try {
         const dispatchResult = await this.channelService.dispatchTextMessage({
@@ -298,6 +453,7 @@ export class ServiceOrderInboxService {
           deliveryStatus: ServiceOrderInboxDeliveryStatus.QUEUED,
         }),
       );
+      await this.associateMessageWithOrders(attachmentMessage.id, effectiveServiceOrderIds);
 
       const storedAttachment = await this.persistUploadedAttachment(attachmentMessage, file);
       try {
@@ -365,7 +521,7 @@ export class ServiceOrderInboxService {
     const reloaded = lastMessageId
       ? await this.messageRepository.findOne({
           where: { id: lastMessageId },
-          relations: ['attachments'],
+          relations: ['attachments', 'orderLinks'],
         })
       : null;
 
@@ -382,13 +538,14 @@ export class ServiceOrderInboxService {
   async receiveInboundMessage(payload: NormalizedInboundMessage) {
     const dedupe = await this.messageRepository.findOne({
       where: { externalMessageId: payload.externalMessageId },
-      relations: ['attachments'],
+      relations: ['attachments', 'orderLinks'],
     });
     if (dedupe) {
       return this.mapMessage(dedupe);
     }
 
     const thread = await this.resolveInboundThread(payload);
+    const relatedServiceOrderIds = await this.resolveInboundServiceOrderIds(thread, payload);
     const normalizedText = payload.text?.trim() || null;
     const attachments = payload.attachments ?? [];
     if (!normalizedText && !attachments.length) {
@@ -408,17 +565,19 @@ export class ServiceOrderInboxService {
         externalMessageId: payload.externalMessageId,
       }),
     );
+    await this.associateMessageWithOrders(message.id, relatedServiceOrderIds);
 
     await this.persistInboundAttachments(message, attachments);
     await this.refreshThreadAfterMessage(thread, message, {
-      incrementReceptionUnread: this.isActiveOrder(thread.serviceOrder),
-      incrementTechnicianUnread: this.isActiveOrder(thread.serviceOrder),
+      incrementReceptionUnread: this.hasActiveOrders(thread),
+      incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
       incrementSupervisorUnread: true,
+      markCustomerActivity: true,
     });
 
     const reloaded = await this.messageRepository.findOne({
       where: { id: message.id },
-      relations: ['attachments'],
+      relations: ['attachments', 'orderLinks'],
     });
     if (!reloaded) {
       throw new NotFoundException('No se pudo recuperar el mensaje entrante');
@@ -447,19 +606,6 @@ export class ServiceOrderInboxService {
     return { ok: true };
   }
 
-  async hasThreadActivity(serviceOrderId: number): Promise<boolean> {
-    const thread = await this.threadRepository.findOne({
-      where: { serviceOrderId },
-      select: {
-        id: true,
-        serviceOrderId: true,
-        lastMessageAt: true,
-      },
-    });
-
-    return !!thread?.lastMessageAt;
-  }
-
   async sendSystemMessageForOrder(serviceOrderId: number, text: string) {
     const normalizedText = text.trim();
     if (!normalizedText) {
@@ -472,6 +618,7 @@ export class ServiceOrderInboxService {
       displayName: 'Sistema',
     };
     const thread = await this.ensureThreadForOrder(serviceOrderId, systemViewer);
+    const primaryServiceOrderId = this.resolvePrimaryServiceOrderId(thread) ?? serviceOrderId;
     const message = await this.messageRepository.save(
       this.messageRepository.create({
         threadId: thread.id,
@@ -483,6 +630,7 @@ export class ServiceOrderInboxService {
         deliveryStatus: ServiceOrderInboxDeliveryStatus.QUEUED,
       }),
     );
+    await this.associateMessageWithOrders(message.id, [serviceOrderId]);
 
     if (!thread.clientPhoneSnapshot) {
       const dispatchResult = {
@@ -490,9 +638,8 @@ export class ServiceOrderInboxService {
         providerPayload: { reason: 'missing-client-phone' },
       };
       await this.finalizeOutboundMessage(thread, message, dispatchResult, {
-        incrementReceptionUnread: this.isActiveOrder(thread.serviceOrder),
-        incrementTechnicianUnread:
-          this.isActiveOrder(thread.serviceOrder) && !!thread.serviceOrder.assignedToTechnicianId,
+        incrementReceptionUnread: this.hasActiveOrders(thread),
+        incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
         incrementSupervisorUnread: true,
       });
 
@@ -507,7 +654,7 @@ export class ServiceOrderInboxService {
     try {
       const dispatchResult = await this.channelService.dispatchTextMessage({
         threadId: thread.id,
-        serviceOrderId: thread.serviceOrderId,
+        serviceOrderId: primaryServiceOrderId,
         contextToken: thread.externalThreadKey,
         clientPhone: thread.clientPhoneSnapshot,
         text: normalizedText,
@@ -517,9 +664,8 @@ export class ServiceOrderInboxService {
       });
 
       await this.finalizeOutboundMessage(thread, message, dispatchResult, {
-        incrementReceptionUnread: this.isActiveOrder(thread.serviceOrder),
-        incrementTechnicianUnread:
-          this.isActiveOrder(thread.serviceOrder) && !!thread.serviceOrder.assignedToTechnicianId,
+        incrementReceptionUnread: this.hasActiveOrders(thread),
+        incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
         incrementSupervisorUnread: true,
       });
     } catch (error) {
@@ -533,9 +679,8 @@ export class ServiceOrderInboxService {
           },
         },
         {
-          incrementReceptionUnread: this.isActiveOrder(thread.serviceOrder),
-          incrementTechnicianUnread:
-            this.isActiveOrder(thread.serviceOrder) && !!thread.serviceOrder.assignedToTechnicianId,
+          incrementReceptionUnread: this.hasActiveOrders(thread),
+          incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
           incrementSupervisorUnread: true,
         },
       );
@@ -557,7 +702,14 @@ export class ServiceOrderInboxService {
   async downloadAttachment(attachmentId: number, viewer: InboxViewerContext) {
     const attachment = await this.attachmentRepository.findOne({
       where: { id: attachmentId },
-      relations: ['message', 'message.thread', 'message.thread.serviceOrder', 'message.thread.serviceOrder.assignedTechnician'],
+      relations: [
+        'message',
+        'message.orderLinks',
+        'message.thread',
+        'message.thread.orderLinks',
+        'message.thread.orderLinks.serviceOrder',
+        'message.thread.orderLinks.serviceOrder.assignedTechnician',
+      ],
     });
 
     if (!attachment) {
@@ -565,6 +717,7 @@ export class ServiceOrderInboxService {
     }
 
     await this.ensureThreadAccess(attachment.message.thread, viewer, false);
+    this.ensureMessageScopedAccess(attachment.message, attachment.message.thread as ThreadWithRelations, viewer, false);
 
     if (attachment.cachedFilePath) {
       const absolutePath = resolve(attachment.cachedFilePath);
@@ -610,10 +763,10 @@ export class ServiceOrderInboxService {
       hadContextToken = true;
       const existing = await this.threadRepository.findOne({
         where: { externalThreadKey: contextToken },
-        relations: ['serviceOrder', 'serviceOrder.assignedTechnician'],
+        relations: ['orderLinks', 'orderLinks.serviceOrder', 'orderLinks.serviceOrder.assignedTechnician', 'orderLinks.serviceOrder.client'],
       });
       if (existing) {
-        return existing;
+        return existing as ThreadWithRelations;
       }
     }
 
@@ -623,10 +776,10 @@ export class ServiceOrderInboxService {
       hadReplyReference = true;
       const referencedMessage = await this.messageRepository.findOne({
         where: { externalMessageId: replyToExternalMessageId },
-        relations: ['thread', 'thread.serviceOrder', 'thread.serviceOrder.assignedTechnician'],
+        relations: ['thread', 'thread.orderLinks', 'thread.orderLinks.serviceOrder', 'thread.orderLinks.serviceOrder.assignedTechnician', 'thread.orderLinks.serviceOrder.client'],
       });
       if (referencedMessage?.thread) {
-        return referencedMessage.thread;
+        return referencedMessage.thread as ThreadWithRelations;
       }
     }
 
@@ -634,39 +787,33 @@ export class ServiceOrderInboxService {
     if (normalizedPhone) {
       const phoneMatches = await this.threadRepository.find({
         where: { clientPhoneSnapshot: normalizedPhone },
-        relations: ['serviceOrder', 'serviceOrder.assignedTechnician'],
+        relations: ['orderLinks', 'orderLinks.serviceOrder', 'orderLinks.serviceOrder.assignedTechnician', 'orderLinks.serviceOrder.client'],
       });
 
-      const activePhoneMatches = phoneMatches.filter((thread) => this.isActiveOrder(thread.serviceOrder));
-      if (activePhoneMatches.length === 1) {
-        return activePhoneMatches[0];
-      }
-      if (activePhoneMatches.length > 1) {
-        this.logWebhookRoutingIssue('ambiguous-phone', payload, {
-          normalizedFrom: normalizedPhone,
-          matchedThreads: activePhoneMatches.length,
-        });
-        throw new BadRequestException('No se pudo resolver el hilo entrante de forma univoca (ambiguous-phone)');
+      if (phoneMatches.length >= 1) {
+        return this.consolidateThreads(phoneMatches as ThreadWithRelations[]);
       }
     }
 
-    if (!payload.serviceOrderId) {
-      const reason = hadContextToken
-        ? 'unmatched-context-token'
-        : hadReplyReference
-          ? 'unmatched-reply-reference'
-          : normalizedPhone
-            ? 'missing-routing-data'
-            : 'missing-routing-data';
-      this.logWebhookRoutingIssue(reason, payload, {
-        normalizedFrom: normalizedPhone,
-        hasContextToken: hadContextToken,
-        hasReplyReference: hadReplyReference,
-      });
-      throw new BadRequestException(`No se pudo resolver el hilo del mensaje entrante (${reason})`);
+    if (payload.serviceOrderId) {
+      return this.ensureThreadForOrder(payload.serviceOrderId, { role: 'SUPERVISOR', userId: null, displayName: null });
     }
 
-    return this.ensureThreadForOrder(payload.serviceOrderId, { role: 'SUPERVISOR', userId: null, displayName: null });
+    if (normalizedPhone) {
+      return this.createInboundThreadFromPhone(payload, normalizedPhone);
+    }
+
+    const reason = hadContextToken
+      ? 'unmatched-context-token'
+      : hadReplyReference
+        ? 'unmatched-reply-reference'
+        : 'missing-routing-data';
+    this.logWebhookRoutingIssue(reason, payload, {
+      normalizedFrom: normalizedPhone,
+      hasContextToken: hadContextToken,
+      hasReplyReference: hadReplyReference,
+    });
+    throw new BadRequestException(`No se pudo resolver el hilo del mensaje entrante (${reason})`);
   }
 
   private logWebhookRoutingIssue(
@@ -766,7 +913,7 @@ export class ServiceOrderInboxService {
   }
 
   private async refreshThreadAfterMessage(
-    thread: ServiceOrderInboxThread,
+    thread: ThreadWithRelations,
     message: ServiceOrderInboxMessage,
     options: {
       incrementReceptionUnread?: boolean;
@@ -775,12 +922,16 @@ export class ServiceOrderInboxService {
       resetReceptionUnread?: boolean;
       resetTechnicianUnread?: boolean;
       resetSupervisorUnread?: boolean;
+      markCustomerActivity?: boolean;
     },
   ): Promise<void> {
     thread.lastMessageText = message.text?.trim() || this.describeAttachmentOnlyMessage(message);
     thread.lastMessageAt = message.createdAt;
     thread.lastMessageDirection = message.direction;
     thread.lastMessageAuthorRole = message.authorRole;
+    if (options.markCustomerActivity && message.authorRole === ServiceOrderInboxAuthorRole.CLIENT) {
+      thread.lastCustomerMessageAt = message.createdAt;
+    }
 
     if (options.incrementReceptionUnread) {
       thread.unreadForReception += 1;
@@ -805,7 +956,7 @@ export class ServiceOrderInboxService {
   }
 
   private async finalizeOutboundMessage(
-    thread: ServiceOrderInboxThread,
+    thread: ThreadWithRelations,
     message: ServiceOrderInboxMessage,
     dispatchResult: DispatchOutboundResult,
     threadUpdateOptions: {
@@ -833,16 +984,7 @@ export class ServiceOrderInboxService {
     return '[Adjunto enviado]';
   }
 
-  private async ensureThreadForOrder(serviceOrderId: number, viewer: InboxViewerContext) {
-    const existing = await this.threadRepository.findOne({
-      where: { serviceOrderId },
-      relations: ['serviceOrder', 'serviceOrder.assignedTechnician', 'serviceOrder.client'],
-    });
-    if (existing) {
-      await this.ensureThreadAccess(existing, viewer, false);
-      return existing;
-    }
-
+  private async ensureThreadForOrder(serviceOrderId: number, viewer: InboxViewerContext): Promise<ThreadWithRelations> {
     const serviceOrder = await this.serviceOrderRepository.findOne({
       where: { id: serviceOrderId },
       relations: ['assignedTechnician', 'client'],
@@ -853,34 +995,45 @@ export class ServiceOrderInboxService {
 
     await this.ensureServiceOrderAccess(serviceOrder, viewer, false);
 
-    const createdThread = await this.threadRepository.save(
-      this.threadRepository.create({
-        serviceOrderId: serviceOrder.id,
-        clientPhoneSnapshot: this.normalizeComparablePhone(serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null),
-        externalThreadKey: randomUUID(),
-        lastMessageText: null,
-        lastMessageAt: null,
-        lastMessageDirection: null,
-        lastMessageAuthorRole: null,
-        unreadForReception: 0,
-        unreadForTechnician: 0,
-        unreadForSupervisor: 0,
-      }),
-    );
+    const normalizedPhone = this.normalizeComparablePhone(serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null);
+    const candidateThreads = normalizedPhone
+      ? await this.threadRepository.find({
+          where: { clientPhoneSnapshot: normalizedPhone },
+          relations: ['orderLinks', 'orderLinks.serviceOrder', 'orderLinks.serviceOrder.assignedTechnician', 'orderLinks.serviceOrder.client'],
+        })
+      : [];
+    const thread =
+      candidateThreads.length > 0
+        ? await this.consolidateThreads(candidateThreads as ThreadWithRelations[])
+        : ((await this.threadRepository.save(
+            this.threadRepository.create({
+              clientId: serviceOrder.clientId ?? null,
+              clientPhoneSnapshot: normalizedPhone,
+              clientDisplayNameSnapshot: serviceOrder.clientSnapshotName ?? null,
+              externalThreadKey: randomUUID(),
+              lastMessageText: null,
+              lastMessageAt: null,
+              lastCustomerMessageAt: null,
+              lastMessageDirection: null,
+              lastMessageAuthorRole: null,
+              unreadForReception: 0,
+              unreadForTechnician: 0,
+              unreadForSupervisor: 0,
+            }),
+          )) as ThreadWithRelations);
 
-    createdThread.serviceOrder = serviceOrder;
-    return createdThread;
+    await this.ensureThreadOrderLink(thread.id, serviceOrder.id);
+    const reloaded = await this.loadThreadById(thread.id);
+    await this.ensureThreadAccess(reloaded, viewer, false);
+    return reloaded;
   }
 
   private async getThreadWithAccess(
     threadId: number,
     viewer: InboxViewerContext,
     requireWritableAccess = false,
-  ) {
-    const thread = await this.threadRepository.findOne({
-      where: { id: threadId },
-      relations: ['serviceOrder', 'serviceOrder.assignedTechnician', 'serviceOrder.client'],
-    });
+  ): Promise<ThreadWithRelations> {
+    const thread = await this.loadThreadById(threadId);
     if (!thread) {
       throw new NotFoundException('Hilo no encontrado');
     }
@@ -890,11 +1043,44 @@ export class ServiceOrderInboxService {
   }
 
   private async ensureThreadAccess(
-    thread: ServiceOrderInboxThread,
+    thread: ThreadWithRelations,
     viewer: InboxViewerContext,
     requireWritableAccess: boolean,
   ): Promise<void> {
-    await this.ensureServiceOrderAccess(thread.serviceOrder, viewer, requireWritableAccess);
+    const linkedOrders = this.getLinkedOrders(thread);
+    if (!linkedOrders.length) {
+      if (viewer.role === 'SUPERVISOR' || viewer.role === 'ADMIN' || viewer.role === 'RECEPTION') {
+        return;
+      }
+      throw new ForbiddenException('No tienes acceso a este hilo');
+    }
+
+    if (viewer.role === 'SUPERVISOR' || viewer.role === 'ADMIN') {
+      return;
+    }
+
+    const activeOrders = linkedOrders.filter((order) => this.isActiveOrder(order));
+    if (!activeOrders.length) {
+      throw new ForbiddenException('No tienes acceso a conversaciones de ordenes finalizadas');
+    }
+
+    if (viewer.role === 'RECEPTION') {
+      return;
+    }
+
+    if (viewer.role === 'TECHNICIAN') {
+      const hasVisibleOrder = activeOrders.some(
+        (order) => !!viewer.userId && Number(order.assignedToTechnicianId) === Number(viewer.userId),
+      );
+      if (!hasVisibleOrder) {
+        throw new ForbiddenException('No tienes acceso a este hilo');
+      }
+      return;
+    }
+
+    if (requireWritableAccess) {
+      throw new ForbiddenException('No tienes acceso para enviar mensajes');
+    }
   }
 
   private async ensureServiceOrderAccess(
@@ -946,29 +1132,50 @@ export class ServiceOrderInboxService {
     }
   }
 
-  private mapThreadSummary(thread: ServiceOrderInboxThread, viewer: InboxViewerContext) {
+  private async mapThreadSummary(
+    thread: ServiceOrderInboxThread,
+    viewer: InboxViewerContext,
+    preloadedMessages?: Array<ServiceOrderInboxMessage & { orderLinks?: ServiceOrderInboxMessageOrderLink[] }>,
+  ) {
+    const linkedOrders = this.getReadableOrders(thread as ThreadWithRelations);
+    const activeOrders = linkedOrders.filter((order) => this.isActiveOrder(order));
+    const primaryOrder = this.resolvePrimaryOrderForSummary(thread as ThreadWithRelations, viewer);
+    const lastMessageSummary = await this.resolveThreadLastMessageSummary(thread as ThreadWithRelations, viewer, preloadedMessages);
     return {
       id: thread.id,
-      serviceOrderId: thread.serviceOrderId,
-      serviceOrderCode: thread.serviceOrder?.code ?? `SO-${thread.serviceOrderId}`,
-      equipmentLabel: this.buildEquipmentLabel(thread.serviceOrder),
-      clientAlias: thread.serviceOrder?.clientSnapshotName ?? 'Cliente',
-      assignedTechnicianAlias: thread.serviceOrder?.assignedTechnician?.name ?? 'Sin tecnico',
-      operativeStatus: thread.serviceOrder?.operativeStatus ?? null,
-      technicalStatus: thread.serviceOrder?.technicalStatus ?? null,
-      commercialStatus: thread.serviceOrder?.commercialStatus ?? null,
-      economicStatus: thread.serviceOrder?.economicStatus ?? null,
+      serviceOrderId: primaryOrder?.id ?? null,
+      serviceOrderCode: primaryOrder?.code ?? null,
+      serviceOrderIds: linkedOrders.map((order) => order.id),
+      activeServiceOrderIds: activeOrders.map((order) => order.id),
+      serviceOrderCodes: linkedOrders.map((order) => order.code),
+      equipmentLabel: primaryOrder ? this.buildEquipmentLabel(primaryOrder) : 'Equipo',
+      clientAlias: thread.clientDisplayNameSnapshot ?? primaryOrder?.clientSnapshotName ?? 'Cliente',
+      assignedTechnicianAlias: primaryOrder?.assignedTechnician?.name ?? 'Sin tecnico',
+      operativeStatus: primaryOrder?.operativeStatus ?? null,
+      technicalStatus: primaryOrder?.technicalStatus ?? null,
+      commercialStatus: primaryOrder?.commercialStatus ?? null,
+      economicStatus: primaryOrder?.economicStatus ?? null,
       clientPhone: thread.clientPhoneSnapshot,
-      lastMessageText: thread.lastMessageText,
-      lastMessageAt: thread.lastMessageAt?.toISOString() ?? null,
-      lastMessageDirection: thread.lastMessageDirection,
-      lastMessageAuthorRole: thread.lastMessageAuthorRole,
+      lastMessageText: lastMessageSummary.lastMessageText,
+      lastMessageAt: lastMessageSummary.lastMessageAt,
+      lastCustomerMessageAt: lastMessageSummary.lastCustomerMessageAt,
+      lastMessageDirection: lastMessageSummary.lastMessageDirection,
+      lastMessageAuthorRole: lastMessageSummary.lastMessageAuthorRole,
       unreadCount: this.resolveUnreadCount(thread, viewer),
       contextToken: thread.externalThreadKey,
+      orders: this.mapThreadOrders(thread as ThreadWithRelations, viewer),
     };
   }
 
-  private mapMessage(message: ServiceOrderInboxMessage & { attachments?: ServiceOrderInboxAttachment[] }) {
+  private mapMessage(
+    message: ServiceOrderInboxMessage & {
+      attachments?: ServiceOrderInboxAttachment[];
+      orderLinks?: ServiceOrderInboxMessageOrderLink[];
+    },
+    viewer?: InboxViewerContext,
+    thread?: ThreadWithRelations,
+  ) {
+    const visibleServiceOrderIds = this.getVisibleMessageOrderIds(message, thread, viewer);
     return {
       id: message.id,
       threadId: message.threadId,
@@ -979,6 +1186,7 @@ export class ServiceOrderInboxService {
       deliveryStatus: message.deliveryStatus,
       externalMessageId: message.externalMessageId,
       createdAt: message.createdAt.toISOString(),
+      serviceOrderIds: visibleServiceOrderIds,
       attachments:
         message.attachments?.map((attachment) => ({
           id: attachment.id,
@@ -1004,6 +1212,21 @@ export class ServiceOrderInboxService {
       default:
         return 0;
     }
+  }
+
+  private mapThreadOrders(thread: ThreadWithRelations, viewer: InboxViewerContext) {
+    return this.getReadableOrders(thread).map((order) => ({
+      id: order.id,
+      code: order.code,
+      equipmentLabel: this.buildEquipmentLabel(order),
+      operativeStatus: order.operativeStatus,
+      technicalStatus: order.technicalStatus,
+      commercialStatus: order.commercialStatus,
+      economicStatus: order.economicStatus,
+      assignedTechnicianId: order.assignedToTechnicianId ?? null,
+      assignedTechnicianAlias: order.assignedTechnician?.name ?? 'Sin tecnico',
+      isActive: this.isActiveOrder(order),
+    }));
   }
 
   private buildEquipmentLabel(serviceOrder?: ServiceOrder | null): string {
@@ -1045,6 +1268,328 @@ export class ServiceOrderInboxService {
 
   private normalizeComparablePhone(phone: string | null | undefined): string | null {
     return normalizeComparablePhoneValue(phone) ?? null;
+  }
+
+  private hasActiveOrders(thread: ThreadWithRelations): boolean {
+    return this.getLinkedOrders(thread).some((order) => this.isActiveOrder(order));
+  }
+
+  private hasTechnicianVisibleActiveOrders(thread: ThreadWithRelations): boolean {
+    return this.getLinkedOrders(thread).some(
+      (order) => this.isActiveOrder(order) && !!order.assignedToTechnicianId,
+    );
+  }
+
+  private getLinkedOrders(thread: ThreadWithRelations): ServiceOrder[] {
+    return (thread.orderLinks ?? [])
+      .map((link) => link.serviceOrder)
+      .filter((order): order is ServiceOrder => !!order);
+  }
+
+  private getReadableOrders(thread: ThreadWithRelations): ServiceOrder[] {
+    return this.getLinkedOrders(thread);
+  }
+
+  private getAssignableOrders(thread: ThreadWithRelations, viewer: InboxViewerContext): ServiceOrder[] {
+    const linkedOrders = this.getLinkedOrders(thread);
+    if (viewer.role !== 'TECHNICIAN') {
+      return linkedOrders;
+    }
+
+    return linkedOrders.filter(
+      (order) => this.isActiveOrder(order) && !!viewer.userId && Number(order.assignedToTechnicianId) === Number(viewer.userId),
+    );
+  }
+
+  private resolvePrimaryOrderForSummary(thread: ThreadWithRelations, viewer: InboxViewerContext): ServiceOrder | null {
+    const preferredOrders = this.getAssignableOrders(thread, viewer);
+    const activePreferredOrder = preferredOrders.find((order) => this.isActiveOrder(order));
+    if (activePreferredOrder) {
+      return activePreferredOrder;
+    }
+
+    return preferredOrders[0] ?? this.getReadableOrders(thread)[0] ?? null;
+  }
+
+  private filterVisibleMessages(
+    messages: Array<ServiceOrderInboxMessage & { attachments?: ServiceOrderInboxAttachment[]; orderLinks?: ServiceOrderInboxMessageOrderLink[] }>,
+    thread: ThreadWithRelations,
+    viewer: InboxViewerContext,
+  ) {
+    return messages;
+  }
+
+  private async resolveThreadLastMessageSummary(
+    thread: ThreadWithRelations,
+    viewer: InboxViewerContext,
+    preloadedMessages?: Array<ServiceOrderInboxMessage & { orderLinks?: ServiceOrderInboxMessageOrderLink[] }>,
+  ): Promise<{
+    lastMessageText: string | null;
+    lastMessageAt: string | null;
+    lastCustomerMessageAt: string | null;
+    lastMessageDirection: ServiceOrderInboxDirection | null;
+    lastMessageAuthorRole: ServiceOrderInboxAuthorRole | null;
+  }> {
+    return {
+      lastMessageText: thread.lastMessageText,
+      lastMessageAt: thread.lastMessageAt?.toISOString() ?? null,
+      lastCustomerMessageAt: thread.lastCustomerMessageAt?.toISOString() ?? null,
+      lastMessageDirection: thread.lastMessageDirection,
+      lastMessageAuthorRole: thread.lastMessageAuthorRole,
+    };
+  }
+
+  private resolveMessageSummaryText(message: Pick<ServiceOrderInboxMessage, 'text' | 'direction'>): string {
+    return message.text?.trim() || this.describeAttachmentOnlyMessage(message as ServiceOrderInboxMessage);
+  }
+
+  private getVisibleMessageOrderIds(
+    message: ServiceOrderInboxMessage & { orderLinks?: ServiceOrderInboxMessageOrderLink[] },
+    thread?: ThreadWithRelations,
+    viewer?: InboxViewerContext,
+  ): number[] {
+    const linkedIds = (message.orderLinks ?? []).map((link) => Number(link.serviceOrderId));
+    if (!viewer || !thread || viewer.role !== 'TECHNICIAN') {
+      return linkedIds;
+    }
+
+    return linkedIds;
+  }
+
+  private ensureMessageScopedAccess(
+    message: ServiceOrderInboxMessage & { orderLinks?: ServiceOrderInboxMessageOrderLink[] },
+    thread: ThreadWithRelations,
+    viewer: InboxViewerContext,
+    requireEditableAccess: boolean,
+  ): void {
+    if (viewer.role !== 'TECHNICIAN') {
+      return;
+    }
+
+    if (!requireEditableAccess) {
+      return;
+    }
+
+    const visibleOrderIds = new Set(this.getAssignableOrders(thread, viewer).map((order) => Number(order.id)));
+    const linkedIds = (message.orderLinks ?? []).map((link) => Number(link.serviceOrderId));
+
+    if (requireEditableAccess && !this.hasEditableMessageScope(linkedIds, visibleOrderIds)) {
+      throw new ForbiddenException('No tienes acceso para editar este mensaje');
+    }
+  }
+
+  private hasVisibleMessageScope(
+    message: { orderLinks?: ServiceOrderInboxMessageOrderLink[] },
+    visibleOrderIds: Set<number>,
+  ): boolean {
+    const linkedIds = (message.orderLinks ?? []).map((link) => Number(link.serviceOrderId));
+    return linkedIds.length > 0 && linkedIds.some((id) => visibleOrderIds.has(id));
+  }
+
+  private hasEditableMessageScope(linkedIds: number[], visibleOrderIds: Set<number>): boolean {
+    return linkedIds.length > 0 && linkedIds.every((id) => visibleOrderIds.has(id));
+  }
+
+  private async resolveInboundServiceOrderIds(
+    thread: ThreadWithRelations,
+    payload: NormalizedInboundMessage,
+  ): Promise<number[]> {
+    if (payload.serviceOrderId) {
+      await this.ensureThreadOrderLink(thread.id, payload.serviceOrderId);
+      return [payload.serviceOrderId];
+    }
+
+    const replyToExternalMessageId = payload.replyToExternalMessageId?.trim() || null;
+    if (replyToExternalMessageId) {
+      const referencedMessage = await this.messageRepository.findOne({
+        where: { externalMessageId: replyToExternalMessageId },
+        relations: ['orderLinks'],
+      });
+      const linkedIds = (referencedMessage?.orderLinks ?? []).map((link) => Number(link.serviceOrderId));
+      if (linkedIds.length) {
+        return [...new Set(linkedIds)];
+      }
+    }
+
+    const activeOrderIds = this.getLinkedOrders(thread)
+      .filter((order) => this.isActiveOrder(order))
+      .map((order) => Number(order.id));
+
+    if (activeOrderIds.length === 1) {
+      return activeOrderIds;
+    }
+
+    return [];
+  }
+
+  private async createInboundThreadFromPhone(
+    payload: NormalizedInboundMessage,
+    normalizedPhone: string,
+  ): Promise<ThreadWithRelations> {
+    return (await this.threadRepository.save(
+      this.threadRepository.create({
+        clientId: null,
+        clientPhoneSnapshot: normalizedPhone,
+        clientDisplayNameSnapshot: payload.senderName?.trim() || null,
+        externalThreadKey: randomUUID(),
+        lastMessageText: null,
+        lastMessageAt: null,
+        lastCustomerMessageAt: null,
+        lastMessageDirection: null,
+        lastMessageAuthorRole: null,
+        unreadForReception: 0,
+        unreadForTechnician: 0,
+        unreadForSupervisor: 0,
+      }),
+    )) as ThreadWithRelations;
+  }
+
+  private async consolidateThreads(threads: ThreadWithRelations[]): Promise<ThreadWithRelations> {
+    if (!threads.length) {
+      throw new NotFoundException('No se encontró hilo para consolidar');
+    }
+    if (threads.length === 1) {
+      return this.loadThreadById(threads[0].id);
+    }
+
+    const canonical = [...threads].sort((left, right) => {
+      const leftTime = left.lastMessageAt?.getTime() ?? left.createdAt.getTime();
+      const rightTime = right.lastMessageAt?.getTime() ?? right.createdAt.getTime();
+      return rightTime - leftTime;
+    })[0];
+    const duplicates = threads.filter((thread) => thread.id !== canonical.id);
+
+    for (const duplicate of duplicates) {
+      await this.messageRepository.update({ threadId: duplicate.id }, { threadId: canonical.id });
+
+      const duplicateOrderLinks = (await this.threadOrderLinkRepository.find({
+        where: { threadId: duplicate.id },
+      })) ?? [];
+      for (const link of duplicateOrderLinks) {
+        await this.ensureThreadOrderLink(canonical.id, link.serviceOrderId);
+      }
+      if (duplicateOrderLinks.length) {
+        await this.threadOrderLinkRepository.remove(duplicateOrderLinks);
+      }
+
+      await this.threadRepository.delete({ id: duplicate.id });
+    }
+
+    const reloaded = await this.loadThreadById(canonical.id);
+    reloaded.lastMessageAt = [canonical.lastMessageAt, ...duplicates.map((thread) => thread.lastMessageAt)]
+      .filter((value): value is Date => value instanceof Date)
+      .sort((left, right) => right.getTime() - left.getTime())[0] ?? reloaded.lastMessageAt;
+    reloaded.lastCustomerMessageAt = [canonical.lastCustomerMessageAt, ...duplicates.map((thread) => thread.lastCustomerMessageAt)]
+      .filter((value): value is Date => value instanceof Date)
+      .sort((left, right) => right.getTime() - left.getTime())[0] ?? reloaded.lastCustomerMessageAt;
+    reloaded.clientDisplayNameSnapshot =
+      reloaded.clientDisplayNameSnapshot ??
+      canonical.clientDisplayNameSnapshot ??
+      duplicates.map((thread) => thread.clientDisplayNameSnapshot).find(Boolean) ??
+      null;
+    await this.threadRepository.save(reloaded);
+    return this.loadThreadById(canonical.id);
+  }
+
+  private async findThreadByServiceOrderId(serviceOrderId: number): Promise<ThreadWithRelations | null> {
+    const link = await this.threadOrderLinkRepository.findOne({
+      where: { serviceOrderId },
+    });
+    if (!link) {
+      return null;
+    }
+
+    return this.loadThreadById(link.threadId);
+  }
+
+  private async loadThreadById(threadId: number): Promise<ThreadWithRelations> {
+    const thread = await this.threadRepository.findOne({
+      where: { id: threadId },
+      relations: [
+        'orderLinks',
+        'orderLinks.serviceOrder',
+        'orderLinks.serviceOrder.assignedTechnician',
+        'orderLinks.serviceOrder.client',
+      ],
+    });
+    if (!thread) {
+      throw new NotFoundException('Hilo no encontrado');
+    }
+    return thread as ThreadWithRelations;
+  }
+
+  private async ensureThreadOrderLink(threadId: number, serviceOrderId: number): Promise<void> {
+    const existing = await this.threadOrderLinkRepository.findOne({
+      where: { threadId, serviceOrderId },
+    });
+    if (existing) {
+      return;
+    }
+
+    await this.threadOrderLinkRepository.save(
+      this.threadOrderLinkRepository.create({
+        threadId,
+        serviceOrderId,
+      }),
+    );
+  }
+
+  private async associateMessageWithOrders(messageId: number, serviceOrderIds: number[]): Promise<void> {
+    const normalizedIds = [...new Set((serviceOrderIds ?? []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+    if (!normalizedIds.length) {
+      return;
+    }
+
+    await this.messageOrderLinkRepository.save(
+      normalizedIds.map((serviceOrderId) =>
+        this.messageOrderLinkRepository.create({
+          messageId,
+          serviceOrderId,
+        }),
+      ),
+    );
+  }
+
+  private resolveRequestedServiceOrderIds(
+    thread: ThreadWithRelations,
+    rawIds: number[] | undefined,
+    viewer: InboxViewerContext,
+  ): number[] {
+    const normalizedIds = [...new Set((rawIds ?? []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+    if (!normalizedIds.length) {
+      return [];
+    }
+
+    const threadOrderIds = new Set(this.getLinkedOrders(thread).map((order) => Number(order.id)));
+    const invalidIds = normalizedIds.filter((id) => !threadOrderIds.has(id));
+    if (invalidIds.length) {
+      throw new BadRequestException('Una o más órdenes no pertenecen al hilo');
+    }
+
+    if (viewer.role === 'TECHNICIAN') {
+      const visibleOrderIds = new Set(this.getAssignableOrders(thread, viewer).map((order) => Number(order.id)));
+      const unauthorizedIds = normalizedIds.filter((id) => !visibleOrderIds.has(id));
+      if (unauthorizedIds.length) {
+        throw new ForbiddenException('No tienes acceso a una o más órdenes de este hilo');
+      }
+    }
+
+    return normalizedIds;
+  }
+
+  private resolveDefaultMessageServiceOrderIds(thread: ThreadWithRelations, viewer: InboxViewerContext): number[] {
+    if (viewer.role !== 'TECHNICIAN') {
+      return [];
+    }
+
+    const primaryVisibleOrderId = this.resolvePrimaryServiceOrderId(thread, viewer);
+    return primaryVisibleOrderId ? [primaryVisibleOrderId] : [];
+  }
+
+  private resolvePrimaryServiceOrderId(thread: ThreadWithRelations, viewer?: InboxViewerContext): number | null {
+    const sourceOrders = viewer ? this.getAssignableOrders(thread, viewer) : this.getLinkedOrders(thread);
+    const active = sourceOrders.find((order) => this.isActiveOrder(order));
+    return active?.id ?? sourceOrders[0]?.id ?? null;
   }
 
   private normalizePositiveNumber(value: number | undefined, fallback: number, max: number): number {

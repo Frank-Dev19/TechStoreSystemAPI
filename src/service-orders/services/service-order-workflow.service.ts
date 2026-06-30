@@ -1,8 +1,13 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { User } from '../../users/entities/user.entity';
-import { hasRoleName, TECHNICIAN_ROLE_NAMES } from '../../common/constants/role-names';
+import {
+  hasRoleName,
+  isTechnicianScopedRoleSet,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
 import { AssignTechnicianDto } from '../dto/assign-technician.dto';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
@@ -52,6 +57,8 @@ export type TechnicianAssignmentSuggestion = {
   suggestedTechnicianId: number;
   technicians: TechnicianAssignmentSuggestionRow[];
 };
+
+type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
 @Injectable()
 export class ServiceOrderWorkflowService {
@@ -137,12 +144,16 @@ export class ServiceOrderWorkflowService {
       technicianId: serviceOrder.assignedToTechnicianId,
       source: 'created',
     });
-
-    await this.messageMatrixService.notifyInitialAssignment(serviceOrder);
   }
 
-  async assignTechnician(serviceOrderId: number, dto: AssignTechnicianDto, actorId?: number): Promise<ServiceOrder> {
+  async assignTechnician(
+    serviceOrderId: number,
+    dto: AssignTechnicianDto,
+    actorId?: number,
+    viewer?: ServiceOrderViewer,
+  ): Promise<ServiceOrder> {
     const serviceOrder = await this.findOrder(serviceOrderId);
+    this.ensureViewerCanManageOrder(serviceOrder, viewer);
     await this.ensureTechnician(dto.technicianId);
 
     const previousTechnicianId = serviceOrder.assignedToTechnicianId;
@@ -170,15 +181,6 @@ export class ServiceOrderWorkflowService {
       previousTechnicianId,
     });
     const updatedOrder = await this.findOrder(serviceOrderId);
-    if (previousTechnicianId) {
-      const technician = updatedOrder.assignedTechnician;
-      await this.messageMatrixService.notifyTechnicianReassignment(
-        updatedOrder,
-        technician?.name ?? null,
-      );
-    } else {
-      await this.messageMatrixService.notifyInitialAssignment(updatedOrder);
-    }
 
     return updatedOrder;
   }
@@ -188,8 +190,10 @@ export class ServiceOrderWorkflowService {
     nextStatus: ServiceOrderTechnicalStatus,
     actorId?: number,
     reason?: string,
+    viewer?: ServiceOrderViewer,
   ): Promise<ServiceOrder> {
     const serviceOrder = await this.findOrder(serviceOrderId);
+    this.ensureViewerCanManageOrder(serviceOrder, viewer);
     const previousTechnicalStatus = serviceOrder.technicalStatus;
 
     this.transitionPolicy.assertTransition('tecnico', previousTechnicalStatus, nextStatus);
@@ -265,6 +269,28 @@ export class ServiceOrderWorkflowService {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);
     }
     return serviceOrder;
+  }
+
+  assertTransitionAllowed(
+    currentStatus: ServiceOrderTechnicalStatus,
+    nextStatus: ServiceOrderTechnicalStatus,
+  ): void {
+    this.transitionPolicy.assertTransition('tecnico', currentStatus, nextStatus);
+  }
+
+  private ensureViewerCanManageOrder(serviceOrder: ServiceOrder, viewer?: ServiceOrderViewer): void {
+    if (!isTechnicianScopedRoleSet(viewer?.roles)) {
+      return;
+    }
+
+    const technicianId = Number(viewer?.sub ?? 0);
+    if (!technicianId) {
+      throw new ForbiddenException('Usuario tecnico no identificado');
+    }
+
+    if (Number(serviceOrder.assignedToTechnicianId) !== technicianId) {
+      throw new ForbiddenException('No tienes acceso a esta orden de servicio');
+    }
   }
 
   private applyCanonicalStatusesFromTechnicalTransition(

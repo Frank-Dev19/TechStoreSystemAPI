@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
+import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity';
 import { CreateServiceOrderDiagnosisDto } from './dto/create-service-order-diagnosis.dto';
 import { UpdateServiceOrderDiagnosisDto } from './dto/update-service-order-diagnosis.dto';
@@ -20,6 +22,8 @@ type FindDiagnosisQuery = {
   withDeleted?: string;
 };
 
+type DiagnosisViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
+
 @Injectable()
 export class ServiceOrderDiagnosisService {
   constructor(
@@ -31,7 +35,7 @@ export class ServiceOrderDiagnosisService {
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
-  async findAll(query: FindDiagnosisQuery) {
+  async findAll(query: FindDiagnosisQuery, viewer?: DiagnosisViewer) {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const statuses = this.parseEnumList<ServiceOrderDiagnosisStatus>(
@@ -42,6 +46,7 @@ export class ServiceOrderDiagnosisService {
 
     const qb = this.diagnosisRepository
       .createQueryBuilder('serviceOrderDiagnosis')
+      .innerJoin('serviceOrderDiagnosis.serviceOrder', 'serviceOrder')
       .orderBy('serviceOrderDiagnosis.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
@@ -59,13 +64,16 @@ export class ServiceOrderDiagnosisService {
       qb.andWhere('serviceOrderDiagnosis.status IN (:...statuses)', { statuses });
     }
 
+    this.applyViewerScope(qb, viewer);
+
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
 
-  async findOne(id: number, withDeleted = false) {
+  async findOne(id: number, withDeleted = false, viewer?: DiagnosisViewer) {
     const diagnosis = await this.diagnosisRepository.findOne({
       where: { id },
+      relations: ['serviceOrder'],
       withDeleted,
     });
 
@@ -73,11 +81,14 @@ export class ServiceOrderDiagnosisService {
       throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
     }
 
+    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+
     return diagnosis;
   }
 
-  async create(dto: CreateServiceOrderDiagnosisDto) {
+  async create(dto: CreateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
     const serviceOrder = await this.ensureServiceOrder(dto.serviceOrderId);
+    await this.ensureViewerCanAccessServiceOrder(serviceOrder, viewer);
     this.ensureDiagnosisCreateAllowed(serviceOrder);
     const previousCurrentDiagnosis = await this.diagnosisRepository.findOne({
       where: {
@@ -124,11 +135,13 @@ export class ServiceOrderDiagnosisService {
     return diagnosis;
   }
 
-  async update(id: number, dto: UpdateServiceOrderDiagnosisDto) {
-    const diagnosis = await this.diagnosisRepository.findOne({ where: { id } });
+  async update(id: number, dto: UpdateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
+    const diagnosis = await this.diagnosisRepository.findOne({ where: { id }, relations: ['serviceOrder'] });
     if (!diagnosis) {
       throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
     }
+
+    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
 
     if (diagnosis.deletedAt) {
       throw new BadRequestException('Cannot update a deleted diagnosis');
@@ -162,27 +175,31 @@ export class ServiceOrderDiagnosisService {
     });
   }
 
-  async softDelete(id: number) {
-    await this.ensureDiagnosis(id);
+  async softDelete(id: number, viewer?: DiagnosisViewer) {
+    await this.ensureDiagnosis(id, viewer);
     await this.diagnosisRepository.softDelete(id);
     return { ok: true, message: `ServiceOrderDiagnosis ${id} deleted successfully` };
   }
 
-  async bulkSoftDelete(ids: number[]) {
+  async bulkSoftDelete(ids: number[], viewer?: DiagnosisViewer) {
     this.ensureIds(ids);
+    await this.ensureDiagnoses(ids, viewer);
     await this.diagnosisRepository.softDelete(ids);
     return { ok: true, message: `${ids.length} service order diagnoses deleted successfully` };
   }
 
-  async restore(id: number) {
+  async restore(id: number, viewer?: DiagnosisViewer) {
     const diagnosis = await this.diagnosisRepository.findOne({
       where: { id },
+      relations: ['serviceOrder'],
       withDeleted: true,
     });
 
     if (!diagnosis) {
       throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
     }
+
+    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
 
     if (!diagnosis.deletedAt) {
       return { ok: true, message: 'ServiceOrderDiagnosis already active' };
@@ -192,12 +209,17 @@ export class ServiceOrderDiagnosisService {
     return { ok: true, message: `ServiceOrderDiagnosis ${id} restored successfully` };
   }
 
-  async bulkRestore(ids: number[]) {
+  async bulkRestore(ids: number[], viewer?: DiagnosisViewer) {
     this.ensureIds(ids);
     const existing = await this.diagnosisRepository.find({
       where: { id: In(ids) },
+      relations: ['serviceOrder'],
       withDeleted: true,
     });
+
+    for (const diagnosis of existing) {
+      await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+    }
 
     const toRestore = existing.filter((entry) => entry.deletedAt);
     if (!toRestore.length) {
@@ -274,11 +296,54 @@ export class ServiceOrderDiagnosisService {
     await this.serviceOrderRepository.save(serviceOrder);
   }
 
-  private async ensureDiagnosis(id: number) {
-    const diagnosis = await this.diagnosisRepository.findOne({ where: { id } });
+  private async ensureDiagnosis(id: number, viewer?: DiagnosisViewer) {
+    const diagnosis = await this.diagnosisRepository.findOne({ where: { id }, relations: ['serviceOrder'] });
     if (!diagnosis) {
       throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
     }
+
+    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+  }
+
+  private async ensureDiagnoses(ids: number[], viewer?: DiagnosisViewer) {
+    const diagnoses = await this.diagnosisRepository.find({ where: { id: In(ids) }, relations: ['serviceOrder'] });
+    for (const diagnosis of diagnoses) {
+      await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+    }
+  }
+
+  private applyViewerScope(qb: any, viewer?: DiagnosisViewer): void {
+    if (!this.isTechnicianViewer(viewer)) {
+      return;
+    }
+
+    const technicianId = Number(viewer?.sub ?? 0);
+    if (!technicianId) {
+      throw new ForbiddenException('Usuario tecnico no identificado');
+    }
+
+    qb.andWhere('serviceOrder.assignedToTechnicianId = :viewerTechnicianId', {
+      viewerTechnicianId: technicianId,
+    });
+  }
+
+  private async ensureViewerCanAccessServiceOrder(serviceOrder: ServiceOrder | null | undefined, viewer?: DiagnosisViewer) {
+    if (!this.isTechnicianViewer(viewer)) {
+      return;
+    }
+
+    const technicianId = Number(viewer?.sub ?? 0);
+    if (!technicianId) {
+      throw new ForbiddenException('Usuario tecnico no identificado');
+    }
+
+    if (!serviceOrder || Number(serviceOrder.assignedToTechnicianId) !== technicianId) {
+      throw new ForbiddenException('No tienes acceso a esta orden de servicio');
+    }
+  }
+
+  private isTechnicianViewer(viewer?: DiagnosisViewer): boolean {
+    return isTechnicianScopedRoleSet(viewer?.roles);
   }
 
   private async resolveNextSequence(

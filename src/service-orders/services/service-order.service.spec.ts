@@ -1,7 +1,11 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
+import { ServiceOrderIntakePdfService } from '../documents/service-order-intake-pdf.service';
+import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
+import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 import {
@@ -105,10 +109,13 @@ describe('ServiceOrderService', () => {
   let clientContactRepository: MockRepo<ClientContact>;
   let userRepository: MockRepo<User>;
   let eventRepository: MockRepo<ServiceOrderEvent>;
-  let threadRepository: MockRepo;
   let workflowService: jest.Mocked<ServiceOrderWorkflowService>;
   let messageMatrixService: jest.Mocked<ServiceOrderMessageMatrixService>;
   let metricsFactory: jest.Mocked<ServiceOrderMetricsFactory>;
+  let tempDocumentsService: jest.Mocked<ServiceOrderTempDocumentsService>;
+  let intakePdfService: jest.Mocked<ServiceOrderIntakePdfService>;
+  let configService: jest.Mocked<ConfigService>;
+  let inboxService: jest.Mocked<ServiceOrderInboxService>;
 
   beforeEach(() => {
     serviceOrderRepository = createMockRepo<ServiceOrder>();
@@ -116,7 +123,6 @@ describe('ServiceOrderService', () => {
     clientContactRepository = createMockRepo<ClientContact>();
     userRepository = createMockRepo<User>();
     eventRepository = createMockRepo<ServiceOrderEvent>();
-    threadRepository = createMockRepo();
 
     workflowService = {
       ensureTechnicianAvailable: jest.fn(),
@@ -126,6 +132,7 @@ describe('ServiceOrderService', () => {
 
     messageMatrixService = {
       notifySurveyRequest: jest.fn(),
+      dispatchOrderIntakeTemplate: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
 
     metricsFactory = {
@@ -147,22 +154,105 @@ describe('ServiceOrderService', () => {
       })),
     } as unknown as jest.Mocked<ServiceOrderMetricsFactory>;
 
+    tempDocumentsService = {
+      createRecord: jest.fn().mockResolvedValue({ token: 'temp-token' }),
+    } as unknown as jest.Mocked<ServiceOrderTempDocumentsService>;
+
+    intakePdfService = {
+      generate: jest.fn().mockResolvedValue({
+        fileName: 'resumen-ordenes.pdf',
+        absolutePath: 'C:/tmp/resumen-ordenes.pdf',
+        mimeType: 'application/pdf',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderIntakePdfService>;
+
+    configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'APP_PUBLIC_BASE_URL') return 'https://stsperu.online/api';
+        if (key === 'WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') return 'ordenes_ingresadas_asignadas';
+        return undefined;
+      }),
+    } as unknown as jest.Mocked<ConfigService>;
+
+    inboxService = {
+      syncThreadClientPhoneSnapshotForOrder: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+
     service = new ServiceOrderService(
       serviceOrderRepository as any,
       clientRepository as any,
       clientContactRepository as any,
       userRepository as any,
       eventRepository as any,
-      threadRepository as any,
       workflowService,
       messageMatrixService,
       metricsFactory,
+      tempDocumentsService,
+      intakePdfService,
+      configService,
+      inboxService,
     );
   });
 
-  it('crea muchas ordenes desde un batch reutilizando el contexto compartido', async () => {
-    const firstOrder = createServiceOrder({ id: 201, code: 'SO-BATCH-001', clientId: 30, clientContactId: 88 });
-    const secondOrder = createServiceOrder({ id: 202, code: 'SO-BATCH-002', clientId: 30, clientContactId: 88 });
+  it('treats single order creation as a batch of one for whatsapp intake dispatch', async () => {
+    const created = createServiceOrder({
+      id: 99,
+      code: 'SO-TEST-001',
+      clientId: 30,
+      clientSnapshotName: 'Juan Pérez',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'PERSON', documentType: { name: 'DNI' } } as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    serviceOrderRepository.create.mockImplementation((value) => value);
+    serviceOrderRepository.save.mockImplementation(async (value) => ({ ...value, id: 99 }));
+    serviceOrderRepository.findOne.mockResolvedValue(created);
+    jest.spyOn(service as any, 'generateUniqueCode').mockResolvedValue('SO-TEST-001');
+
+    const result = await service.create(
+      {
+        requestOrigin: RequestOrigin.CLIENT,
+        clientId: 30,
+        equipmentType: EquipmentType.LAPTOP,
+        initialIssue: 'No enciende',
+      },
+      5,
+    );
+
+    expect(result.code).toBeDefined();
+    expect(messageMatrixService.dispatchOrderIntakeTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceOrders: [expect.objectContaining({ id: result.id })],
+      }),
+    );
+  });
+
+  it('creates all orders and dispatches one intake template for the batch', async () => {
+    const firstOrder = createServiceOrder({
+      id: 201,
+      code: 'SO-BATCH-001',
+      clientId: 30,
+      clientContactId: 88,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const secondOrder = createServiceOrder({
+      id: 202,
+      code: 'SO-BATCH-002',
+      clientId: 30,
+      clientContactId: 88,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
     userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
     clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
     clientContactRepository.findOne.mockResolvedValue({
@@ -177,10 +267,15 @@ describe('ServiceOrderService', () => {
       suggestedTechnicianId: 7,
       technicians: [],
     });
-    const createSpy = jest
-      .spyOn(service, 'create')
-      .mockResolvedValueOnce(firstOrder as any)
-      .mockResolvedValueOnce(secondOrder as any);
+    serviceOrderRepository.create.mockImplementation((value) => value);
+    serviceOrderRepository.save
+      .mockImplementationOnce(async (value) => ({ ...value, id: 201 }))
+      .mockImplementationOnce(async (value) => ({ ...value, id: 202 }));
+    serviceOrderRepository.findOne.mockResolvedValueOnce(firstOrder).mockResolvedValueOnce(secondOrder);
+    jest
+      .spyOn(service as any, 'generateUniqueCode')
+      .mockResolvedValueOnce('SO-BATCH-001')
+      .mockResolvedValueOnce('SO-BATCH-002');
 
     const result = await service.createBatch(
       {
@@ -207,35 +302,10 @@ describe('ServiceOrderService', () => {
       5,
     );
 
-    expect(createSpy).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        requestOrigin: RequestOrigin.CLIENT,
-        clientId: 30,
-        clientContactId: 88,
-        priority: ServiceOrderPriority.HIGH,
-        contactName: 'Carlos Avila',
-        equipmentType: EquipmentType.LAPTOP,
-        brand: 'Lenovo',
-        initialIssue: 'No enciende',
-      }),
-      5,
-    );
-    expect(createSpy).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        requestOrigin: RequestOrigin.CLIENT,
-        clientId: 30,
-        clientContactId: 88,
-        priority: ServiceOrderPriority.HIGH,
-        contactName: 'Carlos Avila',
-        equipmentType: EquipmentType.PRINTER,
-        brand: 'Epson',
-        initialIssue: 'Atasco de papel',
-      }),
-      5,
-    );
-    expect(result.createdOrders).toEqual([firstOrder, secondOrder]);
+    expect(result.createdOrders).toHaveLength(2);
+    expect(intakePdfService.generate).toHaveBeenCalled();
+    expect(tempDocumentsService.createRecord).toHaveBeenCalled();
+    expect(messageMatrixService.dispatchOrderIntakeTemplate).toHaveBeenCalledTimes(1);
   });
 
   it('rechaza batch sin ordenes candidatas', async () => {
@@ -262,8 +332,6 @@ describe('ServiceOrderService', () => {
       })
       .mockRejectedValueOnce(new BadRequestException('No hay tecnicos disponibles para asignar ordenes'));
 
-    const createSpy = jest.spyOn(service, 'create').mockResolvedValue(createServiceOrder() as any);
-
     await expect(
       service.createBatch(
         {
@@ -287,7 +355,7 @@ describe('ServiceOrderService', () => {
       ),
     ).rejects.toThrow('No hay tecnicos disponibles para asignar ordenes');
 
-    expect(createSpy).not.toHaveBeenCalled();
+    expect(serviceOrderRepository.save).not.toHaveBeenCalled();
   });
 
   it('crea la orden con los ejes canónicos iniciales', async () => {
@@ -483,6 +551,13 @@ describe('ServiceOrderService', () => {
     expect(messageMatrixService.notifySurveyRequest).toHaveBeenCalledWith(result);
   });
 
+  it('rechaza update sobre orden soft-deleted', async () => {
+    serviceOrderRepository.findOne.mockResolvedValue(null);
+
+    await expect(service.update(55, { notes: 'forbidden' } as any)).rejects.toThrow(NotFoundException);
+    expect(serviceOrderRepository.save).not.toHaveBeenCalled();
+  });
+
   it('rechaza la mutación directa de operativeStatus desde update', async () => {
     const order = createServiceOrder({ operativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA });
     serviceOrderRepository.findOne.mockResolvedValue(order);
@@ -524,10 +599,7 @@ describe('ServiceOrderService', () => {
 
     await service.update(order.id, { contactPhone: '+51 988 777 666' });
 
-    expect(threadRepository.update).toHaveBeenCalledWith(
-      { serviceOrderId: order.id },
-      { clientPhoneSnapshot: '+51988777666' },
-    );
+    expect(inboxService.syncThreadClientPhoneSnapshotForOrder).toHaveBeenCalledWith(order.id, '+51988777666');
   });
 
   it('no toca el hilo si el telefono canonico no cambió', async () => {
@@ -538,7 +610,7 @@ describe('ServiceOrderService', () => {
 
     await service.update(order.id, { contactPhone: '+51 999 111 222' });
 
-    expect(threadRepository.update).not.toHaveBeenCalled();
+    expect(inboxService.syncThreadClientPhoneSnapshotForOrder).not.toHaveBeenCalled();
   });
 
   it('aplica filtros canónicos al listado cuando se consultan estados', async () => {
@@ -575,6 +647,67 @@ describe('ServiceOrderService', () => {
     expect(queryBuilder.andWhere).toHaveBeenCalledWith('serviceOrder.economicStatus IN (:...economicStatuses)', {
       economicStatuses: [ServiceOrderEconomicStatus.PENDIENTE],
     });
+  });
+
+  it('acota el listado para técnicos a sus órdenes asignadas', async () => {
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      withDeleted: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    serviceOrderRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    await service.findAll({ page: 1, limit: 10 }, { sub: 44, roles: [{ name: 'technician' }] } as any);
+
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'serviceOrder.assignedToTechnicianId = :viewerTechnicianId',
+      { viewerTechnicianId: 44 },
+    );
+  });
+
+  it('no acota el listado para admin con rol técnico adicional', async () => {
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      withDeleted: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    serviceOrderRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    await service.findAll(
+      { page: 1, limit: 10 },
+      { sub: 44, roles: [{ name: 'admin' }, { name: 'technician' }] } as any,
+    );
+
+    expect(queryBuilder.andWhere).not.toHaveBeenCalledWith(
+      'serviceOrder.assignedToTechnicianId = :viewerTechnicianId',
+      { viewerTechnicianId: 44 },
+    );
+  });
+
+  it('impide que un técnico lea órdenes ajenas', async () => {
+    serviceOrderRepository.findOne.mockResolvedValue(createServiceOrder({ assignedToTechnicianId: 7 }));
+
+    await expect(
+      service.findOne(1, false, { sub: 9, roles: [{ name: 'technician' }] } as any),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('permite que recepción con rol técnico adicional lea órdenes ajenas', async () => {
+    serviceOrderRepository.findOne.mockResolvedValue(createServiceOrder({ assignedToTechnicianId: 7 }));
+
+    await expect(
+      service.findOne(1, false, { sub: 9, roles: [{ name: 'recepcionist' }, { name: 'technician' }] } as any),
+    ).resolves.toBeDefined();
   });
 
   it('enriquece findAll con sla y timeMetrics por cada fila', async () => {

@@ -15,6 +15,7 @@ import {
   ServiceOrderInboxDirection,
 } from '../service-order-inbox.types';
 import { ServiceOrderInboxAttachment } from './service-order-inbox-attachment.entity';
+import { ServiceOrderInboxMessageOrderLink } from './service-order-inbox-message-order-link.entity';
 
 @Entity('service_order_inbox_messages')
 export class ServiceOrderInboxMessage {
@@ -69,6 +70,11 @@ export class ServiceOrderInboxMessage {
     eager: false,
   })
   attachments?: ServiceOrderInboxAttachment[];
+
+  @OneToMany(() => ServiceOrderInboxMessageOrderLink, (link) => link.message, {
+    eager: false,
+  })
+  orderLinks?: ServiceOrderInboxMessageOrderLink[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

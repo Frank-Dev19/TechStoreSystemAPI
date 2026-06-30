@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { TechnicianAssignmentBalance } from '../entities/technician-assignment-balance.entity';
@@ -238,5 +238,42 @@ describe('ServiceOrderWorkflowService', () => {
     expect(result.cancellationReason).toBe('Equipo irreparable');
     expect(result.resolvedAt).toBeInstanceOf(Date);
     expect(result.closedAt).toBeInstanceOf(Date);
+  });
+
+  it('impide que un técnico cambie el workflow de una orden ajena', async () => {
+    const order = createServiceOrder({ assignedToTechnicianId: 12 });
+    serviceOrderRepository.findOne.mockResolvedValue(order);
+
+    await expect(
+      service.changeTechnicalStatus(
+        order.id,
+        ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,
+        12,
+        undefined,
+        { sub: 99, roles: [{ name: 'technician' }] } as any,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+
+    expect(serviceOrderRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('permite que supervisor con rol técnico adicional cambie el workflow de una orden ajena', async () => {
+    const order = createServiceOrder({ assignedToTechnicianId: 12 });
+    serviceOrderRepository.findOne
+      .mockResolvedValueOnce(order)
+      .mockImplementationOnce(async () => order);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+
+    await expect(
+      service.changeTechnicalStatus(
+        order.id,
+        ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,
+        99,
+        undefined,
+        { sub: 99, roles: [{ name: 'supervisor' }, { name: 'technician' }] } as any,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ technicalStatus: ServiceOrderTechnicalStatus.EN_DIAGNOSTICO }));
+
+    expect(serviceOrderRepository.save).toHaveBeenCalled();
   });
 });

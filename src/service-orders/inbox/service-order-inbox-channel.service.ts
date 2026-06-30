@@ -26,6 +26,17 @@ type DispatchOutboundPayload = {
   attachments: OutboundAttachmentPayload[];
 };
 
+type DispatchTemplateMessageInput = {
+  clientPhone: string | null;
+  templateName: string;
+  languageCode: string;
+  documentUrl?: string | null;
+  documentFileName?: string | null;
+  bodyParameters: string[];
+  quickReplyPayloads?: string[];
+  contextToken: string;
+};
+
 export type DispatchOutboundResult = {
   status: string;
   externalMessageId?: string | null;
@@ -236,6 +247,73 @@ export class ServiceOrderInboxChannelService {
       providerPayload,
       providerMediaId: mediaId,
       providerUrl: null,
+    };
+  }
+
+  async dispatchTemplateMessage(payload: DispatchTemplateMessageInput): Promise<DispatchOutboundResult> {
+    this.ensureMetaConfigured();
+    const phone = this.normalizeRecipientPhone(payload.clientPhone);
+
+    const components: Array<Record<string, unknown>> = [];
+    if (payload.documentUrl?.trim()) {
+      components.push({
+        type: 'header',
+        parameters: [
+          {
+            type: 'document',
+            document: {
+              link: payload.documentUrl,
+              filename: payload.documentFileName ?? undefined,
+            },
+          },
+        ],
+      });
+    }
+
+    components.push({
+      type: 'body',
+      parameters: payload.bodyParameters.map((parameter) => ({
+        type: 'text',
+        text: parameter,
+      })),
+    });
+
+    (payload.quickReplyPayloads ?? []).forEach((quickReplyPayload, index) => {
+      components.push({
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: String(index),
+        parameters: [
+          {
+            type: 'payload',
+            payload: quickReplyPayload,
+          },
+        ],
+      });
+    });
+
+    const body = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phone,
+      type: 'template',
+      biz_opaque_callback_data: payload.contextToken,
+      template: {
+        name: payload.templateName,
+        language: { code: payload.languageCode },
+        components,
+      },
+    };
+
+    const providerPayload = await this.metaJsonRequest(this.buildGraphUrl(`${this.phoneNumberId}/messages`), {
+      method: 'POST',
+      body,
+    });
+
+    return {
+      status: 'SENT',
+      externalMessageId: this.extractSentMessageId(providerPayload),
+      providerPayload,
     };
   }
 

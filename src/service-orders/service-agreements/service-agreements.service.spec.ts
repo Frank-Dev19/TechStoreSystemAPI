@@ -194,10 +194,14 @@ describe('ServiceOrderAgreementsService', () => {
 
     workflowService = {
       changeTechnicalStatus: jest.fn(),
+      assertTransitionAllowed: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderWorkflowService>;
 
     messageMatrixService = {
+      notifyAgreementAvailable: jest.fn(),
+      notifyRediagnosisAgreementAvailable: jest.fn(),
       notifyAgreementConfirmed: jest.fn(),
+      notifyCancellationWithDiagnosisFee: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
 
     service = new ServiceOrderAgreementsService(
@@ -297,6 +301,55 @@ describe('ServiceOrderAgreementsService', () => {
         technicalServiceAmount: 19.99,
       } as any),
     ).rejects.toThrow('technicalServiceAmount must be at least 20');
+  });
+
+  it('al crear un acuerdo draft de diagnóstico notifica acuerdo disponible', async () => {
+    const serviceOrder = createServiceOrder({
+      serviceType: ServiceType.DIAGNOSIS,
+      clientSnapshotName: 'Juan Pérez',
+      equipmentType: 'LAPTOP' as any,
+      brand: 'Lenovo',
+      model: 'ThinkPad',
+    });
+    const savedAgreement = createAgreement({ totalAmount: 85, status: ServiceOrderAgreementStatus.DRAFT });
+
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+
+    const agreementRepoInTx = {
+      save: jest.fn().mockResolvedValue(savedAgreement),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        withDeleted: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ max: '0' }),
+        execute: jest.fn().mockResolvedValue(undefined),
+      }),
+      create: jest.fn((value) => value),
+    };
+    const manager = {
+      getRepository: (entity: unknown) => {
+        if (entity === ServiceOrderAgreement) return agreementRepoInTx;
+        return {
+          find: jest.fn().mockResolvedValue([]),
+          insert: jest.fn().mockResolvedValue(undefined),
+          create: jest.fn((value) => value),
+        };
+      },
+    };
+
+    agreementRepository.manager?.transaction.mockImplementation(async (callback) => callback(manager));
+    jest.spyOn(service, 'findOne').mockResolvedValue(savedAgreement as any);
+
+    await service.create({
+      serviceOrderId: serviceOrder.id,
+      technicalServiceAmount: 85,
+    } as any);
+
+    expect(messageMatrixService.notifyAgreementAvailable).toHaveBeenCalledWith(serviceOrder, savedAgreement.id, 85);
   });
 
   it('acepta acuerdos sin monto máximo para servicio técnico', async () => {
@@ -687,6 +740,11 @@ describe('ServiceOrderAgreementsService', () => {
     expect(agreementRepoInTx.save).toHaveBeenCalledWith(expect.objectContaining({ derivedFromAgreementId: 144, sequenceNumber: 5 }));
     expect(insertedProducts[0]).toEqual(expect.objectContaining({ derivedFromAgreementProductItemId: 171, provenance: ServiceOrderAgreementLineProvenance.INHERITED }));
     expect(insertedServices[0]).toEqual(expect.objectContaining({ derivedFromAgreementServiceItemId: 181, provenance: ServiceOrderAgreementLineProvenance.INHERITED }));
+    expect(messageMatrixService.notifyRediagnosisAgreementAvailable).toHaveBeenCalledWith(
+      serviceOrder,
+      savedAgreement.id,
+      savedAgreement.totalAmount,
+    );
   });
 
   it('rechaza derivar un acuerdo fuera de un rediagnóstico', async () => {
@@ -940,10 +998,23 @@ describe('ServiceOrderAgreementsService', () => {
 
     agreementRepository.manager?.transaction.mockImplementation(async (callback) =>
       callback({
-        getRepository: jest.fn(() => ({
-          createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
-          update: jest.fn().mockResolvedValue(undefined),
-        })),
+        getRepository: jest.fn((entity) => {
+          if (entity === ServiceOrderAgreement) {
+            return {
+              createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+              update: jest.fn().mockResolvedValue(undefined),
+            };
+          }
+
+          if (entity === ServiceOrder) {
+            return {
+              findOne: jest.fn().mockResolvedValue(serviceOrder),
+              save: serviceOrderRepository.save,
+            };
+          }
+
+          return {};
+        }),
       }),
     );
     jest.spyOn(service, 'findOne').mockResolvedValue(confirmedAgreement as any);
@@ -956,10 +1027,8 @@ describe('ServiceOrderAgreementsService', () => {
       statuses: [ServiceOrderAgreementStatus.DRAFT, ServiceOrderAgreementStatus.CONFIRMED],
     });
 
-    expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
-      agreement.serviceOrderId,
-      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
-    );
+    expect(workflowService.changeTechnicalStatus).not.toHaveBeenCalled();
+    expect(agreementRepository.manager?.transaction).toHaveBeenCalled();
     expect(serviceOrderRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         commercialStatus: ServiceOrderCommercialStatus.AUTORIZADA,
@@ -968,7 +1037,55 @@ describe('ServiceOrderAgreementsService', () => {
         montoComprometidoVigente: 230,
       }),
     );
-    expect(messageMatrixService.notifyAgreementConfirmed).toHaveBeenCalledWith(serviceOrder, agreement.id);
+    expect(messageMatrixService.notifyAgreementConfirmed).toHaveBeenCalledWith(
+      expect.objectContaining({ id: serviceOrder.id }),
+      agreement.id,
+    );
+  });
+
+  it('no revierte la confirmación si falla la notificación externa', async () => {
+    const agreement = createAgreement({ status: ServiceOrderAgreementStatus.DRAFT, totalAmount: 230 });
+    const serviceOrder = createServiceOrder();
+    const confirmedAgreement = createAgreement({ status: ServiceOrderAgreementStatus.CONFIRMED, totalAmount: 230 });
+
+    agreementRepository.findOne.mockResolvedValue(agreement);
+    serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+    messageMatrixService.notifyAgreementConfirmed.mockRejectedValue(new Error('notify failed'));
+
+    const queryBuilder = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue(undefined),
+    };
+
+    agreementRepository.manager?.transaction.mockImplementation(async (callback) =>
+      callback({
+        getRepository: jest.fn((entity) => {
+          if (entity === ServiceOrderAgreement) {
+            return {
+              createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+              update: jest.fn().mockResolvedValue(undefined),
+            };
+          }
+
+          if (entity === ServiceOrder) {
+            return {
+              findOne: jest.fn().mockResolvedValue(serviceOrder),
+              save: serviceOrderRepository.save,
+            };
+          }
+
+          return {};
+        }),
+      }),
+    );
+    jest.spyOn(service, 'findOne').mockResolvedValue(confirmedAgreement as any);
+
+    await expect(service.confirm(agreement.id)).resolves.toEqual(confirmedAgreement);
+    expect(serviceOrderRepository.save).toHaveBeenCalled();
   });
 
   it('calcula rankings usando solo la versión confirmada vigente de cada orden', async () => {
@@ -1070,6 +1187,7 @@ describe('ServiceOrderAgreementsService', () => {
       agreement.serviceOrderId,
       'Cliente rechazó',
     );
+    expect(messageMatrixService.notifyCancellationWithDiagnosisFee).toHaveBeenCalledWith(agreement.serviceOrder);
   });
 
   it('filtra acuerdos por estado canónico en la consulta de listado', async () => {

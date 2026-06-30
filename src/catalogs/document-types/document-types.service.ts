@@ -79,8 +79,8 @@ export class DocumentTypesService {
     }
 
     if (query.search?.trim()) {
-      qb.andWhere('documentType.name ILIKE :search', {
-        search: `%${query.search.trim()}%`,
+      qb.andWhere('LOWER(documentType.name) LIKE :search', {
+        search: `%${query.search.trim().toLowerCase()}%`,
       });
     }
 

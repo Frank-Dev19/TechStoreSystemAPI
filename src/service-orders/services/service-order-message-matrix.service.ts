@@ -7,14 +7,32 @@ import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderOperativeStatus, ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
 import { ServiceOrderDiagnosisOutcome } from '../diagnoses/service-order-diagnosis-outcome.enum';
+import { ServiceOrderInboxChannelService } from '../inbox/service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { Sale } from '../../sales/entities/sale.entity';
+import { ServiceOrderWhatsAppTemplateService, WhatsAppTemplateDispatch } from './service-order-whatsapp-template.service';
 
 type DispatchMessageInput = {
   serviceOrder: ServiceOrder;
   idempotencyKey: string;
   messageType: string;
   body: string | null;
+};
+
+type DispatchOrderIntakeTemplateInput = {
+  serviceOrders: ServiceOrder[];
+  documentUrl: string;
+  documentFileName: string;
+  tempDocumentToken: string;
+};
+
+type DispatchBusinessNotificationInput = {
+  serviceOrder: ServiceOrder;
+  idempotencyKey: string;
+  messageType: string;
+  freeTextBody?: string | null;
+  template?: WhatsAppTemplateDispatch | null;
+  preferFreeTextWhenWindowOpen?: boolean;
 };
 
 @Injectable()
@@ -27,54 +45,180 @@ export class ServiceOrderMessageMatrixService {
     @InjectRepository(NotificationDeliveryAttempt)
     private readonly attemptRepository: Repository<NotificationDeliveryAttempt>,
     private readonly inboxService: ServiceOrderInboxService,
+    private readonly inboxChannelService: ServiceOrderInboxChannelService,
+    private readonly whatsappTemplateService: ServiceOrderWhatsAppTemplateService,
   ) {}
 
-  async notifyInitialAssignment(serviceOrder: ServiceOrder): Promise<void> {
-    if (!serviceOrder.assignedToTechnicianId) {
+  async dispatchOrderIntakeTemplate(input: DispatchOrderIntakeTemplateInput): Promise<void> {
+    const serviceOrders = input.serviceOrders.filter(Boolean);
+    if (!serviceOrders.length) {
       return;
     }
 
-    await this.dispatchMessage({
-      serviceOrder,
-      messageType: 'assignment.initial',
-      idempotencyKey: `service_order:${serviceOrder.id}:assignment:initial:${serviceOrder.assignedToTechnicianId}`,
-      body: `Tu orden ${serviceOrder.code} ya fue asignada a un técnico y pronto iniciaremos la revisión del equipo.`,
+    const thread = await this.inboxService.getThreadForServiceOrder(serviceOrders[0].id, {
+      role: 'SUPERVISOR',
+      userId: null,
+      displayName: 'Sistema',
     });
+    const recipient = thread.clientPhone ?? serviceOrders[0].clientSnapshotPhone ?? null;
+    if (!recipient) {
+      return;
+    }
+
+    const idempotencyKey = `service_order:${serviceOrders.map((order) => order.id).join('-')}:intake-template`;
+    const existing = await this.notificationRepository.findOne({
+      where: { idempotencyKey },
+    });
+    if (existing) {
+      return;
+    }
+
+    const descriptor = serviceOrders.length === 1 ? 'tu orden de servicio' : 'tus órdenes de servicio';
+    const allStandard = serviceOrders.every((order) => order.serviceType === 'STANDARD_SERVICE');
+    const template = allStandard
+      ? this.whatsappTemplateService.buildStandardOrderConfirmedTemplate({
+          clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
+          orderDescriptor: descriptor,
+          documentUrl: input.documentUrl,
+          documentFileName: input.documentFileName,
+          quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
+        })
+      : this.whatsappTemplateService.buildOrderIntakeTemplate({
+        clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
+        orderDescriptor: descriptor,
+        documentUrl: input.documentUrl,
+        documentFileName: input.documentFileName,
+        quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
+      });
+
+    const notification = await this.notificationRepository.save(
+      this.notificationRepository.create({
+        serviceOrderId: serviceOrders.length === 1 ? serviceOrders[0].id : null,
+        channel: 'WHATSAPP_TEMPLATE',
+        messageType: 'order.intake.summary',
+        recipient,
+        body: `Template ${template.templateName}`,
+        idempotencyKey,
+        status: 'QUEUED',
+        scope: serviceOrders.length === 1 ? 'ORDER' : 'ORDER_BATCH',
+        metadataJson: JSON.stringify({
+          orderIds: serviceOrders.map((order) => order.id),
+          tempDocumentToken: input.tempDocumentToken,
+          templateName: template.templateName,
+        }),
+      }),
+    );
+
+    const attempt = await this.attemptRepository.save(
+      this.attemptRepository.create({
+        notificationMessageId: notification.id,
+        status: 'QUEUED',
+        responsePayload: null,
+      }),
+    );
+
+    try {
+      const result = await this.inboxChannelService.dispatchTemplateMessage({
+        clientPhone: recipient,
+        templateName: template.templateName,
+        languageCode: template.languageCode,
+        documentUrl: template.documentUrl,
+        documentFileName: template.documentFileName,
+        bodyParameters: template.bodyParameters,
+        quickReplyPayloads: template.quickReplyPayloads,
+        contextToken: thread.contextToken,
+      });
+      notification.status = result.status;
+      attempt.status = result.status;
+      attempt.responsePayload = JSON.stringify(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
+      notification.status = 'FAILED';
+      attempt.status = 'FAILED';
+      attempt.responsePayload = JSON.stringify({ error: message });
+      this.logger.error(`Batch intake template dispatch failed for orders ${serviceOrders.map((order) => order.id).join(', ')}: ${message}`);
+    }
+
+    await this.notificationRepository.save(notification);
+    await this.attemptRepository.save(attempt);
+  }
+
+  async notifyInitialAssignment(serviceOrder: ServiceOrder): Promise<void> {
+    return;
   }
 
   async notifyTechnicianReassignment(
     serviceOrder: ServiceOrder,
     nextTechnicianName: string | null,
   ): Promise<void> {
-    const hasPriorContact = await this.inboxService.hasThreadActivity(serviceOrder.id);
-    if (!hasPriorContact) {
-      return;
-    }
-
-    const technicianLabel = nextTechnicianName?.trim() || 'un nuevo técnico';
-    await this.dispatchMessage({
-      serviceOrder,
-      messageType: 'assignment.reassigned',
-      idempotencyKey: `service_order:${serviceOrder.id}:assignment:reassigned:${serviceOrder.assignedToTechnicianId}`,
-      body: `Tu orden ${serviceOrder.code} fue reasignada a ${technicianLabel}. El seguimiento de tu atención continúa por este mismo canal.`,
-    });
+    return;
   }
 
   async notifyWorkflowTransition(
     serviceOrder: ServiceOrder,
     nextTechnicalStatus: ServiceOrderTechnicalStatus,
   ): Promise<void> {
-    const body = this.resolveWorkflowMessage(serviceOrder, nextTechnicalStatus);
-    if (!body) {
-      return;
+    switch (nextTechnicalStatus) {
+      case ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION:
+        await this.dispatchBusinessNotification({
+          serviceOrder,
+          messageType: 'authorization.confirmed',
+          idempotencyKey: `service_order:${serviceOrder.id}:authorization:confirmed`,
+          freeTextBody: `Tu orden ${serviceOrder.code} ya quedó autorizada para ejecución. Continuaremos con la atención del equipo.`,
+          template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
+            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+            orderCode: serviceOrder.code,
+          }),
+          preferFreeTextWhenWindowOpen: true,
+        });
+        return;
+      case ServiceOrderTechnicalStatus.RESUELTA:
+        await this.dispatchBusinessNotification({
+          serviceOrder,
+          messageType: 'ready.for.pickup',
+          idempotencyKey: `service_order:${serviceOrder.id}:ready-for-pickup`,
+          freeTextBody: `Tu orden ${serviceOrder.code} ya quedó finalizada y lista para entrega o recojo.`,
+          template: this.whatsappTemplateService.buildReadyForPickupTemplate({
+            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+            orderCode: serviceOrder.code,
+            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+          }),
+          preferFreeTextWhenWindowOpen: true,
+        });
+        return;
+      case ServiceOrderTechnicalStatus.SIN_SOLUCION:
+        await this.dispatchBusinessNotification({
+          serviceOrder,
+          messageType: 'no.solution',
+          idempotencyKey: `service_order:${serviceOrder.id}:no-solution`,
+          freeTextBody: `Tu orden ${serviceOrder.code} no tiene una solución técnica viable. Si necesitas más detalle, podemos ayudarte por este mismo canal.`,
+          template: this.whatsappTemplateService.buildNoSolutionTemplate({
+            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+            orderCode: serviceOrder.code,
+            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+          }),
+          preferFreeTextWhenWindowOpen: true,
+        });
+        return;
+      case ServiceOrderTechnicalStatus.BLOQUEADA:
+      case ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO:
+        await this.dispatchBusinessNotification({
+          serviceOrder,
+          messageType: 'pause.blocked',
+          idempotencyKey: `service_order:${serviceOrder.id}:pause:${nextTechnicalStatus}`,
+          freeTextBody: `Tu orden ${serviceOrder.code} requiere una gestión adicional antes de continuar. Te avisaremos cuando retomemos la atención.`,
+          template: this.whatsappTemplateService.buildPauseOrBlockedTemplate({
+            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+            orderCode: serviceOrder.code,
+            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+          }),
+          preferFreeTextWhenWindowOpen: true,
+        });
+        return;
+      default:
+        return;
     }
-
-    await this.dispatchMessage({
-      serviceOrder,
-      messageType: `technical.${nextTechnicalStatus.toLowerCase()}`,
-      idempotencyKey: `service_order:${serviceOrder.id}:technical:${nextTechnicalStatus}`,
-      body,
-    });
   }
 
   async notifyDiagnosisUpdated(
@@ -86,56 +230,58 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
 
-    const summary = this.normalizeForMessage(diagnosis.summary);
-    let body = `Tenemos una actualización del diagnóstico de tu orden ${serviceOrder.code}.`;
-
     if (
-      [
-        ServiceOrderDiagnosisOutcome.IRREPARABLE,
-        ServiceOrderDiagnosisOutcome.NOT_COST_EFFECTIVE,
-        ServiceOrderDiagnosisOutcome.NO_PARTS_AVAILABLE,
-        ServiceOrderDiagnosisOutcome.NO_FAULT_FOUND,
-        ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED,
-      ].includes(diagnosis.outcome)
+      [ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES, ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED].includes(
+        diagnosis.outcome,
+      )
     ) {
-      body = `${body} El resultado actual es: sin solución viable.`;
-    } else if (diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES) {
-      body = `${body} El equipo califica para atención por garantía.`;
-    } else {
-      body = `${body} Ya tenemos una evaluación técnica actualizada.`;
+      const statusLabel =
+        diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
+          ? 'aprobada'
+          : 'rechazada';
+      await this.dispatchBusinessNotification({
+        serviceOrder,
+        messageType: 'warranty.status',
+        idempotencyKey: `service_order:${serviceOrder.id}:warranty:${diagnosis.id}:${diagnosis.outcome}`,
+        template: this.whatsappTemplateService.buildWarrantyStatusTemplate({
+          clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+          orderCode: serviceOrder.code,
+          statusLabel,
+        }),
+        freeTextBody:
+          diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
+            ? `Tu orden ${serviceOrder.code} califica para atención por garantía.`
+            : `La garantía de tu orden ${serviceOrder.code} fue rechazada.`,
+        preferFreeTextWhenWindowOpen: true,
+      });
     }
-
-    if (summary) {
-      body = `${body} Resumen: ${summary}.`;
-    }
-
-    await this.dispatchMessage({
-      serviceOrder,
-      messageType: 'diagnosis.updated',
-      idempotencyKey: `service_order:${serviceOrder.id}:diagnosis:${diagnosis.id}`,
-      body,
-    });
   }
 
   async notifyAgreementConfirmed(serviceOrder: ServiceOrder, agreementId: number): Promise<void> {
-    await this.dispatchMessage({
+    await this.dispatchBusinessNotification({
       serviceOrder,
-      messageType: 'agreement.confirmed',
+      messageType: 'authorization.confirmed',
       idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:confirmed`,
-      body: `Tu orden ${serviceOrder.code} ya tiene el acuerdo confirmado. Continuaremos con la atención del equipo y te avisaremos cuando haya una nueva etapa relevante.`,
+      freeTextBody: `Tu orden ${serviceOrder.code} ya tiene el acuerdo confirmado. Continuaremos con la atención del equipo y te avisaremos cuando haya una nueva etapa relevante.`,
+      template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
+        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+        orderCode: serviceOrder.code,
+        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+      }),
+      preferFreeTextWhenWindowOpen: true,
     });
   }
 
   async notifyInvoiceLinked(serviceOrder: ServiceOrder, sale: Sale): Promise<void> {
-    await this.dispatchMessage({
-      serviceOrder,
-      messageType: 'invoice.linked',
-      idempotencyKey: `service_order:${serviceOrder.id}:invoice:${sale.id}`,
-      body: `Tu comprobante ${sale.documentType} ${sale.series}-${sale.number} ya fue ligado a la orden ${serviceOrder.code}. Si necesitas una copia, solicítala por este canal.`,
-    });
+    return;
   }
 
   async notifySurveyRequest(serviceOrder: ServiceOrder): Promise<void> {
+    const hasWindow = await this.inboxService.hasCustomerServiceWindow(serviceOrder.id);
+    if (!hasWindow) {
+      return;
+    }
+
     await this.dispatchMessage({
       serviceOrder,
       messageType: 'survey.requested',
@@ -144,39 +290,59 @@ export class ServiceOrderMessageMatrixService {
     });
   }
 
-  private resolveWorkflowMessage(
+  async notifyAgreementAvailable(
     serviceOrder: ServiceOrder,
-    nextStatus: ServiceOrderTechnicalStatus,
-  ): string | null {
-    switch (nextStatus) {
-      case ServiceOrderTechnicalStatus.EN_DIAGNOSTICO:
-        return `Tu orden ${serviceOrder.code} ingresó a revisión técnica. Te avisaremos cuando tengamos un diagnóstico o una actualización importante.`;
-      case ServiceOrderTechnicalStatus.EN_EJECUCION:
-        return `Tu orden ${serviceOrder.code} ya ingresó a servicio. Estamos trabajando en tu equipo.`;
-      case ServiceOrderTechnicalStatus.RESUELTA:
-        if (serviceOrder.operativeStatus === ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA || serviceOrder.serviceCompletedAt) {
-          return `Tu orden ${serviceOrder.code} ya quedó finalizada y lista para entrega o recojo.`;
-        }
-        return `Tu orden ${serviceOrder.code} ya está lista para entrega o recojo.`;
-      case ServiceOrderTechnicalStatus.SIN_SOLUCION:
-        if (serviceOrder.operativeStatus === ServiceOrderOperativeStatus.CANCELADA) {
-          return `Tu orden ${serviceOrder.code} fue cancelada. Si necesitas más detalle, podemos ayudarte por este mismo canal.`;
-        }
-        return `Tu orden ${serviceOrder.code} no tiene una solución técnica viable. Si necesitas más detalle, podemos ayudarte por este mismo canal.`;
-      case ServiceOrderTechnicalStatus.BLOQUEADA:
-      case ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO:
-        return `Tu orden ${serviceOrder.code} requiere una gestión adicional antes de continuar. Te avisaremos cuando retomemos la atención.`;
-      case ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL:
-        return `Tu orden ${serviceOrder.code} quedó pendiente de definición comercial. Te avisaremos cuando tengamos la propuesta correspondiente.`;
-      case ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION:
-        return `Tu orden ${serviceOrder.code} ya quedó autorizada para ejecución. Continuaremos con la atención del equipo.`;
-      case ServiceOrderTechnicalStatus.ASIGNADA:
-      case ServiceOrderTechnicalStatus.PENDIENTE_ASIGNACION:
-      case ServiceOrderTechnicalStatus.DIAGNOSTICADA:
-        return null;
-      default:
-        return null;
-    }
+    agreementId: number,
+    totalAmount: number,
+  ): Promise<void> {
+    await this.dispatchBusinessNotification({
+      serviceOrder,
+      messageType: 'agreement.available',
+      idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:available`,
+      freeTextBody: `Ya tenemos el acuerdo comercial de tu orden ${serviceOrder.code} por un total de S/${Number(totalAmount).toFixed(2)}.`,
+      template: this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate({
+        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+        orderCode: serviceOrder.code,
+        totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
+      }),
+      preferFreeTextWhenWindowOpen: false,
+    });
+  }
+
+  async notifyRediagnosisAgreementAvailable(
+    serviceOrder: ServiceOrder,
+    agreementId: number,
+    totalAmount: number,
+  ): Promise<void> {
+    await this.dispatchBusinessNotification({
+      serviceOrder,
+      messageType: 'agreement.available.rediagnosis',
+      idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:rediagnosis`,
+      freeTextBody: `Actualizamos el acuerdo comercial de tu orden ${serviceOrder.code}. Nuevo total: S/${Number(totalAmount).toFixed(2)}.`,
+      template: this.whatsappTemplateService.buildRediagnosisAgreementTemplate({
+        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+        orderCode: serviceOrder.code,
+        totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
+      }),
+      preferFreeTextWhenWindowOpen: false,
+    });
+  }
+
+  async notifyCancellationWithDiagnosisFee(serviceOrder: ServiceOrder): Promise<void> {
+    await this.dispatchBusinessNotification({
+      serviceOrder,
+      messageType: 'cancellation.with.fee',
+      idempotencyKey: `service_order:${serviceOrder.id}:cancellation:diagnosis-fee`,
+      freeTextBody: `La orden ${serviceOrder.code} fue cancelada y corresponde el cobro de S/20 por el diagnóstico realizado.`,
+      template: this.whatsappTemplateService.buildCancellationWithFeeTemplate({
+        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+        orderCode: serviceOrder.code,
+        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+      }),
+      preferFreeTextWhenWindowOpen: false,
+    });
   }
 
   private isDiagnosisMaterialChange(
@@ -243,6 +409,120 @@ export class ServiceOrderMessageMatrixService {
 
     await this.notificationRepository.save(notification);
     await this.attemptRepository.save(attempt);
+  }
+
+  private async dispatchBusinessNotification(input: DispatchBusinessNotificationInput): Promise<void> {
+    const hasWindow =
+      input.preferFreeTextWhenWindowOpen !== false &&
+      !!input.freeTextBody &&
+      (await this.inboxService.hasCustomerServiceWindow(input.serviceOrder.id));
+
+    if (hasWindow && input.freeTextBody) {
+      await this.dispatchMessage({
+        serviceOrder: input.serviceOrder,
+        idempotencyKey: input.idempotencyKey,
+        messageType: input.messageType,
+        body: input.freeTextBody,
+      });
+      return;
+    }
+
+    if (!input.template) {
+      if (input.freeTextBody) {
+        await this.dispatchMessage({
+          serviceOrder: input.serviceOrder,
+          idempotencyKey: input.idempotencyKey,
+          messageType: input.messageType,
+          body: input.freeTextBody,
+        });
+      }
+      return;
+    }
+
+    await this.dispatchTemplateNotification(input.serviceOrder, input.idempotencyKey, input.messageType, input.template);
+  }
+
+  private async dispatchTemplateNotification(
+    serviceOrder: ServiceOrder,
+    idempotencyKey: string,
+    messageType: string,
+    template: WhatsAppTemplateDispatch,
+  ): Promise<void> {
+    const existing = await this.notificationRepository.findOne({
+      where: { idempotencyKey },
+    });
+    if (existing) {
+      return;
+    }
+
+    const thread = await this.inboxService.getThreadForServiceOrder(serviceOrder.id, {
+      role: 'SUPERVISOR',
+      userId: null,
+      displayName: 'Sistema',
+    });
+    const recipient = thread.clientPhone ?? serviceOrder.clientSnapshotPhone ?? null;
+    if (!recipient) {
+      return;
+    }
+
+    const notification = await this.notificationRepository.save(
+      this.notificationRepository.create({
+        serviceOrderId: serviceOrder.id,
+        channel: 'WHATSAPP_TEMPLATE',
+        messageType,
+        recipient,
+        body: `Template ${template.templateName}`,
+        idempotencyKey,
+        status: 'QUEUED',
+        scope: 'ORDER',
+        metadataJson: JSON.stringify({ templateName: template.templateName }),
+      }),
+    );
+
+    const attempt = await this.attemptRepository.save(
+      this.attemptRepository.create({
+        notificationMessageId: notification.id,
+        status: 'QUEUED',
+        responsePayload: null,
+      }),
+    );
+
+    try {
+      const result = await this.inboxChannelService.dispatchTemplateMessage({
+        clientPhone: recipient,
+        templateName: template.templateName,
+        languageCode: template.languageCode,
+        documentUrl: template.documentUrl ?? null,
+        documentFileName: template.documentFileName ?? null,
+        bodyParameters: template.bodyParameters,
+        quickReplyPayloads: template.quickReplyPayloads,
+        contextToken: thread.contextToken,
+      });
+      notification.status = result.status;
+      attempt.status = result.status;
+      attempt.responsePayload = JSON.stringify(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
+      notification.status = 'FAILED';
+      attempt.status = 'FAILED';
+      attempt.responsePayload = JSON.stringify({ error: message });
+      this.logger.error(`Template dispatch failed for order ${serviceOrder.id}: ${message}`);
+    }
+
+    await this.notificationRepository.save(notification);
+    await this.attemptRepository.save(attempt);
+  }
+
+  private buildEquipmentLabel(serviceOrder: ServiceOrder): string {
+    const parts = [
+      serviceOrder.equipmentType === 'OTHER' ? serviceOrder.equipmentTypeOther : serviceOrder.equipmentType,
+      serviceOrder.brand,
+      serviceOrder.model,
+    ]
+      .map((piece) => String(piece ?? '').trim())
+      .filter(Boolean);
+
+    return parts.join(' | ') || 'Equipo';
   }
 
   private normalizeComparableText(value: string | null | undefined): string {

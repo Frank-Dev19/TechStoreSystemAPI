@@ -2,31 +2,30 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ServiceOrder } from '../../entities/service-order.entity';
 import {
   ServiceOrderInboxAuthorRole,
   ServiceOrderInboxDirection,
 } from '../service-order-inbox.types';
+import { ServiceOrderInboxMessage } from './service-order-inbox-message.entity';
+import { ServiceOrderInboxThreadOrderLink } from './service-order-inbox-thread-order-link.entity';
 
 @Entity('service_order_inbox_threads')
 export class ServiceOrderInboxThread {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 
-  @Column({ name: 'service_order_id', type: 'bigint', unsigned: true, unique: true })
-  serviceOrderId: number;
+  @Column({ name: 'client_id', type: 'bigint', unsigned: true, nullable: true })
+  clientId: number | null;
 
-  @ManyToOne(() => ServiceOrder, { eager: false, nullable: false, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'service_order_id' })
-  serviceOrder: ServiceOrder;
-
-  @Column({ name: 'client_phone_snapshot', type: 'varchar', length: 50, nullable: true })
+  @Column({ name: 'client_phone_snapshot', type: 'varchar', length: 50, nullable: true, unique: true })
   clientPhoneSnapshot: string | null;
+
+  @Column({ name: 'client_display_name_snapshot', type: 'varchar', length: 150, nullable: true })
+  clientDisplayNameSnapshot: string | null;
 
   @Column({ name: 'external_thread_key', type: 'varchar', length: 180, unique: true })
   externalThreadKey: string;
@@ -36,6 +35,9 @@ export class ServiceOrderInboxThread {
 
   @Column({ name: 'last_message_at', type: 'datetime', nullable: true })
   lastMessageAt: Date | null;
+
+  @Column({ name: 'last_customer_message_at', type: 'datetime', nullable: true })
+  lastCustomerMessageAt: Date | null;
 
   @Column({
     name: 'last_message_direction',
@@ -61,6 +63,16 @@ export class ServiceOrderInboxThread {
 
   @Column({ name: 'unread_for_supervisor', type: 'int', unsigned: true, default: 0 })
   unreadForSupervisor: number;
+
+  @OneToMany(() => ServiceOrderInboxMessage, (message) => message.thread, {
+    eager: false,
+  })
+  messages?: ServiceOrderInboxMessage[];
+
+  @OneToMany(() => ServiceOrderInboxThreadOrderLink, (link) => link.thread, {
+    eager: false,
+  })
+  orderLinks?: ServiceOrderInboxThreadOrderLink[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

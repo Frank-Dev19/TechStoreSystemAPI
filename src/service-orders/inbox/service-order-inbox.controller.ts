@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -54,6 +55,14 @@ export class ServiceOrderInboxController {
   @Get('threads/:id/messages')
   getMessages(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.inboxService.getMessages(id, this.inboxService.buildViewerContext(req.user));
+  }
+
+  @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @Permissions('service-order-inbox.read')
+  @Get('threads/:id/orders')
+  getThreadOrders(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.inboxService.listThreadOrders(id, this.inboxService.buildViewerContext(req.user));
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
@@ -143,5 +152,21 @@ export class ServiceOrderInboxController {
       receivedMessages: normalizedPayload.messages.length,
       receivedStatuses: normalizedPayload.statuses.length,
     };
+  }
+
+  @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @Permissions('service-order-inbox.send')
+  @Put('messages/:id/orders')
+  replaceMessageOrders(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('serviceOrderIds') serviceOrderIds: number[] | undefined,
+    @Req() req: any,
+  ) {
+    return this.inboxService.replaceMessageOrderLinks(
+      id,
+      serviceOrderIds ?? [],
+      this.inboxService.buildViewerContext(req.user),
+    );
   }
 }

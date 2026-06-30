@@ -10,8 +10,12 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  Req,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ServiceOrderService } from '../services/service-order.service';
 import { CreateServiceOrderBatchDto } from '../dto/create-service-order-batch.dto';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
@@ -31,6 +35,7 @@ import { ServiceOrderTechnicianSuggestionDto } from '../dto/service-order-techni
 import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.dto';
 import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
 import { TransitionServiceOrderTechnicalDto } from '../dto/transition-service-order-technical.dto';
+import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -40,6 +45,7 @@ export class ServiceOrderController {
     private readonly serviceOrderService: ServiceOrderService,
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly saleLinkService: ServiceOrderSaleLinkService,
+    private readonly inboxService: ServiceOrderInboxService,
   ) {}
 
   @Permissions('service-order.create')
@@ -62,8 +68,8 @@ export class ServiceOrderController {
 
   @Permissions('service-order.read')
   @Get()
-  findAll(@Query() query: any) {
-    return this.serviceOrderService.findAll(query);
+  findAll(@Query() query: any, @Req() req: any) {
+    return this.serviceOrderService.findAll(query, req.user);
   }
 
   @Permissions('service-order.read')
@@ -102,20 +108,39 @@ export class ServiceOrderController {
 
   @Permissions('service-order.read')
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.serviceOrderService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.serviceOrderService.findOne(id, false, req.user);
+  }
+
+  @Permissions('service-order.read')
+  @Get(':id/summary-pdf')
+  async downloadSummaryPdf(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const result = await this.serviceOrderService.generateSingleOrderSummaryPdf(id, req.user);
+    response.setHeader('Content-Type', result.mimeType);
+    response.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    return new StreamableFile(result.buffer);
+  }
+
+  @Permissions('service-order.read')
+  @Get(':id/inbox-thread')
+  getInboxThread(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.inboxService.getThreadForServiceOrder(id, this.inboxService.buildViewerContext(req.user));
   }
 
   @Permissions('service-order.update')
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto) {
-    return this.serviceOrderService.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto, @Req() req: any) {
+    return this.serviceOrderService.update(id, dto, req.user);
   }
 
   @Permissions('service-order.update')
   @Patch(':id/deliver')
-  deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number) {
-    return this.serviceOrderService.markAsDelivered(id, userId);
+  deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number, @Req() req?: any) {
+    return this.serviceOrderService.markAsDelivered(id, userId, req?.user);
   }
 
   @Permissions('service-order.update')
@@ -124,8 +149,9 @@ export class ServiceOrderController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AssignTechnicianDto,
     @CurrentUser() userId?: number,
+    @Req() req?: any,
   ) {
-    return this.workflowService.assignTechnician(id, dto, userId);
+    return this.workflowService.assignTechnician(id, dto, userId, req?.user);
   }
 
   @Permissions('service-order.update')
@@ -135,8 +161,9 @@ export class ServiceOrderController {
     @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus)) status: ServiceOrderTechnicalStatus,
     @Body() dto?: TransitionServiceOrderTechnicalDto,
     @CurrentUser() userId?: number,
+    @Req() req?: any,
   ) {
-    return this.workflowService.changeTechnicalStatus(id, status, userId, dto?.reason);
+    return this.workflowService.changeTechnicalStatus(id, status, userId, dto?.reason, req?.user);
   }
 
   @Permissions('service-order.delete')

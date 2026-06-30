@@ -1,11 +1,16 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
+import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
+import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { Client } from '../../clients/entities/client.entity';
 import { ClientKind } from '../../clients/entities/client-kind.enum';
@@ -15,7 +20,7 @@ import {
 } from '../../common/utils/phone.util';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
-import { ServiceOrderInboxThread } from '../inbox/entities/service-order-inbox-thread.entity';
+import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import {
   EquipmentType,
   RequestOrigin,
@@ -37,6 +42,8 @@ import { ServiceOrderTimeMetricsDto } from '../dto/service-order-time-metrics.dt
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
+import { ServiceOrderIntakePdfService } from '../documents/service-order-intake-pdf.service';
+import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
@@ -61,8 +68,12 @@ type ServiceOrderWithMetrics = ServiceOrder & {
   timeMetrics: ServiceOrderTimeMetricsDto;
 };
 
+type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
+
 @Injectable()
 export class ServiceOrderService {
+  private readonly logger = new Logger(ServiceOrderService.name);
+
   constructor(
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
@@ -74,14 +85,47 @@ export class ServiceOrderService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(ServiceOrderEvent)
     private readonly eventRepository: Repository<ServiceOrderEvent>,
-    @InjectRepository(ServiceOrderInboxThread)
-    private readonly threadRepository: Repository<ServiceOrderInboxThread>,
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
     private readonly metricsFactory: ServiceOrderMetricsFactory,
+    private readonly tempDocumentsService: ServiceOrderTempDocumentsService,
+    private readonly intakePdfService: ServiceOrderIntakePdfService,
+    private readonly configService: ConfigService,
+    private readonly inboxService: ServiceOrderInboxService,
   ) {}
 
   async create(dto: CreateServiceOrderDto, creatorId: number): Promise<ServiceOrderWithMetrics> {
+    const createdOrder = await this.createSingleOrderInternal(dto, creatorId);
+    await this.dispatchIntakeSummaryForOrders([createdOrder]);
+    return createdOrder;
+  }
+
+  async createBatch(
+    dto: CreateServiceOrderBatchDto,
+    creatorId: number,
+  ): Promise<{ createdOrders: ServiceOrderWithMetrics[] }> {
+    if (!dto.orders?.length) {
+      throw new BadRequestException('At least one order is required');
+    }
+
+    await this.preflightBatchCreateOrThrow(dto, creatorId);
+
+    const createdOrders: ServiceOrderWithMetrics[] = [];
+    for (const orderEntry of dto.orders) {
+      createdOrders.push(
+        await this.createSingleOrderInternal(this.mergeBatchEntry(dto.sharedContext, orderEntry), creatorId),
+      );
+    }
+
+    await this.dispatchIntakeSummaryForOrders(createdOrders);
+
+    return { createdOrders };
+  }
+
+  private async createSingleOrderInternal(
+    dto: CreateServiceOrderDto,
+    creatorId: number,
+  ): Promise<ServiceOrderWithMetrics> {
     await this.ensureUser(creatorId);
     const requestOrigin = dto.requestOrigin ?? RequestOrigin.CLIENT;
     const client = await this.resolveClientForRequest(dto.clientId, requestOrigin);
@@ -135,25 +179,7 @@ export class ServiceOrderService {
     return this.findOne(saved.id);
   }
 
-  async createBatch(
-    dto: CreateServiceOrderBatchDto,
-    creatorId: number,
-  ): Promise<{ createdOrders: ServiceOrderWithMetrics[] }> {
-    if (!dto.orders?.length) {
-      throw new BadRequestException('At least one order is required');
-    }
-
-    await this.preflightBatchCreateOrThrow(dto, creatorId);
-
-    const createdOrders: ServiceOrderWithMetrics[] = [];
-    for (const orderEntry of dto.orders) {
-      createdOrders.push(await this.create(this.mergeBatchEntry(dto.sharedContext, orderEntry), creatorId));
-    }
-
-    return { createdOrders };
-  }
-
-  async findAll(query: FindAllServiceOrdersQuery) {
+  async findAll(query: FindAllServiceOrdersQuery, viewer?: ServiceOrderViewer) {
     const page = this.parsePositiveNumber(query.page, 1, 'page');
     const limit = this.parsePositiveNumber(query.limit, 10, 'limit', 100);
     const includeDeleted = query.withDeleted === 'true';
@@ -215,6 +241,7 @@ export class ServiceOrderService {
       const technicianId = this.parsePositiveNumber(query.technicianId, undefined, 'technicianId');
       qb.andWhere('serviceOrder.assignedToTechnicianId = :technicianId', { technicianId });
     }
+    this.applyViewerScope(qb, viewer);
 
     const searchTerm = query.search?.trim();
     if (searchTerm) {
@@ -248,7 +275,7 @@ export class ServiceOrderService {
     return { data: data.map((serviceOrder) => this.enrichWithMetrics(serviceOrder)), total, page, limit };
   }
 
-  async findOne(id: number, withDeleted = false): Promise<ServiceOrderWithMetrics> {
+  async findOne(id: number, withDeleted = false, viewer?: ServiceOrderViewer): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.serviceOrderRepository.findOne({
       where: { id },
       relations: ['assignedTechnician', 'client'],
@@ -259,11 +286,56 @@ export class ServiceOrderService {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);
     }
 
+    this.ensureViewerCanAccessOrder(serviceOrder, viewer);
+
     return this.enrichWithMetrics(serviceOrder);
   }
 
-  async update(id: number, dto: UpdateServiceOrderDto): Promise<ServiceOrderWithMetrics> {
-    const serviceOrder = await this.findOne(id, true);
+  async generateSingleOrderSummaryPdf(
+    id: number,
+    viewer?: ServiceOrderViewer,
+  ): Promise<{ fileName: string; buffer: Buffer; mimeType: string }> {
+    const serviceOrder = await this.findOne(id, false, viewer);
+    const buffer = await this.intakePdfService.generateSingleOrderSummaryBuffer({
+      code: serviceOrder.code,
+      createdAt: serviceOrder.createdAt ?? new Date(),
+      operativeStatus: serviceOrder.operativeStatus,
+      serviceType: serviceOrder.serviceType,
+      clientName: serviceOrder.clientSnapshotName ?? serviceOrder.client?.name ?? null,
+      clientDocument:
+        [serviceOrder.clientSnapshotDocumentTypeName, serviceOrder.clientSnapshotDocumentNumber]
+          .filter(Boolean)
+          .join(': ') || null,
+      clientPhone: serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null,
+      clientEmail: serviceOrder.clientSnapshotEmail ?? serviceOrder.client?.email ?? null,
+      equipmentType: serviceOrder.equipmentTypeOther?.trim() || serviceOrder.equipmentType,
+      brand: serviceOrder.brand ?? null,
+      model: serviceOrder.model ?? null,
+      serialNumber: serviceOrder.serialNumber ?? null,
+      accessories: serviceOrder.accessories ?? null,
+      notes: serviceOrder.notes ?? null,
+      initialIssue: serviceOrder.initialIssue,
+    });
+
+    return {
+      fileName: `${serviceOrder.code}-resumen.pdf`,
+      buffer,
+      mimeType: 'application/pdf',
+    };
+  }
+
+  async update(id: number, dto: UpdateServiceOrderDto, viewer?: ServiceOrderViewer): Promise<ServiceOrderWithMetrics> {
+    if ('operativeStatus' in dto) {
+      throw new BadRequestException('operativeStatus ya no se puede modificar por update; usa el workflow correspondiente');
+    }
+    if ('serviceType' in dto) {
+      throw new BadRequestException('serviceType ya no se puede modificar por update; usa un flujo dedicado');
+    }
+    if ('assignedToTechnicianId' in dto) {
+      throw new BadRequestException('assignedToTechnicianId ya no se puede modificar por update; usa assign-technician');
+    }
+
+    const serviceOrder = await this.findOne(id, false, viewer);
     const previousOperativeStatus = serviceOrder.operativeStatus;
     const previousNormalizedClientPhone = this.normalizeComparablePhone(serviceOrder.clientSnapshotPhone);
 
@@ -309,16 +381,6 @@ export class ServiceOrderService {
     }
     if (dto.notes !== undefined) serviceOrder.notes = dto.notes ?? null;
     if (dto.cancellationReason !== undefined) serviceOrder.cancellationReason = dto.cancellationReason ?? null;
-    if ('operativeStatus' in dto) {
-      throw new BadRequestException('operativeStatus ya no se puede modificar por update; usa el workflow correspondiente');
-    }
-    if ('serviceType' in dto) {
-      throw new BadRequestException('serviceType ya no se puede modificar por update; usa un flujo dedicado');
-    }
-    if ('assignedToTechnicianId' in dto) {
-      throw new BadRequestException('assignedToTechnicianId ya no se puede modificar por update; usa assign-technician');
-    }
-
     this.applyContactSnapshotOverrides(serviceOrder, dto, clientContact);
 
     const saved = await this.serviceOrderRepository.save(serviceOrder);
@@ -332,8 +394,8 @@ export class ServiceOrderService {
     return this.enrichWithMetrics(saved);
   }
 
-  async markAsDelivered(id: number, actorId?: number): Promise<ServiceOrderWithMetrics> {
-    const serviceOrder = await this.findOne(id, true);
+  async markAsDelivered(id: number, actorId?: number, viewer?: ServiceOrderViewer): Promise<ServiceOrderWithMetrics> {
+    const serviceOrder = await this.findOne(id, false, viewer);
     const previousOperativeStatus = serviceOrder.operativeStatus;
 
     if (serviceOrder.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA) {
@@ -605,7 +667,7 @@ export class ServiceOrderService {
       return;
     }
 
-    await this.threadRepository.update({ serviceOrderId }, { clientPhoneSnapshot: normalizedNextPhone });
+    await this.inboxService.syncThreadClientPhoneSnapshotForOrder(serviceOrderId, normalizedNextPhone);
   }
 
   private async recordOperativeEvent(
@@ -742,5 +804,111 @@ export class ServiceOrderService {
       sla: metrics.sla,
       timeMetrics: metrics.timeMetrics,
     }) as ServiceOrderWithMetrics;
+  }
+
+  private async dispatchIntakeSummaryForOrders(serviceOrders: ServiceOrderWithMetrics[]): Promise<void> {
+    const orders = serviceOrders.filter(Boolean);
+    if (!orders.length) {
+      return;
+    }
+
+    const recipient = orders[0].clientSnapshotPhone?.trim() || null;
+    if (!recipient) {
+      return;
+    }
+
+    try {
+      const generatedPdf = await this.intakePdfService.generate({
+        clientName: orders[0].clientSnapshotName ?? null,
+        createdAt: orders[0].createdAt ?? new Date(),
+        orders: orders.map((order) => ({
+          code: order.code,
+          serviceType: order.serviceType,
+          equipmentLabel: this.buildEquipmentLabel(order),
+          technicianName: order.assignedTechnician?.name ?? null,
+          initialIssue: order.initialIssue,
+          estimatedDeliveryDate: order.estimatedDeliveryDate?.toISOString() ?? null,
+          notes: order.notes ?? null,
+        })),
+      });
+
+      const tempDocument = await this.tempDocumentsService.createRecord({
+        sourceType: 'ORDER_INTAKE_SUMMARY',
+        mimeType: generatedPdf.mimeType,
+        fileName: generatedPdf.fileName,
+        absolutePath: generatedPdf.absolutePath,
+        metadata: {
+          orderIds: orders.map((order) => order.id),
+          recipient,
+          templateName:
+            this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') ||
+            'ordenes_ingresadas_asignadas',
+        },
+      });
+
+      const baseUrl = (this.configService.get<string>('APP_PUBLIC_BASE_URL') || 'http://localhost:3000').replace(
+        /\/+$/,
+        '',
+      );
+      await this.messageMatrixService.dispatchOrderIntakeTemplate({
+        serviceOrders: orders,
+        documentUrl: `${baseUrl}/service-orders/temp-documents/${tempDocument.token}`,
+        documentFileName: generatedPdf.fileName,
+        tempDocumentToken: tempDocument.token,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown dispatch preparation error';
+      this.logger.error(
+        `Failed to prepare intake summary dispatch for orders ${orders.map((order) => order.id).join(', ')}: ${message}`,
+      );
+    }
+  }
+
+  private buildEquipmentLabel(serviceOrder: ServiceOrder): string {
+    const parts = [
+      serviceOrder.equipmentTypeOther?.trim() || null,
+      serviceOrder.brand?.trim() || null,
+      serviceOrder.model?.trim() || null,
+    ].filter(Boolean);
+
+    if (parts.length) {
+      return parts.join(' ');
+    }
+
+    return serviceOrder.equipmentType;
+  }
+
+  private applyViewerScope(qb: any, viewer?: ServiceOrderViewer): void {
+    if (!this.isTechnicianViewer(viewer)) {
+      return;
+    }
+
+    const technicianId = Number(viewer?.sub ?? 0);
+    if (!technicianId) {
+      throw new ForbiddenException('Usuario tecnico no identificado');
+    }
+
+    qb.andWhere('serviceOrder.assignedToTechnicianId = :viewerTechnicianId', {
+      viewerTechnicianId: technicianId,
+    });
+  }
+
+  private ensureViewerCanAccessOrder(serviceOrder: ServiceOrder, viewer?: ServiceOrderViewer): void {
+    if (!this.isTechnicianViewer(viewer)) {
+      return;
+    }
+
+    const technicianId = Number(viewer?.sub ?? 0);
+    if (!technicianId) {
+      throw new ForbiddenException('Usuario tecnico no identificado');
+    }
+
+    if (Number(serviceOrder.assignedToTechnicianId) !== technicianId) {
+      throw new ForbiddenException('No tienes acceso a esta orden de servicio');
+    }
+  }
+
+  private isTechnicianViewer(viewer?: ServiceOrderViewer): boolean {
+    return isTechnicianScopedRoleSet(viewer?.roles);
   }
 }
