@@ -1,10 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 import { RolesGuard } from 'src/rbac/guards/roles.guard';
-import { BulkSoftDeleteSupplierDto } from './bulk-soft-delete-supplier.dto';
 import { CreateSupplierDto } from './create-supplier.dto';
 import { SupplierService } from './supplier.service';
 import { UpdateSupplierDto } from './update-supplier.dto';
@@ -35,7 +35,7 @@ export class SupplierController {
 
   @Permissions('suppliers.restore')
   @Patch('bulk-restore')
-  bulkRestore(@Body() dto: BulkSoftDeleteSupplierDto) {
+  bulkRestore(@Body() dto: BulkIdsDto) {
     return this.supplierService.bulkRestore(dto.ids);
   }
 
@@ -47,7 +47,7 @@ export class SupplierController {
 
   @Permissions('suppliers.delete')
   @Delete('bulk-delete')
-  bulkSoftDelete(@Body() dto: BulkSoftDeleteSupplierDto) {
+  bulkSoftDelete(@Body() dto: BulkIdsDto) {
     return this.supplierService.bulkSoftDelete(dto.ids);
   }
 

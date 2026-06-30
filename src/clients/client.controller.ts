@@ -1,10 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 import { RolesGuard } from 'src/rbac/guards/roles.guard';
-import { BulkSoftDeleteClientDto } from './bulk-soft-delete-client.dto';
 import { ClientService } from './client.service';
 import { CreateClientDto } from './create-client.dto';
 import { CommitClientImportDto } from './dto/commit-client-import.dto';
@@ -49,7 +49,7 @@ export class ClientController {
 
   @Permissions('clients.restore')
   @Patch('bulk-restore')
-  bulkRestore(@Body() dto: BulkSoftDeleteClientDto) {
+  bulkRestore(@Body() dto: BulkIdsDto) {
     return this.clientService.bulkRestore(dto.ids);
   }
 
@@ -61,7 +61,7 @@ export class ClientController {
 
   @Permissions('clients.delete')
   @Delete('bulk-delete')
-  bulkSoftDelete(@Body() dto: BulkSoftDeleteClientDto) {
+  bulkSoftDelete(@Body() dto: BulkIdsDto) {
     return this.clientService.bulkSoftDelete(dto.ids);
   }
 

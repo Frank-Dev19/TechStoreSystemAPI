@@ -9,6 +9,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, In, IsNull, Not, Repository } from 'typeorm';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import {
+  ensureBulkSoftDeleteTargets,
+  findBulkRestoreTargetsOrThrow,
+  findRestoreTargetOrThrow,
+} from 'src/common/utils/soft-delete-restore.util';
 import { DocumentTypeKind } from 'src/catalogs/document-types/entities/document-type-kind.enum';
 import { normalizePhoneToE164 } from 'src/common/utils/phone.util';
 import { ClientContactInputDto } from './dto/client-contact-input.dto';
@@ -343,6 +348,22 @@ export class ClientService {
     }
   }
 
+  private async ensureRestoreConflictFree(client: Client) {
+    const duplicate = await this.clientRepository.findOne({
+      where: {
+        companyId: client.companyId,
+        documentTypeId: client.documentTypeId,
+        documentNumber: client.documentNumber,
+        id: Not(client.id),
+      },
+      select: ['id'],
+    });
+
+    if (duplicate) {
+      throw new ConflictException('Client already exists');
+    }
+  }
+
   async create(createClientDto: CreateClientDto) {
     const companyId = Number(createClientDto.companyId);
     if (!companyId || Number.isNaN(companyId)) {
@@ -604,54 +625,44 @@ export class ClientService {
   }
 
   async bulkSoftDelete(ids: number[]) {
-    if (!ids?.length) throw new BadRequestException('No ids provided');
-    const count = await this.clientRepository.count({ where: { id: In(ids) } });
-    if (!count)
-      throw new NotFoundException(
-        `Clients with ids ${ids.join(', ')} not found`,
-      );
+    const count = await ensureBulkSoftDeleteTargets(this.clientRepository, ids, (targetIds) =>
+      `Clients with ids ${targetIds.join(', ')} not found`,
+    );
     await this.clientRepository.softDelete(ids);
     return { ok: true, message: `${count} clients deleted successfully` };
   }
 
   async restore(id: number) {
-    const client = await this.clientRepository.findOne({
-      where: { id },
-      withDeleted: true,
-    });
-    if (!client) throw new NotFoundException(`Client with id ${id} not found`);
+    const client = await findRestoreTargetOrThrow(
+      this.clientRepository,
+      id,
+      `Client with id ${id} not found`,
+    );
     if (!client.deletedAt) {
       return { ok: true, message: 'Client was already restored' };
     }
+    await this.ensureRestoreConflictFree(client);
     client.deletedAt = null;
     return this.clientRepository.save(client);
   }
 
   async bulkRestore(ids: number[]) {
-    if (!ids?.length) throw new BadRequestException('No ids provided');
-    const count = await this.clientRepository.count({
-      where: { id: In(ids) },
-      withDeleted: true,
-    });
-    if (!count)
-      throw new NotFoundException(
-        `Clients with ids ${ids.join(', ')} not found`,
-      );
+    const targets = await findBulkRestoreTargetsOrThrow(
+      this.clientRepository,
+      ids,
+      (targetIds) => `Clients with ids ${targetIds.join(', ')} not found`,
+      (targetId) => `Client with id ${targetId} not found`,
+    );
 
-    for (const id of ids) {
-      const client = await this.clientRepository.findOne({
-        where: { id },
-        withDeleted: true,
-      });
-      if (!client)
-        throw new NotFoundException(`Client with id ${id} not found`);
+    for (const client of targets) {
       if (!client.deletedAt)
         return { ok: true, message: 'Client was already restored' };
+      await this.ensureRestoreConflictFree(client);
       client.deletedAt = null;
       await this.clientRepository.save(client);
     }
 
-    return { ok: true, message: `${count} clients restored successfully` };
+    return { ok: true, message: `${targets.length} clients restored successfully` };
   }
 
   async validateImport(dto: ValidateClientImportDto) {

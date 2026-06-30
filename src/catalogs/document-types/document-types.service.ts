@@ -7,7 +7,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
+import {
+  ensureBulkSoftDeleteTargets,
+  findBulkRestoreTargetsOrThrow,
+  findRestoreTargetOrThrow,
+} from 'src/common/utils/soft-delete-restore.util';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
 import { DocumentType } from './entities/document-type.entity';
@@ -25,6 +30,20 @@ export class DocumentTypesService {
     @InjectRepository(DocumentType)
     private readonly documentTypeRepository: Repository<DocumentType>,
   ) {}
+
+  private async ensureRestoreNameAvailable(documentType: DocumentType) {
+    const duplicate = await this.documentTypeRepository.findOne({
+      where: {
+        name: documentType.name,
+        id: Not(documentType.id),
+      },
+      select: ['id'],
+    });
+
+    if (duplicate) {
+      throw new ConflictException('Document type name already exists');
+    }
+  }
 
   async create(createDocumentTypeDto: CreateDocumentTypeDto) {
     const existing = await this.documentTypeRepository.findOne({
@@ -137,19 +156,11 @@ export class DocumentTypesService {
   }
 
   async bulkSoftDelete(ids: number[]) {
-    if (!ids?.length) {
-      throw new BadRequestException('No ids provided');
-    }
-
-    const count = await this.documentTypeRepository.count({
-      where: { id: In(ids) },
-    });
-
-    if (!count) {
-      throw new NotFoundException(
-        `Document types with ids ${ids.join(', ')} not found`,
-      );
-    }
+    const count = await ensureBulkSoftDeleteTargets(
+      this.documentTypeRepository,
+      ids,
+      (targetIds) => `Document types with ids ${targetIds.join(', ')} not found`,
+    );
 
     await this.documentTypeRepository.softDelete(ids);
 
@@ -160,19 +171,17 @@ export class DocumentTypesService {
   }
 
   async restore(id: number) {
-    const dt = await this.documentTypeRepository.findOne({
-      where: { id },
-      withDeleted: true,
-    });
-
-    if (!dt) {
-      throw new NotFoundException(`Document type with id ${id} not found`);
-    }
+    const dt = await findRestoreTargetOrThrow(
+      this.documentTypeRepository,
+      id,
+      `Document type with id ${id} not found`,
+    );
 
     if (!dt.deletedAt) {
       return { ok: true, message: 'Document type was already restored' };
     }
 
+    await this.ensureRestoreNameAvailable(dt);
     dt.deletedAt = null;
     await this.documentTypeRepository.save(dt);
 
@@ -183,42 +192,26 @@ export class DocumentTypesService {
   }
 
   async bulkRestore(ids: number[]) {
-    if (!ids?.length) {
-      throw new BadRequestException('No ids provided');
-    }
+    const targets = await findBulkRestoreTargetsOrThrow(
+      this.documentTypeRepository,
+      ids,
+      (targetIds) => `Document types with ids ${targetIds.join(', ')} not found`,
+      (targetId) => `Document type with id ${targetId} not found`,
+    );
 
-    const count = await this.documentTypeRepository.count({
-      where: { id: In(ids) },
-      withDeleted: true,
-    });
-
-    if (!count) {
-      throw new NotFoundException(
-        `Document types with ids ${ids.join(', ')} not found`,
-      );
-    }
-
-    for (const id of ids) {
-      const dt = await this.documentTypeRepository.findOne({
-        where: { id },
-        withDeleted: true,
-      });
-
-      if (!dt) {
-        throw new NotFoundException(`Document type with id ${id} not found`);
-      }
-
+    for (const dt of targets) {
       if (!dt.deletedAt) {
         return { ok: true, message: 'Document type was already restored' };
       }
 
+      await this.ensureRestoreNameAvailable(dt);
       dt.deletedAt = null;
       await this.documentTypeRepository.save(dt);
     }
 
     return {
       ok: true,
-      message: `${count} document types restored successfully`,
+      message: `${targets.length} document types restored successfully`,
     };
   }
 }

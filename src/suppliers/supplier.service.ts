@@ -9,6 +9,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, In, IsNull, Not, Repository } from 'typeorm';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import {
+  ensureBulkSoftDeleteTargets,
+  findBulkRestoreTargetsOrThrow,
+  findRestoreTargetOrThrow,
+} from 'src/common/utils/soft-delete-restore.util';
 import { Supplier } from './entities/supplier.entity';
 import { CreateSupplierDto } from './create-supplier.dto';
 import { UpdateSupplierDto } from './update-supplier.dto';
@@ -36,6 +41,22 @@ export class SupplierService {
     if (!dt) throw new BadRequestException('Invalid document type');
     if (documentNumber.length !== dt.digits) {
       throw new BadRequestException(`Document number must be ${dt.digits} digits`);
+    }
+  }
+
+  private async ensureRestoreConflictFree(supplier: Supplier) {
+    const duplicate = await this.supplierRepository.findOne({
+      where: {
+        companyId: supplier.companyId,
+        documentTypeId: supplier.documentTypeId,
+        documentNumber: supplier.documentNumber,
+        id: Not(supplier.id),
+      },
+      select: ['id'],
+    });
+
+    if (duplicate) {
+      throw new ConflictException('Supplier already exists');
     }
   }
 
@@ -198,36 +219,42 @@ export class SupplierService {
   }
 
   async bulkSoftDelete(ids: number[]) {
-    if (!ids?.length) throw new BadRequestException('No ids provided');
-    const count = await this.supplierRepository.count({ where: { id: In(ids) } });
-    if (!count) throw new NotFoundException(`Suppliers with ids ${ids.join(', ')} not found`);
+    const count = await ensureBulkSoftDeleteTargets(this.supplierRepository, ids, (targetIds) =>
+      `Suppliers with ids ${targetIds.join(', ')} not found`,
+    );
     await this.supplierRepository.softDelete(ids);
     return { ok: true, message: `${count} suppliers deleted successfully` };
   }
 
   async restore(id: number) {
-    const supplier = await this.supplierRepository.findOne({ where: { id }, withDeleted: true });
-    if (!supplier) throw new NotFoundException(`Supplier with id ${id} not found`);
+    const supplier = await findRestoreTargetOrThrow(
+      this.supplierRepository,
+      id,
+      `Supplier with id ${id} not found`,
+    );
     if (!supplier.deletedAt) {
       return { ok: true, message: 'Supplier was already restored' };
     }
+    await this.ensureRestoreConflictFree(supplier);
     supplier.deletedAt = null;
     return this.supplierRepository.save(supplier);
   }
 
   async bulkRestore(ids: number[]) {
-    if (!ids?.length) throw new BadRequestException('No ids provided');
-    const count = await this.supplierRepository.count({ where: { id: In(ids) }, withDeleted: true });
-    if (!count) throw new NotFoundException(`Suppliers with ids ${ids.join(', ')} not found`);
+    const targets = await findBulkRestoreTargetsOrThrow(
+      this.supplierRepository,
+      ids,
+      (targetIds) => `Suppliers with ids ${targetIds.join(', ')} not found`,
+      (targetId) => `Supplier with id ${targetId} not found`,
+    );
 
-    for (const id of ids) {
-      const supplier = await this.supplierRepository.findOne({ where: { id }, withDeleted: true });
-      if (!supplier) throw new NotFoundException(`Supplier with id ${id} not found`);
+    for (const supplier of targets) {
       if (!supplier.deletedAt) return { ok: true, message: 'Supplier was already restored' };
+      await this.ensureRestoreConflictFree(supplier);
       supplier.deletedAt = null;
       await this.supplierRepository.save(supplier);
     }
 
-    return { ok: true, message: `${count} suppliers restored successfully` };
+    return { ok: true, message: `${targets.length} suppliers restored successfully` };
   }
 }

@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ClientService } from './client.service';
 import { Client } from './entities/client.entity';
@@ -7,24 +7,28 @@ import { ClientKind } from './entities/client-kind.enum';
 import { DocumentType } from '../catalogs/document-types/entities/document-type.entity';
 
 type MockRepo<T = any> = {
+  count: jest.Mock;
   findOne: jest.Mock;
   find: jest.Mock;
   findAndCount: jest.Mock;
   save: jest.Mock;
   create: jest.Mock;
   delete: jest.Mock;
+  softDelete: jest.Mock;
   manager: {
     transaction: jest.Mock;
   };
 };
 
 const createMockRepo = (): MockRepo => ({
+  count: jest.fn(),
   findOne: jest.fn(),
   find: jest.fn(),
   findAndCount: jest.fn(),
   save: jest.fn(),
   create: jest.fn((value) => value),
   delete: jest.fn(),
+  softDelete: jest.fn(),
   manager: {
     transaction: jest.fn(),
   },
@@ -383,6 +387,123 @@ describe('ClientService', () => {
       }),
     ]);
   });
+
+  it('borra clientes en bulk reutilizando la validación común de ids', async () => {
+    clientRepository.count.mockResolvedValue(2);
+    clientRepository.softDelete.mockResolvedValue({ affected: 2 });
+
+    const result = await service.bulkSoftDelete([5, 6]);
+
+    expect(clientRepository.softDelete).toHaveBeenCalledWith([5, 6]);
+    expect(result).toEqual({
+      ok: true,
+      message: '2 clients deleted successfully',
+    });
+  });
+
+  it('rechaza restore si ya existe otro cliente activo con el mismo documento', async () => {
+    clientRepository.findOne
+      .mockResolvedValueOnce({
+        id: 17,
+        companyId: 1,
+        documentTypeId: 2,
+        documentNumber: '12345678901',
+        deletedAt: new Date(),
+      })
+      .mockResolvedValueOnce({ id: 90 });
+
+    await expect(service.restore(17)).rejects.toThrow(ConflictException);
+    expect(clientRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza bulk restore si alguno entra en conflicto con un activo', async () => {
+    clientRepository.count.mockResolvedValue(1);
+    clientRepository.findOne
+      .mockResolvedValueOnce({
+        id: 18,
+        companyId: 1,
+        documentTypeId: 2,
+        documentNumber: '20123456789',
+        deletedAt: new Date(),
+      })
+      .mockResolvedValueOnce({ id: 91 });
+
+    await expect(service.bulkRestore([18])).rejects.toThrow(ConflictException);
+    expect(clientRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('restaura cliente en bulk cuando el mismo documento sólo existe en otra company y valida la clave compuesta completa', async () => {
+    const deletedAt = new Date();
+    clientRepository.count.mockResolvedValue(1);
+    clientRepository.findOne
+      .mockResolvedValueOnce({
+        id: 19,
+        companyId: 7,
+        documentTypeId: 2,
+        documentNumber: '20123456789',
+        deletedAt,
+      })
+      .mockResolvedValueOnce(null);
+    clientRepository.save.mockImplementation(async (value) => value);
+
+    const result = await service.bulkRestore([19]);
+
+    expect(clientRepository.findOne).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyId: 7,
+          documentTypeId: 2,
+          documentNumber: '20123456789',
+        }),
+        select: ['id'],
+      }),
+    );
+    expect(clientRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 19, deletedAt: null }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      message: '1 clients restored successfully',
+    });
+  });
+
+  it('restaura cliente en bulk cuando el mismo documento sólo existe con otro documentType y valida la clave compuesta completa', async () => {
+    const deletedAt = new Date();
+    clientRepository.count.mockResolvedValue(1);
+    clientRepository.findOne
+      .mockResolvedValueOnce({
+        id: 20,
+        companyId: 1,
+        documentTypeId: 9,
+        documentNumber: '20123456789',
+        deletedAt,
+      })
+      .mockResolvedValueOnce(null);
+    clientRepository.save.mockImplementation(async (value) => value);
+
+    const result = await service.bulkRestore([20]);
+
+    expect(clientRepository.findOne).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyId: 1,
+          documentTypeId: 9,
+          documentNumber: '20123456789',
+        }),
+        select: ['id'],
+      }),
+    );
+    expect(clientRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 20, deletedAt: null }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      message: '1 clients restored successfully',
+    });
+  });
+
   it('importa empresas legacy sin contactos y las marca pendientes de completar contacto', async () => {
     clientRepository.find.mockResolvedValue([]);
     clientRepository.save.mockImplementation(async (value) => value);

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   HttpException,
   NotFoundException,
@@ -134,12 +135,14 @@ describe('DocumentTypesService', () => {
   });
 
   it('restaura un registro borrado sin perder compatibilidad del flujo', async () => {
-    repository.findOne.mockResolvedValue({
-      id: 10,
-      name: 'Pasaporte',
-      deletedAt: new Date(),
-      kind: null,
-    });
+    repository.findOne
+      .mockResolvedValueOnce({
+        id: 10,
+        name: 'Pasaporte',
+        deletedAt: new Date(),
+        kind: null,
+      })
+      .mockResolvedValueOnce(null);
     repository.save.mockImplementation((value: DocumentType) =>
       Promise.resolve(value),
     );
@@ -150,6 +153,52 @@ describe('DocumentTypesService', () => {
       expect.objectContaining({ id: 10, deletedAt: null }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it('rechaza restore si el nombre ya lo usa otro registro activo', async () => {
+    repository.findOne
+      .mockResolvedValueOnce({
+        id: 10,
+        name: 'Pasaporte',
+        deletedAt: new Date(),
+        kind: null,
+      })
+      .mockResolvedValueOnce({ id: 99 });
+
+    await expect(service.restore(10)).rejects.toThrow(ConflictException);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('borra en bulk usando la cantidad encontrada', async () => {
+    repository.count.mockResolvedValue(2);
+    repository.softDelete.mockResolvedValue({ affected: 2 });
+
+    const result = await service.bulkSoftDelete([1, 2]);
+
+    expect(repository.softDelete).toHaveBeenCalledWith([1, 2]);
+    expect(result).toEqual({
+      ok: true,
+      message: '2 document types deleted successfully',
+    });
+  });
+
+  it('rechaza bulk restore sin ids', async () => {
+    await expect(service.bulkRestore([])).rejects.toThrow(BadRequestException);
+  });
+
+  it('rechaza bulk restore si restaurar un borrado entra en conflicto por nombre con uno activo', async () => {
+    repository.count.mockResolvedValue(1);
+    repository.findOne
+      .mockResolvedValueOnce({
+        id: 12,
+        name: 'RUC',
+        deletedAt: new Date(),
+        kind: DocumentTypeKind.COMPANY,
+      })
+      .mockResolvedValueOnce({ id: 77 });
+
+    await expect(service.bulkRestore([12])).rejects.toThrow(ConflictException);
+    expect(repository.save).not.toHaveBeenCalled();
   });
 
   it('usa búsqueda compatible con MySQL normalizando a lowercase', async () => {

@@ -1,8 +1,1 @@
-import { ArrayNotEmpty, IsArray, IsNumber } from 'class-validator';
-
-export class BulkOperationsDto {
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsNumber({}, { each: true })
-  ids: number[];
-}
+export { BulkIdsDto as BulkOperationsDto } from 'src/common/dtos/bulk-ids.dto';

@@ -14,7 +14,7 @@ import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 import { RolesGuard } from 'src/rbac/guards/roles.guard';
-import { BulkOperationsDto } from './dto/bulk-operations.dto';
+import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
 import { DocumentTypesService } from './document-types.service';
@@ -46,7 +46,7 @@ export class DocumentTypesController {
 
   @Permissions('document-type.restore')
   @Patch('bulk-restore')
-  bulkRestore(@Body() bulkOperationsDto: BulkOperationsDto) {
+  bulkRestore(@Body() bulkOperationsDto: BulkIdsDto) {
     return this.documentTypesService.bulkRestore(bulkOperationsDto.ids);
   }
 
@@ -61,7 +61,7 @@ export class DocumentTypesController {
 
   @Permissions('document-type.delete')
   @Delete('bulk-delete')
-  bulkSoftDelete(@Body() bulkOperationsDto: BulkOperationsDto) {
+  bulkSoftDelete(@Body() bulkOperationsDto: BulkIdsDto) {
     return this.documentTypesService.bulkSoftDelete(bulkOperationsDto.ids);
   }
 
