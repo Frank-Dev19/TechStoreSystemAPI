@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
+import { Brackets, DataSource, EntityManager, EntityTarget, ObjectLiteral, Repository } from 'typeorm';
 import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { ClientContact } from '../../clients/entities/client-contact.entity';
@@ -69,12 +69,16 @@ type ServiceOrderWithMetrics = ServiceOrder & {
 };
 
 type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
+type ServiceOrderPersistenceContext = {
+  manager?: EntityManager;
+};
 
 @Injectable()
 export class ServiceOrderService {
   private readonly logger = new Logger(ServiceOrderService.name);
 
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     @InjectRepository(Client)
@@ -110,12 +114,16 @@ export class ServiceOrderService {
 
     await this.preflightBatchCreateOrThrow(dto, creatorId);
 
-    const createdOrders: ServiceOrderWithMetrics[] = [];
-    for (const orderEntry of dto.orders) {
-      createdOrders.push(
-        await this.createSingleOrderInternal(this.mergeBatchEntry(dto.sharedContext, orderEntry), creatorId),
-      );
-    }
+    const createdOrders = await this.dataSource.transaction(async (manager) => {
+      const createdWithinTransaction: ServiceOrderWithMetrics[] = [];
+      for (const orderEntry of dto.orders) {
+        createdWithinTransaction.push(
+          await this.createSingleOrderInternal(this.mergeBatchEntry(dto.sharedContext, orderEntry), creatorId, { manager }),
+        );
+      }
+
+      return createdWithinTransaction;
+    });
 
     await this.dispatchIntakeSummaryForOrders(createdOrders);
 
@@ -125,16 +133,19 @@ export class ServiceOrderService {
   private async createSingleOrderInternal(
     dto: CreateServiceOrderDto,
     creatorId: number,
+    context: ServiceOrderPersistenceContext = {},
   ): Promise<ServiceOrderWithMetrics> {
-    await this.ensureUser(creatorId);
+    const serviceOrderRepository = this.getRepository(ServiceOrder, context.manager);
+
+    await this.ensureUser(creatorId, context.manager);
     const requestOrigin = dto.requestOrigin ?? RequestOrigin.CLIENT;
-    const client = await this.resolveClientForRequest(dto.clientId, requestOrigin);
-    const clientContact = await this.resolveClientContactForOrder(client, dto.clientContactId);
-    const code = await this.generateUniqueCode();
+    const client = await this.resolveClientForRequest(dto.clientId, requestOrigin, context.manager);
+    const clientContact = await this.resolveClientContactForOrder(client, dto.clientContactId, context.manager);
     const now = new Date();
     const assignedToTechnicianId = await this.resolveAssignedTechnicianId(
       dto.assignedToTechnicianId,
       dto.serviceType ?? ServiceType.DIAGNOSIS,
+      context.manager,
     );
 
     const technicalStatus = this.getInitialTechnicalStatus(
@@ -142,41 +153,57 @@ export class ServiceOrderService {
       !!assignedToTechnicianId,
     );
 
-    const serviceOrder = this.serviceOrderRepository.create({
-      code,
-      requestOrigin,
-      clientId: client?.id ?? null,
-      clientContactId: clientContact?.id ?? null,
-      createdBy: creatorId,
-      priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
-      operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
-      technicalStatus,
-      commercialStatus: ServiceOrderCommercialStatus.NO_REQUIERE,
-      economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
-      montoComprometidoVigente: 0,
-      montoReconciliado: 0,
-      assignedToTechnicianId,
-      assignedAt: assignedToTechnicianId ? now : null,
-      equipmentType: dto.equipmentType,
-      equipmentTypeOther:
-        dto.equipmentType === EquipmentType.OTHER ? dto.equipmentTypeOther?.trim() ?? null : null,
-      brand: dto.brand ?? null,
-      model: dto.model ?? null,
-      serialNumber: dto.serialNumber ?? null,
-      accessories: dto.accessories ?? null,
-      serviceType: dto.serviceType ?? ServiceType.DIAGNOSIS,
-      initialIssue: dto.initialIssue,
-      estimatedRepairHours: dto.estimatedRepairHours ?? null,
-      receivedAt: now,
-      estimatedDeliveryDate: dto.estimatedDeliveryDate ? new Date(dto.estimatedDeliveryDate) : null,
-      notes: dto.notes ?? null,
-    });
+    const maxCodeAttempts = 3;
+    for (let attempt = 0; attempt < maxCodeAttempts; attempt += 1) {
+      const code = await this.generateUniqueCode(context.manager);
+      const serviceOrder = serviceOrderRepository.create({
+        code,
+        requestOrigin,
+        clientId: client?.id ?? null,
+        clientContactId: clientContact?.id ?? null,
+        createdBy: creatorId,
+        priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
+        operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
+        technicalStatus,
+        commercialStatus: ServiceOrderCommercialStatus.NO_REQUIERE,
+        economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
+        montoComprometidoVigente: 0,
+        montoReconciliado: 0,
+        assignedToTechnicianId,
+        assignedAt: assignedToTechnicianId ? now : null,
+        equipmentType: dto.equipmentType,
+        equipmentTypeOther:
+          dto.equipmentType === EquipmentType.OTHER ? dto.equipmentTypeOther?.trim() ?? null : null,
+        brand: dto.brand ?? null,
+        model: dto.model ?? null,
+        serialNumber: dto.serialNumber ?? null,
+        accessories: dto.accessories ?? null,
+        serviceType: dto.serviceType ?? ServiceType.DIAGNOSIS,
+        initialIssue: dto.initialIssue,
+        estimatedRepairHours: dto.estimatedRepairHours ?? null,
+        receivedAt: now,
+        estimatedDeliveryDate: dto.estimatedDeliveryDate ? new Date(dto.estimatedDeliveryDate) : null,
+        notes: dto.notes ?? null,
+      });
 
-    this.applyClientSnapshot(serviceOrder, client);
-    this.applyContactSnapshotOverrides(serviceOrder, dto, clientContact);
-    const saved = await this.serviceOrderRepository.save(serviceOrder);
-    await this.workflowService.registerInitialAssignment(saved, creatorId);
-    return this.findOne(saved.id);
+      this.applyClientSnapshot(serviceOrder, client);
+      this.applyContactSnapshotOverrides(serviceOrder, dto, clientContact);
+
+      let saved: ServiceOrder;
+      try {
+        saved = await serviceOrderRepository.save(serviceOrder);
+      } catch (error) {
+        if (this.isServiceOrderCodeConflict(error) && attempt < maxCodeAttempts - 1) {
+          continue;
+        }
+        throw error;
+      }
+
+      await this.workflowService.registerInitialAssignment(saved, creatorId, context.manager);
+      return this.findOneByIdInternal(saved.id, context.manager);
+    }
+
+    throw new ConflictException('Could not persist service order with a unique code');
   }
 
   async findAll(query: FindAllServiceOrdersQuery, viewer?: ServiceOrderViewer) {
@@ -276,19 +303,11 @@ export class ServiceOrderService {
   }
 
   async findOne(id: number, withDeleted = false, viewer?: ServiceOrderViewer): Promise<ServiceOrderWithMetrics> {
-    const serviceOrder = await this.serviceOrderRepository.findOne({
-      where: { id },
-      relations: ['assignedTechnician', 'client'],
-      withDeleted,
-    });
-
-    if (!serviceOrder) {
-      throw new NotFoundException(`ServiceOrder with id ${id} not found`);
-    }
+    const serviceOrder = await this.findOneByIdInternal(id, undefined, withDeleted);
 
     this.ensureViewerCanAccessOrder(serviceOrder, viewer);
 
-    return this.enrichWithMetrics(serviceOrder);
+    return serviceOrder;
   }
 
   async generateSingleOrderSummaryPdf(
@@ -469,13 +488,14 @@ export class ServiceOrderService {
   private async resolveAssignedTechnicianId(
     preferredTechnicianId: number | undefined,
     serviceType: ServiceType,
+    manager?: EntityManager,
   ): Promise<number> {
     if (preferredTechnicianId) {
       await this.workflowService.ensureTechnicianAvailable(preferredTechnicianId);
       return preferredTechnicianId;
     }
 
-    const suggestion = await this.workflowService.getAssignmentSuggestion(serviceType);
+    const suggestion = await this.workflowService.getAssignmentSuggestion(serviceType, manager);
     return suggestion.suggestedTechnicianId;
   }
 
@@ -486,8 +506,8 @@ export class ServiceOrderService {
     }
   }
 
-  private async ensureClient(id: number): Promise<Client> {
-    const client = await this.clientRepository.findOne({
+  private async ensureClient(id: number, manager?: EntityManager): Promise<Client> {
+    const client = await this.getRepository(Client, manager).findOne({
       where: { id },
       relations: { documentType: true },
     });
@@ -497,14 +517,18 @@ export class ServiceOrderService {
     return client;
   }
 
-  private async resolveClientForRequest(clientId: number | undefined, requestOrigin: RequestOrigin) {
+  private async resolveClientForRequest(
+    clientId: number | undefined,
+    requestOrigin: RequestOrigin,
+    manager?: EntityManager,
+  ) {
     if (requestOrigin === RequestOrigin.INTERNAL) {
       return null;
     }
     if (!clientId) {
       throw new BadRequestException('clientId is required for client-origin service orders');
     }
-    return this.ensureClient(clientId);
+    return this.ensureClient(clientId, manager);
   }
 
   private applyClientSnapshot(serviceOrder: ServiceOrder, client: Client | null): void {
@@ -604,14 +628,17 @@ export class ServiceOrderService {
   private async resolveClientContactForOrder(
     client: Client | null,
     clientContactId?: number | null,
+    manager?: EntityManager,
   ): Promise<ClientContact | null> {
+    const clientContactRepository = this.getRepository(ClientContact, manager);
+
     if (!client || client.kind !== ClientKind.COMPANY) {
       return null;
     }
 
     const normalizedContactId = Number(clientContactId || 0) || null;
     if (normalizedContactId) {
-      const selectedContact = await this.clientContactRepository.findOne({
+      const selectedContact = await clientContactRepository.findOne({
         where: { id: normalizedContactId, clientId: client.id },
       });
       if (!selectedContact) {
@@ -620,14 +647,14 @@ export class ServiceOrderService {
       return selectedContact;
     }
 
-    const primaryContact = await this.clientContactRepository.findOne({
+    const primaryContact = await clientContactRepository.findOne({
       where: { clientId: client.id, isPrimary: true, isActive: true },
     });
     if (primaryContact) {
       return primaryContact;
     }
 
-    return this.clientContactRepository.findOne({
+    return clientContactRepository.findOne({
       where: { clientId: client.id, isActive: true },
       order: { id: 'ASC' },
     });
@@ -693,8 +720,8 @@ export class ServiceOrderService {
     );
   }
 
-  private async ensureUser(id: number): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
+  private async ensureUser(id: number, manager?: EntityManager): Promise<User> {
+    const user = await this.getRepository(User, manager).findOne({ where: { id } });
     if (!user) {
       throw new NotFoundException(`User with id ${id} not found`);
     }
@@ -759,17 +786,19 @@ export class ServiceOrderService {
     return date;
   }
 
-  private async generateUniqueCode(): Promise<string> {
+  private async generateUniqueCode(manager?: EntityManager): Promise<string> {
+    const serviceOrderRepository = this.getRepository(ServiceOrder, manager);
     const maxRetries = 3;
     for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-      const code = await this.generateNextServiceOrderCode();
-      const existing = await this.serviceOrderRepository.findOne({ where: { code }, withDeleted: true });
+      const code = await this.generateNextServiceOrderCode(manager);
+      const existing = await serviceOrderRepository.findOne({ where: { code }, withDeleted: true });
       if (!existing) return code;
     }
     throw new ConflictException('Could not generate a unique service order code');
   }
 
-  private async generateNextServiceOrderCode(): Promise<string> {
+  private async generateNextServiceOrderCode(manager?: EntityManager): Promise<string> {
+    const serviceOrderRepository = this.getRepository(ServiceOrder, manager);
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -778,7 +807,7 @@ export class ServiceOrderService {
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const prefix = `SO${year}${month}${day}${hours}${minutes}`;
 
-    const lastServiceOrder = await this.serviceOrderRepository
+    const lastServiceOrder = await serviceOrderRepository
       .createQueryBuilder('serviceOrder')
       .withDeleted()
       .where('serviceOrder.code LIKE :pattern', { pattern: `${prefix}%` })
@@ -910,5 +939,40 @@ export class ServiceOrderService {
 
   private isTechnicianViewer(viewer?: ServiceOrderViewer): boolean {
     return isTechnicianScopedRoleSet(viewer?.roles);
+  }
+
+  private getRepository<T extends ObjectLiteral>(target: EntityTarget<T>, manager?: EntityManager): Repository<T> {
+    return manager ? manager.getRepository(target) : this.dataSource.getRepository(target);
+  }
+
+  private async findOneByIdInternal(
+    id: number,
+    manager?: EntityManager,
+    withDeleted = false,
+  ): Promise<ServiceOrderWithMetrics> {
+    const serviceOrder = await this.getRepository(ServiceOrder, manager).findOne({
+      where: { id },
+      relations: ['assignedTechnician', 'client'],
+      withDeleted,
+    });
+
+    if (!serviceOrder) {
+      throw new NotFoundException(`ServiceOrder with id ${id} not found`);
+    }
+
+    return this.enrichWithMetrics(serviceOrder);
+  }
+
+  private isServiceOrderCodeConflict(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const databaseError = error as { code?: string; errno?: number; message?: string };
+    return (
+      databaseError.code === 'ER_DUP_ENTRY' ||
+      databaseError.errno === 1062 ||
+      databaseError.message?.toLowerCase().includes('duplicate') === true
+    );
   }
 }

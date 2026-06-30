@@ -22,6 +22,7 @@ import { ServiceOrderMessageMatrixService } from './service-order-message-matrix
 import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
 import { ServiceOrderService } from './service-order.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
+import { DataSource } from 'typeorm';
 
 type MockRepo<T = any> = {
   findOne: jest.Mock;
@@ -104,6 +105,7 @@ const createServiceOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder
 
 describe('ServiceOrderService', () => {
   let service: ServiceOrderService;
+  let dataSource: jest.Mocked<DataSource>;
   let serviceOrderRepository: MockRepo<ServiceOrder>;
   let clientRepository: MockRepo<Client>;
   let clientContactRepository: MockRepo<ClientContact>;
@@ -117,7 +119,34 @@ describe('ServiceOrderService', () => {
   let configService: jest.Mocked<ConfigService>;
   let inboxService: jest.Mocked<ServiceOrderInboxService>;
 
+  const createTransactionManager = (overrides?: Partial<Record<string, MockRepo<any>>>) => ({
+    getRepository: jest.fn((entity: { name?: string }) => {
+      const repositories: Record<string, MockRepo<any>> = {
+        ServiceOrder: overrides?.ServiceOrder ?? serviceOrderRepository,
+        Client: overrides?.Client ?? clientRepository,
+        ClientContact: overrides?.ClientContact ?? clientContactRepository,
+        User: overrides?.User ?? userRepository,
+        ServiceOrderEvent: overrides?.ServiceOrderEvent ?? eventRepository,
+      };
+
+      const repository = repositories[entity?.name ?? ''];
+      if (!repository) {
+        throw new Error(`Unexpected repository request for ${entity?.name ?? 'unknown entity'}`);
+      }
+
+      return repository;
+    }),
+  });
+
   beforeEach(() => {
+    dataSource = {
+      transaction: jest.fn(async (...args: any[]) => {
+        const callback = args[args.length - 1] as (manager: ReturnType<typeof createTransactionManager>) => unknown;
+        return callback(createTransactionManager());
+      }),
+      getRepository: jest.fn((entity: { name?: string }) => createTransactionManager().getRepository(entity)),
+    } as unknown as jest.Mocked<DataSource>;
+
     serviceOrderRepository = createMockRepo<ServiceOrder>();
     clientRepository = createMockRepo<Client>();
     clientContactRepository = createMockRepo<ClientContact>();
@@ -179,6 +208,7 @@ describe('ServiceOrderService', () => {
     } as unknown as jest.Mocked<ServiceOrderInboxService>;
 
     service = new ServiceOrderService(
+      dataSource,
       serviceOrderRepository as any,
       clientRepository as any,
       clientContactRepository as any,
@@ -308,6 +338,360 @@ describe('ServiceOrderService', () => {
     expect(messageMatrixService.dispatchOrderIntakeTemplate).toHaveBeenCalledTimes(1);
   });
 
+  it('rolls back the whole batch when a later order fails inside the transaction and skips post-commit dispatch', async () => {
+    const firstOrder = createServiceOrder({
+      id: 301,
+      code: 'SO-BATCH-301',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const secondOrder = createServiceOrder({
+      id: 302,
+      code: 'SO-BATCH-302',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const transactionalServiceOrderRepository = createMockRepo<ServiceOrder>();
+    const manager = createTransactionManager({ ServiceOrder: transactionalServiceOrderRepository });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    transactionalServiceOrderRepository.create.mockImplementation((value) => value);
+    transactionalServiceOrderRepository.save
+      .mockImplementationOnce(async (value) => ({ ...value, id: 301 }))
+      .mockImplementationOnce(async (value) => ({ ...value, id: 302 }));
+    transactionalServiceOrderRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(firstOrder)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(secondOrder);
+    transactionalServiceOrderRepository.createQueryBuilder.mockReturnValue({
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ code: 'SO-BATCH-301' }),
+    });
+    workflowService.registerInitialAssignment
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new BadRequestException('No hay tecnicos disponibles para asignar ordenes'));
+    dataSource.transaction.mockImplementation(async (...args: any[]) => {
+      const callback = args[args.length - 1] as (transactionManager: typeof manager) => unknown;
+      return callback(manager as any);
+    });
+
+    await expect(
+      service.createBatch(
+        {
+          sharedContext: {
+            requestOrigin: RequestOrigin.CLIENT,
+            clientId: 30,
+          },
+          orders: [
+            {
+              equipmentType: EquipmentType.LAPTOP,
+              initialIssue: 'No enciende',
+            },
+            {
+              equipmentType: EquipmentType.PRINTER,
+              initialIssue: 'Atasco de papel',
+            },
+          ],
+        },
+        5,
+      ),
+    ).rejects.toThrow('No hay tecnicos disponibles para asignar ordenes');
+
+    expect(serviceOrderRepository.save).not.toHaveBeenCalled();
+    expect(transactionalServiceOrderRepository.save).toHaveBeenCalledTimes(2);
+    expect(workflowService.registerInitialAssignment).toHaveBeenCalledTimes(2);
+    expect(intakePdfService.generate).not.toHaveBeenCalled();
+    expect(tempDocumentsService.createRecord).not.toHaveBeenCalled();
+    expect(messageMatrixService.dispatchOrderIntakeTemplate).not.toHaveBeenCalled();
+  });
+
+  it('passes the batch transaction manager into assignment suggestions for later orders', async () => {
+    const firstOrder = createServiceOrder({
+      id: 421,
+      code: 'SO-BATCH-421',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const secondOrder = createServiceOrder({
+      id: 422,
+      code: 'SO-BATCH-422',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 8, name: 'Ana Torres' } as any,
+    });
+    const transactionalServiceOrderRepository = createMockRepo<ServiceOrder>();
+    const manager = createTransactionManager({ ServiceOrder: transactionalServiceOrderRepository });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
+    workflowService.getAssignmentSuggestion
+      .mockResolvedValueOnce({
+        serviceType: ServiceType.DIAGNOSIS,
+        suggestedTechnicianId: 7,
+        technicians: [],
+      })
+      .mockResolvedValueOnce({
+        serviceType: ServiceType.DIAGNOSIS,
+        suggestedTechnicianId: 8,
+        technicians: [],
+      })
+      .mockResolvedValueOnce({
+        serviceType: ServiceType.DIAGNOSIS,
+        suggestedTechnicianId: 7,
+        technicians: [],
+      })
+      .mockResolvedValueOnce({
+        serviceType: ServiceType.DIAGNOSIS,
+        suggestedTechnicianId: 8,
+        technicians: [],
+      });
+    transactionalServiceOrderRepository.create.mockImplementation((value) => value);
+    transactionalServiceOrderRepository.save
+      .mockImplementationOnce(async (value) => ({ ...value, id: 421 }))
+      .mockImplementationOnce(async (value) => ({ ...value, id: 422 }));
+    transactionalServiceOrderRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(firstOrder)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(secondOrder);
+    transactionalServiceOrderRepository.createQueryBuilder.mockReturnValue({
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ code: 'SO-BATCH-421' }),
+    });
+    workflowService.registerInitialAssignment.mockResolvedValue(undefined);
+    dataSource.transaction.mockImplementation(async (...args: any[]) => {
+      const callback = args[args.length - 1] as (transactionManager: typeof manager) => Promise<unknown>;
+      return callback(manager as any);
+    });
+
+    const result = await service.createBatch(
+      {
+        sharedContext: {
+          requestOrigin: RequestOrigin.CLIENT,
+          clientId: 30,
+        },
+        orders: [
+          {
+            equipmentType: EquipmentType.LAPTOP,
+            initialIssue: 'No enciende',
+          },
+          {
+            equipmentType: EquipmentType.PRINTER,
+            initialIssue: 'Atasco de papel',
+          },
+        ],
+      },
+      5,
+    );
+
+    expect(result.createdOrders).toHaveLength(2);
+    expect(workflowService.getAssignmentSuggestion).toHaveBeenNthCalledWith(1, ServiceType.DIAGNOSIS, undefined);
+    expect(workflowService.getAssignmentSuggestion).toHaveBeenNthCalledWith(2, ServiceType.DIAGNOSIS, manager as any);
+    expect(workflowService.getAssignmentSuggestion).toHaveBeenNthCalledWith(3, ServiceType.DIAGNOSIS, manager as any);
+  });
+
+  it('dispatches the intake summary only after the batch transaction resolves', async () => {
+    const callOrder: string[] = [];
+    const firstOrder = createServiceOrder({
+      id: 401,
+      code: 'SO-BATCH-401',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const secondOrder = createServiceOrder({
+      id: 402,
+      code: 'SO-BATCH-402',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const transactionalServiceOrderRepository = createMockRepo<ServiceOrder>();
+    const manager = createTransactionManager({ ServiceOrder: transactionalServiceOrderRepository });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    transactionalServiceOrderRepository.create.mockImplementation((value) => value);
+    transactionalServiceOrderRepository.save
+      .mockImplementationOnce(async (value) => ({ ...value, id: 401 }))
+      .mockImplementationOnce(async (value) => ({ ...value, id: 402 }));
+    transactionalServiceOrderRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(firstOrder)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(secondOrder);
+    transactionalServiceOrderRepository.createQueryBuilder.mockReturnValue({
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ code: 'SO-BATCH-401' }),
+    });
+    workflowService.registerInitialAssignment.mockImplementation(async () => {
+      callOrder.push('assignment');
+    });
+    dataSource.transaction.mockImplementation(async (...args: any[]) => {
+      const callback = args[args.length - 1] as (transactionManager: typeof manager) => Promise<unknown>;
+      callOrder.push('transaction:start');
+      const result = await callback(manager as any);
+      callOrder.push('transaction:resolved');
+      return result;
+    });
+    intakePdfService.generate.mockImplementation(async () => {
+      callOrder.push('dispatch');
+      return {
+        fileName: 'resumen-ordenes.pdf',
+        absolutePath: 'C:/tmp/resumen-ordenes.pdf',
+        mimeType: 'application/pdf',
+      };
+    });
+
+    const result = await service.createBatch(
+      {
+        sharedContext: {
+          requestOrigin: RequestOrigin.CLIENT,
+          clientId: 30,
+        },
+        orders: [
+          {
+            equipmentType: EquipmentType.LAPTOP,
+            initialIssue: 'No enciende',
+          },
+          {
+            equipmentType: EquipmentType.PRINTER,
+            initialIssue: 'Atasco de papel',
+          },
+        ],
+      },
+      5,
+    );
+
+    expect(result.createdOrders).toHaveLength(2);
+    expect(callOrder).toEqual(['transaction:start', 'assignment', 'assignment', 'transaction:resolved', 'dispatch']);
+    expect(messageMatrixService.dispatchOrderIntakeTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns created orders even when post-commit intake generation fails', async () => {
+    let transactionCompleted = false;
+    const firstOrder = createServiceOrder({
+      id: 451,
+      code: 'SO-BATCH-451',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const secondOrder = createServiceOrder({
+      id: 452,
+      code: 'SO-BATCH-452',
+      clientId: 30,
+      clientSnapshotName: 'Carlos Avila',
+      clientSnapshotPhone: '+51932998578',
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' } as any,
+    });
+    const transactionalServiceOrderRepository = createMockRepo<ServiceOrder>();
+    const manager = createTransactionManager({ ServiceOrder: transactionalServiceOrderRepository });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    clientRepository.findOne.mockResolvedValue({ id: 30, kind: 'COMPANY', documentType: { name: 'RUC' } } as any);
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    transactionalServiceOrderRepository.create.mockImplementation((value) => value);
+    transactionalServiceOrderRepository.save
+      .mockImplementationOnce(async (value) => ({ ...value, id: 451 }))
+      .mockImplementationOnce(async (value) => ({ ...value, id: 452 }));
+    transactionalServiceOrderRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(firstOrder)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(secondOrder);
+    transactionalServiceOrderRepository.createQueryBuilder.mockReturnValue({
+      withDeleted: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getOne: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ code: 'SO-BATCH-451' }),
+    });
+    dataSource.transaction.mockImplementation(async (...args: any[]) => {
+      const callback = args[args.length - 1] as (transactionManager: typeof manager) => Promise<unknown>;
+      const result = await callback(manager as any);
+      transactionCompleted = true;
+      return result;
+    });
+    intakePdfService.generate.mockImplementation(async () => {
+      expect(transactionCompleted).toBe(true);
+      throw new Error('pdf generation failed');
+    });
+
+    const result = await service.createBatch(
+      {
+        sharedContext: {
+          requestOrigin: RequestOrigin.CLIENT,
+          clientId: 30,
+        },
+        orders: [
+          {
+            equipmentType: EquipmentType.LAPTOP,
+            initialIssue: 'No enciende',
+          },
+          {
+            equipmentType: EquipmentType.PRINTER,
+            initialIssue: 'Atasco de papel',
+          },
+        ],
+      },
+      5,
+    );
+
+    expect(result.createdOrders).toEqual([firstOrder, secondOrder]);
+    expect(transactionCompleted).toBe(true);
+    expect(transactionalServiceOrderRepository.save).toHaveBeenCalledTimes(2);
+    expect(tempDocumentsService.createRecord).not.toHaveBeenCalled();
+    expect(messageMatrixService.dispatchOrderIntakeTemplate).not.toHaveBeenCalled();
+  });
+
   it('rechaza batch sin ordenes candidatas', async () => {
     await expect(
       service.createBatch(
@@ -358,6 +742,87 @@ describe('ServiceOrderService', () => {
     expect(serviceOrderRepository.save).not.toHaveBeenCalled();
   });
 
+  it('retries service order persistence when the generated code collides during save', async () => {
+    const created = createServiceOrder({
+      id: 110,
+      code: 'SO-TEST-RETRY-002',
+    });
+
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    serviceOrderRepository.create.mockImplementation((value) => value);
+    serviceOrderRepository.save
+      .mockRejectedValueOnce({ code: 'ER_DUP_ENTRY', errno: 1062, message: 'Duplicate entry' })
+      .mockImplementationOnce(async (value) => ({ ...value, id: 110 }));
+    serviceOrderRepository.findOne.mockResolvedValue(created);
+    jest
+      .spyOn(service as any, 'generateUniqueCode')
+      .mockResolvedValueOnce('SO-TEST-RETRY-001')
+      .mockResolvedValueOnce('SO-TEST-RETRY-002');
+
+    const result = await service.create(
+      {
+        requestOrigin: RequestOrigin.INTERNAL,
+        equipmentType: EquipmentType.LAPTOP,
+        initialIssue: 'Reintento por código duplicado',
+      },
+      5,
+    );
+
+    expect(result).toEqual(created);
+    expect(serviceOrderRepository.save).toHaveBeenCalledTimes(2);
+    expect(serviceOrderRepository.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ code: 'SO-TEST-RETRY-001' }),
+    );
+    expect(serviceOrderRepository.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ code: 'SO-TEST-RETRY-002' }),
+    );
+  });
+
+  it('throws after bounded duplicate-code retries during persistence', async () => {
+    userRepository.findOne.mockResolvedValue({ id: 5, deletedAt: null });
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      serviceType: ServiceType.DIAGNOSIS,
+      suggestedTechnicianId: 7,
+      technicians: [],
+    });
+    serviceOrderRepository.create.mockImplementation((value) => value);
+    serviceOrderRepository.save.mockRejectedValue({
+      code: 'ER_DUP_ENTRY',
+      errno: 1062,
+      message: 'Duplicate entry',
+    });
+    jest
+      .spyOn(service as any, 'generateUniqueCode')
+      .mockResolvedValueOnce('SO-TEST-RETRY-001')
+      .mockResolvedValueOnce('SO-TEST-RETRY-002')
+      .mockResolvedValueOnce('SO-TEST-RETRY-003');
+
+    await expect(
+      service.create(
+        {
+          requestOrigin: RequestOrigin.INTERNAL,
+          equipmentType: EquipmentType.LAPTOP,
+          initialIssue: 'Conflicto persistente de código',
+        },
+        5,
+      ),
+    ).rejects.toMatchObject({
+      code: 'ER_DUP_ENTRY',
+      errno: 1062,
+      message: 'Duplicate entry',
+    });
+
+    expect(serviceOrderRepository.save).toHaveBeenCalledTimes(3);
+    expect(workflowService.registerInitialAssignment).not.toHaveBeenCalled();
+  });
+
   it('crea la orden con los ejes canónicos iniciales', async () => {
     const created = createServiceOrder({
       id: 99,
@@ -396,7 +861,11 @@ describe('ServiceOrderService', () => {
         montoReconciliado: 0,
       }),
     );
-    expect(workflowService.registerInitialAssignment).toHaveBeenCalledWith(expect.objectContaining({ id: 99 }), 5);
+    expect(workflowService.registerInitialAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 99 }),
+      5,
+      undefined,
+    );
   });
 
   it('persiste datos de contacto en el snapshot al crear la orden', async () => {

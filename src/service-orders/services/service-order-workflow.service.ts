@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { User } from '../../users/entities/user.entity';
 import {
@@ -85,8 +85,11 @@ export class ServiceOrderWorkflowService {
     return this.assignTechnician(serviceOrderId, { technicianId }, actorId);
   }
 
-  async getAssignmentSuggestion(serviceType: ServiceType): Promise<TechnicianAssignmentSuggestion> {
-    const snapshot = await this.prepareTechnicianAssignmentSnapshot();
+  async getAssignmentSuggestion(
+    serviceType: ServiceType,
+    manager?: EntityManager,
+  ): Promise<TechnicianAssignmentSuggestion> {
+    const snapshot = await this.prepareTechnicianAssignmentSnapshot(manager);
     const ranked = this.rankTechnicianCandidates(snapshot, serviceType);
     const suggestedTechnicianId = ranked[0]?.technicianId;
 
@@ -127,7 +130,7 @@ export class ServiceOrderWorkflowService {
     return this.ensureTechnician(id);
   }
 
-  async registerInitialAssignment(serviceOrder: ServiceOrder, actorId?: number): Promise<void> {
+  async registerInitialAssignment(serviceOrder: ServiceOrder, actorId?: number, manager?: EntityManager): Promise<void> {
     if (!serviceOrder.assignedToTechnicianId) {
       return;
     }
@@ -138,12 +141,24 @@ export class ServiceOrderWorkflowService {
       1,
       this.isTerminalTechnical(serviceOrder.technicalStatus) ? 0 : 1,
       serviceOrder.assignedAt ?? new Date(),
+      manager,
     );
 
-    await this.recordEvent(serviceOrder.id, 'assigned', 'tecnico', 'assignment', null, serviceOrder.technicalStatus, actorId, null, {
-      technicianId: serviceOrder.assignedToTechnicianId,
-      source: 'created',
-    });
+    await this.recordEvent(
+      serviceOrder.id,
+      'assigned',
+      'tecnico',
+      'assignment',
+      null,
+      serviceOrder.technicalStatus,
+      actorId,
+      null,
+      {
+        technicianId: serviceOrder.assignedToTechnicianId,
+        source: 'created',
+      },
+      manager,
+    );
   }
 
   async assignTechnician(
@@ -244,9 +259,11 @@ export class ServiceOrderWorkflowService {
     actorId?: number,
     reason?: string | null,
     payloadJson?: Record<string, unknown> | null,
+    manager?: EntityManager,
   ) {
-    await this.eventRepository.save(
-      this.eventRepository.create({
+    const eventRepository = manager?.getRepository(ServiceOrderEvent) ?? this.eventRepository;
+    await eventRepository.save(
+      eventRepository.create({
         serviceOrderId,
         eventType,
         axis,
@@ -373,7 +390,7 @@ export class ServiceOrderWorkflowService {
     ].includes(status);
   }
 
-  private async prepareTechnicianAssignmentSnapshot(): Promise<TechnicianAssignmentSnapshot[]> {
+  private async prepareTechnicianAssignmentSnapshot(manager?: EntityManager): Promise<TechnicianAssignmentSnapshot[]> {
     const technicians = await this.userRepository
       .createQueryBuilder('user')
       .innerJoinAndSelect('user.roles', 'role')
@@ -388,7 +405,8 @@ export class ServiceOrderWorkflowService {
     }
 
     const technicianIds = technicians.map((tech) => tech.id);
-    const assignedOrders = await this.serviceOrderRepository.find({
+    const serviceOrderRepository = manager?.getRepository(ServiceOrder) ?? this.serviceOrderRepository;
+    const assignedOrders = await serviceOrderRepository.find({
       where: { assignedToTechnicianId: In(technicianIds) },
         select: {
           assignedToTechnicianId: true,
@@ -484,21 +502,22 @@ export class ServiceOrderWorkflowService {
     return user;
   }
 
-  private async ensureBalanceRows(technicianIds: number[]): Promise<void> {
-    const existing = await this.technicianAssignmentBalanceRepository.find({
+  private async ensureBalanceRows(technicianIds: number[], manager?: EntityManager): Promise<void> {
+    const balanceRepository = manager?.getRepository(TechnicianAssignmentBalance) ?? this.technicianAssignmentBalanceRepository;
+    const existing = await balanceRepository.find({
       where: { technicianId: In(technicianIds) },
       select: ['technicianId', 'serviceType'],
     });
 
     const existingKeys = new Set(existing.map((entry) => `${entry.technicianId}:${entry.serviceType}`));
     const missing = technicianIds.flatMap((technicianId) =>
-      Object.values(ServiceType)
-        .filter((serviceType) => !existingKeys.has(`${technicianId}:${serviceType}`))
-        .map((serviceType) =>
-          this.technicianAssignmentBalanceRepository.create({
-            technicianId,
-            serviceType,
-            assignedCount: 0,
+        Object.values(ServiceType)
+          .filter((serviceType) => !existingKeys.has(`${technicianId}:${serviceType}`))
+          .map((serviceType) =>
+            balanceRepository.create({
+              technicianId,
+              serviceType,
+              assignedCount: 0,
             activeCount: 0,
             lastAssignedAt: null,
           }),
@@ -506,7 +525,7 @@ export class ServiceOrderWorkflowService {
     );
 
     if (missing.length) {
-      await this.technicianAssignmentBalanceRepository.save(missing);
+      await balanceRepository.save(missing);
     }
   }
 
@@ -516,9 +535,11 @@ export class ServiceOrderWorkflowService {
     assignedDelta: number,
     activeDelta: number,
     lastAssignedAt?: Date | null,
+    manager?: EntityManager,
   ): Promise<void> {
-    await this.ensureBalanceRows([technicianId]);
-    const balance = await this.technicianAssignmentBalanceRepository.findOne({
+    const balanceRepository = manager?.getRepository(TechnicianAssignmentBalance) ?? this.technicianAssignmentBalanceRepository;
+    await this.ensureBalanceRows([technicianId], manager);
+    const balance = await balanceRepository.findOne({
       where: { technicianId, serviceType },
     });
 
@@ -535,6 +556,6 @@ export class ServiceOrderWorkflowService {
       balance.lastAssignedAt = lastAssignedAt;
     }
 
-    await this.technicianAssignmentBalanceRepository.save(balance);
+    await balanceRepository.save(balance);
   }
 }

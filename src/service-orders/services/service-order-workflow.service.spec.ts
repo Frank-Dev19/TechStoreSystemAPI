@@ -157,6 +157,119 @@ describe('ServiceOrderWorkflowService', () => {
     );
   });
 
+  it('uses the provided transaction manager repositories for assignment suggestions', async () => {
+    const managerServiceOrderRepository = createMockRepo<ServiceOrder>();
+    const manager = {
+      getRepository: jest.fn((entity: { name?: string }) => {
+        if (entity?.name === ServiceOrder.name) {
+          return managerServiceOrderRepository;
+        }
+        throw new Error(`Unexpected repository request for ${entity?.name ?? 'unknown entity'}`);
+      }),
+    };
+
+    userRepository.createQueryBuilder.mockReturnValue({
+      innerJoinAndSelect: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([
+        { id: 7, name: 'Carlos Rojas' },
+        { id: 8, name: 'Ana Torres' },
+      ]),
+    });
+    managerServiceOrderRepository.find.mockResolvedValue([
+      {
+        assignedToTechnicianId: 7,
+        serviceType: ServiceType.DIAGNOSIS,
+        technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
+        assignedAt: new Date('2026-01-05T08:30:00.000Z'),
+      },
+    ]);
+
+    const result = await service.getAssignmentSuggestion(ServiceType.DIAGNOSIS, manager as any);
+
+    expect(result.suggestedTechnicianId).toBe(8);
+    expect(manager.getRepository).toHaveBeenCalledWith(ServiceOrder);
+    expect(managerServiceOrderRepository.find).toHaveBeenCalledWith({
+      where: { assignedToTechnicianId: expect.anything() },
+      select: {
+        assignedToTechnicianId: true,
+        serviceType: true,
+        technicalStatus: true,
+        assignedAt: true,
+      },
+    });
+    expect(serviceOrderRepository.find).not.toHaveBeenCalled();
+  });
+
+  it('uses the provided transaction manager repositories for initial assignment side effects', async () => {
+    const managerBalanceRepository = createMockRepo<TechnicianAssignmentBalance>();
+    const managerEventRepository = createMockRepo<ServiceOrderEvent>();
+    const manager = {
+      getRepository: jest.fn((entity: { name?: string }) => {
+        if (entity?.name === TechnicianAssignmentBalance.name) {
+          return managerBalanceRepository;
+        }
+        if (entity?.name === ServiceOrderEvent.name) {
+          return managerEventRepository;
+        }
+        throw new Error(`Unexpected repository request for ${entity?.name ?? 'unknown entity'}`);
+      }),
+    };
+    const assignedAt = new Date('2026-01-05T08:30:00.000Z');
+    const order = createServiceOrder({
+      id: 77,
+      assignedToTechnicianId: 12,
+      assignedAt,
+      technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
+    });
+    const balance = {
+      technicianId: 12,
+      serviceType: order.serviceType,
+      assignedCount: 0,
+      activeCount: 0,
+      lastAssignedAt: null,
+    } as TechnicianAssignmentBalance;
+
+    managerBalanceRepository.find.mockResolvedValue([
+      { technicianId: 12, serviceType: ServiceType.DIAGNOSIS } as TechnicianAssignmentBalance,
+      { technicianId: 12, serviceType: ServiceType.STANDARD_SERVICE } as TechnicianAssignmentBalance,
+      { technicianId: 12, serviceType: ServiceType.WARRANTY_SERVICE } as TechnicianAssignmentBalance,
+      { technicianId: 12, serviceType: ServiceType.ASSEMBLY } as TechnicianAssignmentBalance,
+      { technicianId: 12, serviceType: ServiceType.CUSTOMER_SERVICE } as TechnicianAssignmentBalance,
+    ]);
+    managerBalanceRepository.findOne.mockResolvedValue(balance);
+    managerBalanceRepository.save.mockImplementation(async (entity) => entity);
+    managerEventRepository.save.mockImplementation(async (entity) => entity);
+
+    await service.registerInitialAssignment(order, 99, manager as any);
+
+    expect(manager.getRepository).toHaveBeenCalledWith(TechnicianAssignmentBalance);
+    expect(manager.getRepository).toHaveBeenCalledWith(ServiceOrderEvent);
+    expect(balanceRepository.find).not.toHaveBeenCalled();
+    expect(balanceRepository.findOne).not.toHaveBeenCalled();
+    expect(balanceRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
+    expect(managerBalanceRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        technicianId: 12,
+        serviceType: order.serviceType,
+        assignedCount: 1,
+        activeCount: 1,
+        lastAssignedAt: assignedAt,
+      }),
+    );
+    expect(managerEventRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceOrderId: order.id,
+        eventType: 'assigned',
+        actorId: 99,
+      }),
+    );
+    expect(managerEventRepository.save).toHaveBeenCalled();
+  });
+
   it('rechaza una transición técnica inválida sin persistir cambios', async () => {
     const order = createServiceOrder({
       technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
