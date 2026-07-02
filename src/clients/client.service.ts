@@ -75,6 +75,19 @@ export class ClientService {
     return normalized ? normalized : undefined;
   }
 
+  private stripUiOnlyFields<T extends CreateClientDto | UpdateClientDto>(dto: T): Partial<Client> {
+    const { kind, contacts, isClient, isSupplier, ...clientFields } = dto as any;
+    return clientFields;
+  }
+
+  private toResponse(client: Client) {
+    return {
+      ...client,
+      kind: client.documentType?.kind ?? undefined,
+      contacts: [],
+    };
+  }
+
   private normalizeImportRow(row: ImportClientRowDto): NormalizedImportRow {
     return {
       rowNumber: Number(row.rowNumber),
@@ -238,11 +251,12 @@ export class ClientService {
     }
 
     const entity = this.clientRepository.create({
-      ...createClientDto,
+      ...this.stripUiOnlyFields(createClientDto),
       companyId,
     });
 
-    return this.clientRepository.save(entity);
+    const saved = await this.clientRepository.save(entity);
+    return this.findOne(saved.id);
   }
 
   async findAll(query: FindAllQuery) {
@@ -301,23 +315,32 @@ export class ClientService {
 
     const [data, total] = await this.clientRepository.findAndCount({
       where: where.length ? where : { companyId },
+      relations: {
+        documentType: true,
+      },
       order: { name: 'ASC' },
       skip: (page - 1) * limit,
       take: limit,
       withDeleted: showDeleted,
     });
 
-    return { data, total, page, limit };
+    return { data: data.map((client) => this.toResponse(client)), total, page, limit };
   }
 
   async findOne(id: number) {
-    const client = await this.clientRepository.findOne({ where: { id } });
+    const client = await this.clientRepository.findOne({
+      where: { id },
+      relations: {
+        documentType: true,
+      },
+    });
     if (!client) throw new NotFoundException(`Client with id ${id} not found`);
-    return client;
+    return this.toResponse(client);
   }
 
   async update(id: number, updateClientDto: UpdateClientDto) {
-    const client = await this.findOne(id);
+    const client = await this.clientRepository.findOne({ where: { id } });
+    if (!client) throw new NotFoundException(`Client with id ${id} not found`);
 
     if (updateClientDto.documentTypeId || updateClientDto.documentNumber) {
       const documentTypeId = updateClientDto.documentTypeId
@@ -357,8 +380,9 @@ export class ClientService {
       }
     }
 
-    Object.assign(client, updateClientDto);
-    return this.clientRepository.save(client);
+    Object.assign(client, this.stripUiOnlyFields(updateClientDto));
+    await this.clientRepository.save(client);
+    return this.findOne(id);
   }
 
   async softDelete(id: number) {

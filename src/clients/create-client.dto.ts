@@ -1,4 +1,43 @@
-import { IsEmail, IsNotEmpty, IsNumber, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+
+export class ClientContactDto {
+  @IsNumber()
+  @IsOptional()
+  id?: number;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsEmail()
+  @IsOptional()
+  email?: string | null;
+
+  @IsString()
+  @IsOptional()
+  phone?: string | null;
+
+  @IsBoolean()
+  @IsOptional()
+  isPrimary?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}
 
 export class CreateClientDto {
   @IsNumber()
@@ -13,6 +52,10 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   tradeName?: string;
+
+  @IsIn(['PERSON', 'COMPANY'])
+  @IsOptional()
+  kind?: 'PERSON' | 'COMPANY';
 
   @IsNumber()
   @IsNotEmpty()
@@ -74,4 +117,18 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   country?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isClient?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isSupplier?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ClientContactDto)
+  @IsOptional()
+  contacts?: ClientContactDto[];
 }

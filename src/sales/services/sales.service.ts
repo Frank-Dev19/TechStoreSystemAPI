@@ -39,6 +39,7 @@ import { SaleStatus } from '../enums/sale-status.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { PaymentMethod } from '../enums/payment-method.enum';
+import { splitIncludedTax } from '../utils/included-tax.util';
 
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
@@ -168,24 +169,23 @@ export class SalesService {
       })
     );
 
-    // Calcular totales CORRECTAMENTE
+    const igvRatePct = await this.taxConfigService.getIGVRate();
+
+    // Calcular totales con precios que ya incluyen IGV
     const baseSubtotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.baseSubtotal, 0
     );
     const discountTotal = simulationResults.reduce(
       (sum, result) => sum + result.pricing.totalDiscount, 0
     );
-    const subtotal = baseSubtotal - discountTotal;
+    const grossSubtotal = Number((baseSubtotal - discountTotal).toFixed(2));
+    const taxBreakdown = splitIncludedTax(grossSubtotal, igvRatePct);
+    const subtotal = taxBreakdown.taxableAmount;
 
-    // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
-    // const taxRate = 0.18;
-    // const taxAmount = subtotal * taxRate;
-    // const total = subtotal + taxAmount;
-
-    // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
-    const taxRate = 0; // Sin cálculo de IGV adicional
-    const taxAmount = 0; // Sin cálculo de IGV adicional
-    const total = subtotal; // El total es el precio con IGV incluido
+    // El precio YA incluye IGV: se separa la base gravada sin aumentar el total.
+    const taxRate = taxBreakdown.taxRate;
+    const taxAmount = taxBreakdown.taxAmount;
+    const total = taxBreakdown.total;
 
     // Verificar consistencia
     const finalSubtotal = simulationResults.reduce(
@@ -204,7 +204,7 @@ export class SalesService {
     }
 
     // Verificar consistencia de cálculos
-    if (Math.abs(subtotal - finalSubtotal) > 0.01) {
+    if (Math.abs(grossSubtotal - finalSubtotal) > 0.01) {
       validationMessages.push({
         type: 'WARNING',
         message: 'Inconsistencia en cálculos de precios (subtotal ≠ finalSubtotal)',
@@ -233,6 +233,7 @@ export class SalesService {
         baseSubtotal,
         discountTotal,
         subtotal,
+        grossSubtotal,
         taxRate,
         taxAmount,
         total,
@@ -489,11 +490,12 @@ export class SalesService {
       // Calcular precio con el motor de porcentajes
       const priceCalc = await this.pricingEngine.calculatePrice(item.productId);
       const discountPct = item.discountPct ?? 0;
-      const finalUnitPrice = Number((priceCalc.salePrice * (1 - discountPct / 100)).toFixed(6));
+      const baseUnitPrice = priceCalc.salePriceWithIgv;
+      const finalUnitPrice = Number((baseUnitPrice * (1 - discountPct / 100)).toFixed(6));
 
       enhancedItems.push({
         ...item,
-        baseUnitPrice: priceCalc.salePrice,
+        baseUnitPrice,
         finalUnitPrice,
       });
     }
@@ -527,6 +529,7 @@ export class SalesService {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
+    let savedSaleId: number | null = null;
 
     try {
       // ✅ Obtener la caja DENTRO de la transacción
@@ -557,7 +560,7 @@ export class SalesService {
         dueDate: createSaleDto.dueDate,
         priceListCode: '',
         applyAutoDiscounts: true,
-        subtotal: simulation.summary.subtotal,           // Subtotal NETO (baseSubtotal - discountTotal)
+        subtotal: simulation.summary.subtotal,           // Base gravada sin IGV
         discountTotal: simulation.summary.discountTotal, // Total de descuentos
         taxRate: simulation.summary.taxRate,
         taxAmount: simulation.summary.taxAmount,
@@ -569,6 +572,7 @@ export class SalesService {
       });
 
       const savedSale = await queryRunner.manager.save(sale);
+      savedSaleId = savedSale.id;
 
       // Crear items de venta
       const saleItems: SaleItem[] = [];
@@ -595,6 +599,9 @@ export class SalesService {
             throw new BadRequestException(`Servicio con ID ${itemDto.serviceId} no encontrado`);
           }
 
+          const serviceTax = splitIncludedTax(simulationResult.finalSubtotal, simulation.summary.taxRate);
+          const taxPerUnit = serviceTax.taxAmount / simulationResult.quantity;
+
           const saleItem = this.saleItemRepo.create({
             saleId: savedSale.id,
             itemType: 'SERVICE',
@@ -608,7 +615,7 @@ export class SalesService {
             finalUnitPrice: simulationResult.finalUnitPrice,
             quantity: itemDto.quantity,
             discountAmount: 0,
-            taxAmount: 0,
+            taxAmount: taxPerUnit,
             lineTotal: simulationResult.finalSubtotal,
             serialCount: 0,
             isComboItem: false,
@@ -663,7 +670,8 @@ export class SalesService {
 
         // Calcular valores CORRECTOS para el item
         const discountPerUnit = simulationResult.totalDiscount / simulationResult.quantity;
-        const taxPerUnit = (simulationResult.finalSubtotal * simulation.summary.taxRate) / simulationResult.quantity;
+        const productTax = splitIncludedTax(simulationResult.finalSubtotal, simulation.summary.taxRate);
+        const taxPerUnit = productTax.taxAmount / simulationResult.quantity;
 
         const saleItem = this.saleItemRepo.create({
           saleId: savedSale.id,
@@ -781,15 +789,16 @@ export class SalesService {
       // Commit transacción
       await queryRunner.commitTransaction();
 
-      // Retornar venta completa
-      return this.findOne(savedSale.id);
-
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
       throw error;
     } finally {
       await queryRunner.release();
     }
+
+    return this.findOne(savedSaleId!);
   }
 
   // =========================
@@ -888,7 +897,6 @@ export class SalesService {
         'lineDiscounts',
         'comboItems',
         'comboItems.product',
-        'comboItems.combo',
       ],
     });
 
