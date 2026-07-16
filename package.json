@@ -18,7 +18,17 @@
     "test:watch": "jest --config jest.config.js --watch",
     "test:cov": "jest --config jest.config.js --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --config jest.config.js --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "typeorm:ts": "node -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
+    "migration:create": "npm run typeorm:ts -- migration:create",
+    "migration:generate": "npm run typeorm:ts -- migration:generate -d src/database/data-source.ts",
+    "migration:run": "npm run typeorm:ts -- migration:run -d src/database/data-source.ts",
+    "migration:revert": "npm run typeorm:ts -- migration:revert -d src/database/data-source.ts",
+    "migration:show": "npm run typeorm:ts -- migration:show -d src/database/data-source.ts",
+    "migration:run:prod": "node ./node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js",
+    "migration:revert:prod": "node ./node_modules/typeorm/cli.js migration:revert -d dist/database/data-source.js",
+    "migration:show:prod": "node ./node_modules/typeorm/cli.js migration:show -d dist/database/data-source.js",
+    "migration:run:build": "npm run build && npm run migration:run:prod"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -39,6 +49,7 @@
     "nodemailer": "^7.0.6",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pdfkit": "^0.18.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.26"
@@ -64,7 +75,6 @@
     "globals": "^16.0.0",
     "jest": "^29.7.0",
     "jest-util": "^29.7.0",
-    "pdfkit": "^0.18.0",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",

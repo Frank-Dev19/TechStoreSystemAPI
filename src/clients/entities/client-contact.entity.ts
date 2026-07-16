@@ -34,10 +34,10 @@ export class ClientContact {
   @Column({ name: 'phone', type: 'varchar', length: 20, nullable: true })
   phone: string | null;
 
-  @Column({ name: 'is_primary', type: 'tinyint', width: 1, default: false })
+  @Column({ name: 'is_primary', type: 'tinyint', default: false })
   isPrimary: boolean;
 
-  @Column({ name: 'is_active', type: 'tinyint', width: 1, default: true })
+  @Column({ name: 'is_active', type: 'tinyint', default: true })
   isActive: boolean;
 
   @CreateDateColumn({ name: 'created_at' })

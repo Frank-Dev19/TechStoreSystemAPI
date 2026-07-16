@@ -28,6 +28,11 @@ COPY . .
 # Output is self-contained and production-ready
 RUN npm run build
 
+# Fail the image build if production migration artifacts are missing.
+RUN test -f dist/main.js && \
+    test -f dist/database/data-source.js && \
+    find dist/database/migrations -type f -name '*.js' -print -quit | grep -q .
+
 # ============================================================================
 # STAGE 2: Runtime (Final Image)
 # ============================================================================

@@ -1,8 +1,9 @@
 ﻿// src/app.module.ts
-import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { RequestContextMiddleware } from './common/request-context.middleware';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
+import { createTypeOrmOptions } from './database/typeorm-options';
+import { HealthModule } from './health/health.module';
 
 // Importa tus modulos reales
 // Ejemplo de otros modulos (desactivalos si aun no existen)
@@ -32,44 +33,7 @@ import { SupplierModule } from './suppliers/supplier.module';
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const isProd = config.get<string>('NODE_ENV') === 'production';
-        const common = {
-          type: 'mysql' as const,
-          entities: [__dirname + '/**/*.entity.{ts,js}'],
-          autoLoadEntities: true,
-          logging: config.get<string>('DB_LOGGING') === 'true',
-          // Opcional pero recomendable:
-          timezone: '-05:00',
-          charset: 'utf8mb4',
-        };
-        if (isProd) {
-          // Un solo env var en prod
-          const url = config.get<string>('DATABASE_URL');
-          if (!url) throw new Error('DATABASE_URL no definido en produccion');
-          return {
-            ...common,
-            url,
-            // Algunos proveedores requieren SSL; ajusta segun tu servicio:
-            ssl:
-              process.env.DB_SSL === 'true'
-                ? { rejectUnauthorized: false }
-                : undefined,
-            synchronize: false, // NUNCA en prod
-          };
-        }
-        // Local: campos sueltos
-        return {
-          ...common,
-          host: config.get<string>('DB_HOST'),
-          port: config.get<number>('DB_PORT', 3306),
-          username: config.get<string>('DB_USERNAME'),
-          password: config.get<string>('DB_PASSWORD'),
-          database: config.get<string>('DB_NAME'),
-          synchronize: true, // solo mientras modelas; luego pasalo a false + migrations
-        };
-      },
+      useFactory: () => createTypeOrmOptions(process.env),
     }),
     ScheduleModule.forRoot(),
 
@@ -84,7 +48,6 @@ import { SupplierModule } from './suppliers/supplier.module';
     BootstrapModule,
     UserPermissionsModule,
     MailerModule,
-    UserPermissionsModule,
     DocumentTypesModule,
     ClientModule,
     SupplierModule,
@@ -93,7 +56,7 @@ import { SupplierModule } from './suppliers/supplier.module';
     ServiceOrderAgreementsModule,
     PricingModule,
     SalesModule,
+    HealthModule,
   ],
 })
 export class AppModule {}
-
