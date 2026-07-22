@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsNotEmpty,
@@ -71,6 +72,40 @@ export class CreateClientDto {
   @IsString()
   @IsOptional()
   country?: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/)
+  @IsOptional()
+  ubigeo?: string;
+
+  @IsString()
+  @IsOptional()
+  department?: string;
+
+  @IsString()
+  @IsOptional()
+  province?: string;
+
+  @IsString()
+  @IsOptional()
+  district?: string;
+
+  @IsString()
+  @IsOptional()
+  urbanization?: string;
+
+  @IsString()
+  @Matches(/^[A-Z]{2}$/)
+  @IsOptional()
+  countryCode?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isClient?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isSupplier?: boolean;
 
   @IsArray()
   @ValidateNested({ each: true })

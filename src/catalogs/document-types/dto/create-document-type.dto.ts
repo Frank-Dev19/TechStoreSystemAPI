@@ -17,6 +17,11 @@ export class CreateDocumentTypeDto {
   digits: number;
 
   @IsString()
+  @MaxLength(4)
+  @IsOptional()
+  sunatCode?: string;
+
+  @IsString()
   @MaxLength(255)
   description: string;
 

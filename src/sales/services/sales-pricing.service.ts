@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PricingEngineService, PriceCalculation } from 'src/pricing/services/pricing-engine.service';
 import { Product } from 'src/inventory/entities/product.entity';
+import { splitIncludedTax } from '../utils/included-tax.util';
 
 export interface ProductPricingResult {
     productId: number;
@@ -11,12 +12,12 @@ export interface ProductPricingResult {
     sku: string;
     quantity: number;
 
-    // Precios por unidad (sin IGV)
+    // Precios por unidad con IGV incluido
     baseUnitPrice: number;      // Precio de venta calculado (CPP × (1 + utilidad%))
     finalUnitPrice: number;     // Precio con descuento aplicado
     unitDiscount: number;       // Descuento por unidad
 
-    // Totales (sin IGV)
+    // Totales con IGV incluido
     baseSubtotal: number;       // baseUnitPrice × quantity
     finalSubtotal: number;      // finalUnitPrice × quantity
     totalDiscount: number;      // unitDiscount × quantity
@@ -78,7 +79,7 @@ export class SalesPricingService {
             );
         }
 
-        const baseUnitPrice = calc.salePrice;
+        const baseUnitPrice = calc.salePriceWithIgv;
         const finalUnitPrice = Number((baseUnitPrice * (1 - discountPct / 100)).toFixed(6));
         const unitDiscount = Number((baseUnitPrice - finalUnitPrice).toFixed(6));
 
@@ -87,8 +88,8 @@ export class SalesPricingService {
         const totalDiscount = Number((unitDiscount * params.quantity).toFixed(2));
 
         const igvRate = calc.igvRate;
-        const igvAmount = Number((finalSubtotal * igvRate / 100).toFixed(2));
-        const totalWithIgv = Number((finalSubtotal + igvAmount).toFixed(2));
+        const igvAmount = splitIncludedTax(finalSubtotal, igvRate).taxAmount;
+        const totalWithIgv = finalSubtotal;
 
         const discounts: ProductPricingResult['discounts'] = [];
         if (discountPct > 0) {

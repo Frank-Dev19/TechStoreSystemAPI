@@ -8,6 +8,7 @@ import { Role } from 'src/roles/entities/role.entity';
 import { Permission } from 'src/roles/entities/permission.entity';
 import { PermissionModule } from 'src/roles/entities/permission-module.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
+import { DocumentTypeKind } from 'src/catalogs/document-types/entities/document-type-kind.enum';
 
 type ModuleSeed = { moduleKey: string; label: string; sortOrder: number; icon?: string | null };
 type PermSeed = { moduleKey: string; actionKey: string; description: string; sortOrder?: number };
@@ -36,6 +37,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
       { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
       { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
+      { moduleKey: 'business-profile', label: 'Empresa Emisora', sortOrder: 40, icon: 'fas fa-building' },
       { moduleKey: 'auditoria', label: 'Auditoria', sortOrder: 90, icon: 'fas fa-history' },
       { moduleKey: 'service-order', label: 'Ordenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
       { moduleKey: 'service-order-diagnosis', label: 'Diagnosticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
@@ -84,6 +86,10 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'suppliers', actionKey: 'update', description: 'Actualizar proveedores', sortOrder: 30 },
       { moduleKey: 'suppliers', actionKey: 'delete', description: 'Eliminar un proveedor', sortOrder: 60 },
       { moduleKey: 'suppliers', actionKey: 'restore', description: 'Restaurar un proveedor', sortOrder: 70 },
+
+      // Business profile
+      { moduleKey: 'business-profile', actionKey: 'read', description: 'Ver datos de empresa emisora', sortOrder: 10 },
+      { moduleKey: 'business-profile', actionKey: 'update', description: 'Actualizar datos de empresa emisora', sortOrder: 20 },
 
       // Auditoria (demo; ajusta si lo implementas)
       { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoria', sortOrder: 10 },
@@ -151,14 +157,20 @@ export class BootstrapService implements OnModuleInit {
   // ---------- helpers ----------
 
   private async ensureDefaultDocumentTypes() {
-    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad');
-    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes');
+    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad', '1', DocumentTypeKind.PERSON);
+    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes', '6', DocumentTypeKind.COMPANY);
   }
 
-  private async ensureDocumentType(name: string, digits: number, description: string) {
+  private async ensureDocumentType(
+    name: string,
+    digits: number,
+    description: string,
+    sunatCode?: string,
+    kind?: DocumentTypeKind,
+  ) {
     let dt = await this.docTypesRepo.findOne({ where: { name }, withDeleted: true });
     if (!dt) {
-      dt = this.docTypesRepo.create({ name, digits, description });
+      dt = this.docTypesRepo.create({ name, digits, description, sunatCode, kind });
       await this.docTypesRepo.save(dt);
       this.log.log(`DocumentType "${name}" creado.`);
       return;
@@ -175,6 +187,14 @@ export class BootstrapService implements OnModuleInit {
     }
     if (dt.description !== description) {
       dt.description = description;
+      dirty = true;
+    }
+    if (sunatCode && dt.sunatCode !== sunatCode) {
+      dt.sunatCode = sunatCode;
+      dirty = true;
+    }
+    if (kind && dt.kind !== kind) {
+      dt.kind = kind;
       dirty = true;
     }
 

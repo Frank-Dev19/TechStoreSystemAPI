@@ -60,6 +60,24 @@ export class Client {
   @Column({ name: 'address', length: 255, nullable: true })
   address?: string;
 
+  @Column({ name: 'ubigeo', type: 'varchar', length: 6, nullable: true })
+  ubigeo?: string | null;
+
+  @Column({ name: 'department', type: 'varchar', length: 120, nullable: true })
+  department?: string | null;
+
+  @Column({ name: 'province', type: 'varchar', length: 120, nullable: true })
+  province?: string | null;
+
+  @Column({ name: 'district', type: 'varchar', length: 120, nullable: true })
+  district?: string | null;
+
+  @Column({ name: 'urbanization', type: 'varchar', length: 150, nullable: true })
+  urbanization?: string | null;
+
+  @Column({ name: 'country_code', type: 'varchar', length: 2, nullable: true })
+  countryCode?: string | null;
+
   @Column({ name: 'city', length: 150, nullable: true })
   city?: string;
 

@@ -149,6 +149,11 @@ export class ClientService {
     return normalized;
   }
 
+  private stripUiOnlyFields<T extends CreateClientDto | UpdateClientDto>(dto: T): Omit<T, 'contacts' | 'isClient' | 'isSupplier'> {
+    const { contacts, isClient, isSupplier, ...clientFields } = dto;
+    return clientFields;
+  }
+
   private async saveClientContacts(
     client: Client,
     kind: ClientKind,
@@ -427,7 +432,7 @@ export class ClientService {
           manager.getRepository(ClientContact);
 
         const entity = transactionClientRepository.create({
-          ...createClientDto,
+          ...this.stripUiOnlyFields(createClientDto),
           companyId,
           kind,
           phone: normalizedPhone,
@@ -599,7 +604,7 @@ export class ClientService {
         ? (this.normalizePhoneOrThrow(updateClientDto.phone, 'phone') ?? null)
         : (client.phone ?? null);
     Object.assign(client, {
-      ...clientPatch,
+      ...this.stripUiOnlyFields(clientPatch as UpdateClientDto),
       kind,
       phone: nextPhone,
       requiresContactCompletion:

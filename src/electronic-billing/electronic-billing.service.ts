@@ -1,0 +1,212 @@
+import { BadRequestException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Sale } from '../sales/entities/sale.entity';
+import { SaleStatus } from '../sales/enums/sale-status.enum';
+import { BusinessProfileService } from '../business-profile/business-profile.service';
+import { ApisPeruDocumentResponse, ApisPeruInvoicePayload } from './dto/apisperu-invoice.types';
+import { ElectronicDocument } from './entities/electronic-document.entity';
+import { ElectronicDocumentStatus } from './enums/electronic-document-status.enum';
+import { mapSaleToApisPeruInvoicePayload } from './mappers/sale-to-apisperu-invoice.mapper';
+import { ApisPeruBillingClient } from './services/apisperu-billing.client';
+
+@Injectable()
+export class ElectronicBillingService {
+  constructor(
+    @InjectRepository(Sale)
+    private readonly saleRepo: Repository<Sale>,
+    @InjectRepository(ElectronicDocument)
+    private readonly electronicDocumentRepo: Repository<ElectronicDocument>,
+    private readonly businessProfileService: BusinessProfileService,
+    private readonly apisPeruClient: ApisPeruBillingClient,
+  ) {}
+
+  async buildInvoicePayload(saleId: number): Promise<ApisPeruInvoicePayload> {
+    const sale = await this.findSaleForBilling(saleId);
+    const company = await this.businessProfileService.getInvoiceCompanyPayload();
+    return mapSaleToApisPeruInvoicePayload(sale, company);
+  }
+
+  async sendInvoice(saleId: number): Promise<{
+    saleId: number;
+    payload: ApisPeruInvoicePayload;
+    document: ElectronicDocument;
+    response: ApisPeruDocumentResponse;
+  }> {
+    const sale = await this.findSaleForBilling(saleId);
+    const company = await this.businessProfileService.getInvoiceCompanyPayload();
+    const payload = mapSaleToApisPeruInvoicePayload(sale, company);
+    const document = await this.createPendingDocument(sale, payload);
+
+    try {
+      const response = await this.apisPeruClient.sendInvoice(payload);
+      const savedDocument = await this.markDocumentWithResponse(document, response);
+
+      return {
+        saleId,
+        payload,
+        document: savedDocument,
+        response,
+      };
+    } catch (error) {
+      await this.markDocumentWithError(document, error);
+      throw error;
+    }
+  }
+
+  async findBySale(saleId: number): Promise<ElectronicDocument> {
+    const document = await this.electronicDocumentRepo.findOne({
+      where: { saleId },
+      order: { id: 'DESC' },
+    });
+
+    if (!document) {
+      throw new NotFoundException(`La venta ${saleId} no tiene documento electronico registrado.`);
+    }
+
+    return document;
+  }
+
+  private async findSaleForBilling(saleId: number): Promise<Sale> {
+    const sale = await this.saleRepo
+      .createQueryBuilder('sale')
+      .leftJoinAndSelect('sale.customer', 'customer')
+      .leftJoinAndSelect('customer.documentType', 'customerDocumentType')
+      .leftJoinAndSelect('sale.items', 'items')
+      .leftJoinAndSelect('items.product', 'product')
+      .leftJoinAndSelect('product.baseUnit', 'productBaseUnit')
+      .leftJoinAndSelect('items.service', 'service')
+      .leftJoinAndSelect('sale.payments', 'payments')
+      .where('sale.id = :saleId', { saleId })
+      .getOne();
+
+    if (!sale) {
+      throw new NotFoundException(`Venta ${saleId} no encontrada.`);
+    }
+
+    if (sale.status !== SaleStatus.CONFIRMED) {
+      throw new BadRequestException('Solo se pueden emitir ventas confirmadas.');
+    }
+
+    return sale;
+  }
+
+  private async createPendingDocument(
+    sale: Sale,
+    payload: ApisPeruInvoicePayload,
+  ): Promise<ElectronicDocument> {
+    const existing = await this.electronicDocumentRepo.findOne({
+      where: {
+        companyId: sale.companyId,
+        documentType: sale.documentType,
+        series: sale.series,
+        number: sale.number,
+      },
+    });
+
+    if (existing?.status === ElectronicDocumentStatus.ACCEPTED) {
+      throw new BadRequestException('Esta venta ya tiene un comprobante electronico aceptado por SUNAT.');
+    }
+
+    const document = existing ?? this.electronicDocumentRepo.create({
+      saleId: sale.id,
+      companyId: sale.companyId,
+      documentType: sale.documentType,
+      sunatDocumentTypeCode: payload.tipoDoc,
+      series: sale.series,
+      number: sale.number,
+      provider: 'APIS_PERU',
+    });
+
+    Object.assign(document, {
+      saleId: sale.id,
+      companyId: sale.companyId,
+      providerEndpoint: '/invoice/send',
+      documentType: sale.documentType,
+      sunatDocumentTypeCode: payload.tipoDoc,
+      series: sale.series,
+      number: sale.number,
+      status: ElectronicDocumentStatus.PENDING,
+      payloadJson: payload,
+      responseJson: null,
+      xml: null,
+      hash: null,
+      cdrZip: null,
+      sunatCode: null,
+      sunatDescription: null,
+      sunatNotes: null,
+      errorMessage: null,
+      sentAt: null,
+      acceptedAt: null,
+      rejectedAt: null,
+    });
+
+    return this.electronicDocumentRepo.save(document);
+  }
+
+  private async markDocumentWithResponse(
+    document: ElectronicDocument,
+    response: ApisPeruDocumentResponse,
+  ): Promise<ElectronicDocument> {
+    const cdrResponse = response.sunatResponse?.cdrResponse;
+    const success = response.sunatResponse?.success;
+    const status =
+      success === true
+        ? ElectronicDocumentStatus.ACCEPTED
+        : success === false
+          ? ElectronicDocumentStatus.REJECTED
+          : ElectronicDocumentStatus.SENT;
+
+    Object.assign(document, {
+      status,
+      responseJson: response,
+      xml: response.xml ?? null,
+      hash: response.hash ?? null,
+      cdrZip: response.sunatResponse?.cdrZip ?? null,
+      sunatCode: cdrResponse?.code ?? null,
+      sunatDescription: cdrResponse?.description ?? null,
+      sunatNotes: cdrResponse?.notes ?? null,
+      errorMessage: status === ElectronicDocumentStatus.REJECTED ? cdrResponse?.description ?? 'SUNAT rechazo el comprobante.' : null,
+      sentAt: new Date(),
+      acceptedAt: status === ElectronicDocumentStatus.ACCEPTED ? new Date() : null,
+      rejectedAt: status === ElectronicDocumentStatus.REJECTED ? new Date() : null,
+    });
+
+    return this.electronicDocumentRepo.save(document);
+  }
+
+  private async markDocumentWithError(
+    document: ElectronicDocument,
+    error: unknown,
+  ): Promise<ElectronicDocument> {
+    Object.assign(document, {
+      status: ElectronicDocumentStatus.ERROR,
+      responseJson: this.getErrorResponse(error),
+      errorMessage: this.getErrorMessage(error),
+      sentAt: new Date(),
+      acceptedAt: null,
+      rejectedAt: null,
+    });
+
+    return this.electronicDocumentRepo.save(document);
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (typeof response === 'string') return response;
+      if (response && typeof response === 'object' && 'message' in response) {
+        const message = (response as any).message;
+        return Array.isArray(message) ? message.join('; ') : String(message);
+      }
+    }
+
+    return error instanceof Error ? error.message : 'Error desconocido al emitir comprobante electronico.';
+  }
+
+  private getErrorResponse(error: unknown): unknown {
+    if (error instanceof HttpException) return error.getResponse();
+    if (error instanceof Error) return { message: error.message, name: error.name };
+    return { message: 'Error desconocido', error };
+  }
+}

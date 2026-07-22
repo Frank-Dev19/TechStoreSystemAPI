@@ -12,6 +12,7 @@ import { CreateDocumentSeriesDto } from '../dto/create-document-series.dto';
 import { UpdateDocumentSeriesDto } from '../dto/update-document-series.dto';
 import { DocumentType } from '../enums/document-type.enum';
 import { setDocumentSeriesService } from '../validators/is-unique-document-series.validator';
+import { assertValidSeriesCode } from '../mappers/sunat-document-type.mapper';
 
 @Injectable()
 export class DocumentSeriesService implements OnModuleInit {
@@ -64,8 +65,11 @@ export class DocumentSeriesService implements OnModuleInit {
     }
 
     async create(createDto: CreateDocumentSeriesDto): Promise<DocumentSeries> {
+        const normalizedCode = assertValidSeriesCode(createDto.documentType, createDto.code);
+        const isActive = createDto.isActive ?? true;
+
         // Verificar que no haya otra serie activa para el mismo tipo de documento
-        if (createDto.isActive) {
+        if (isActive) {
             const existingActive = await this.getActiveByType(createDto.companyId, createDto.documentType);
             if (existingActive) {
                 throw new BadRequestException(
@@ -76,6 +80,8 @@ export class DocumentSeriesService implements OnModuleInit {
 
         const series = this.documentSeriesRepo.create({
             ...createDto,
+            code: normalizedCode,
+            isActive,
             currentNumber: createDto.startingNumber || 1,
         });
 
@@ -116,9 +122,28 @@ async delete(id: number): Promise<void> {
             where: {
                 companyId,
                 documentType,
-                code,
+                code: String(code ?? '').trim().toUpperCase(),
             },
         });
+    }
+
+    private formatNumber(number: number): string {
+        return number.toString().padStart(8, '0');
+    }
+
+    async previewNextNumber(companyId: number, documentType: DocumentType): Promise<{ series: string; number: string }> {
+        const activeSeries = await this.getActiveByType(companyId, documentType);
+
+        if (!activeSeries) {
+            throw new BadRequestException(
+                `No hay una serie activa para ${documentType}. Configure una serie primero.`
+            );
+        }
+
+        return {
+            series: activeSeries.code,
+            number: this.formatNumber(activeSeries.currentNumber),
+        };
     }
 
     async getNextNumber(companyId: number, documentType: DocumentType): Promise<{ series: string; number: string }> {
@@ -144,13 +169,18 @@ async delete(id: number): Promise<void> {
 
             return {
                 series: activeSeries.code,
-                number: nextNumber.toString().padStart(8, '0'), // Formato con 8 dígitos: 00000001
+                number: this.formatNumber(nextNumber), // Formato con 8 dígitos: 00000001
             };
         });
     }
 
     async getNextNumberForCompany(companyId: number, documentType: DocumentType): Promise<string> {
         const { series, number } = await this.getNextNumber(companyId, documentType);
+        return `${series}-${number}`;
+    }
+
+    async previewNextNumberForCompany(companyId: number, documentType: DocumentType): Promise<string> {
+        const { series, number } = await this.previewNextNumber(companyId, documentType);
         return `${series}-${number}`;
     }
 }

@@ -28,6 +28,8 @@ import { ServiceOrdersModule } from './service-orders/service-orders.module';
 import { ServiceOrderAgreementsModule } from './service-orders/service-agreements/service-agreements.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SupplierModule } from './suppliers/supplier.module';
+import { BusinessProfileModule } from './business-profile/business-profile.module';
+import { ElectronicBillingModule } from './electronic-billing/electronic-billing.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -57,6 +59,8 @@ import { SupplierModule } from './suppliers/supplier.module';
     PricingModule,
     SalesModule,
     HealthModule,
+    BusinessProfileModule,
+    ElectronicBillingModule,
   ],
 })
 export class AppModule {}

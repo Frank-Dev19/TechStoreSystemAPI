@@ -48,6 +48,36 @@ export class ImportClientRowDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(6)
+  ubigeo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  department?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  province?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  urbanization?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  countryCode?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(150)
   city?: string;
 
