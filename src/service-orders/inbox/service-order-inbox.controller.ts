@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Logger,
   Param,
   ParseIntPipe,
@@ -132,6 +134,7 @@ export class ServiceOrderInboxController {
   }
 
   @Post('webhook')
+  @HttpCode(HttpStatus.OK)
   async receiveWebhook(
     @Body() payload: Record<string, any>,
     @Headers('x-hub-signature-256') signature: string | undefined,

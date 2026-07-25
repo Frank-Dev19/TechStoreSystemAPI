@@ -1,3 +1,4 @@
+import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { ServiceOrderInboxController } from './service-order-inbox.controller';
 import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from './service-order-inbox.service';
@@ -108,6 +109,15 @@ describe('ServiceOrderInboxController', () => {
     expect(inboxService.updateDeliveryStatus).toHaveBeenCalledWith({ externalMessageId: 'wamid-1', status: 'delivered' });
     expect(eventsService.publishChanged).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ ok: true, receivedMessages: 1, receivedStatuses: 1 });
+  });
+
+  it('responde HTTP 200 al webhook de Meta', () => {
+    const statusCode = Reflect.getMetadata(
+      HTTP_CODE_METADATA,
+      ServiceOrderInboxController.prototype.receiveWebhook,
+    );
+
+    expect(statusCode).toBe(200);
   });
 
   it('no rompe el webhook cuando llega un status para un wamid desconocido', async () => {
