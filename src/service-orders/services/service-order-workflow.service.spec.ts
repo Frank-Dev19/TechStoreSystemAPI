@@ -15,6 +15,7 @@ import { ServiceOrderMessageMatrixService } from './service-order-message-matrix
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
 type MockRepo<T = any> = {
+  manager?: any;
   findOne: jest.Mock;
   save: jest.Mock;
   create: jest.Mock;
@@ -105,6 +106,17 @@ describe('ServiceOrderWorkflowService', () => {
     eventRepository = createMockRepo<ServiceOrderEvent>();
     balanceRepository = createMockRepo<TechnicianAssignmentBalance>();
     userRepository = createMockRepo();
+    const transactionManager = {
+      getRepository: jest.fn((entity) => {
+        if (entity === ServiceOrder) return serviceOrderRepository;
+        if (entity === ServiceOrderEvent) return eventRepository;
+        if (entity === TechnicianAssignmentBalance) return balanceRepository;
+        return userRepository;
+      }),
+    };
+    serviceOrderRepository.manager = {
+      transaction: jest.fn(async (callback) => callback(transactionManager)),
+    };
 
     transitionPolicy = {
       canTransition: jest.fn(),

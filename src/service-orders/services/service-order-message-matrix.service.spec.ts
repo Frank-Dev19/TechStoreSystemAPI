@@ -45,16 +45,21 @@ const createServiceOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder
   }) as ServiceOrder;
 
 describe('ServiceOrderMessageMatrixService', () => {
-  it('usa texto libre para acuerdo confirmado cuando la ventana de 24h está abierta', async () => {
+  it('usa template para acuerdo confirmado aunque la ventana de 24h esté abierta', async () => {
     const notificationRepository = createMockRepo();
     const attemptRepository = createMockRepo();
     const inboxService = {
       hasCustomerServiceWindow: jest.fn().mockResolvedValue(true),
-      sendSystemMessageForOrder: jest.fn().mockResolvedValue({ deliveryStatus: 'SENT' }),
-      getThreadForServiceOrder: jest.fn(),
+      getThreadForServiceOrder: jest.fn().mockResolvedValue({
+        clientPhone: '+51932998578',
+        contextToken: 'ctx-201',
+      }),
     } as unknown as jest.Mocked<ServiceOrderInboxService>;
     const inboxChannelService = {
-      dispatchTemplateMessage: jest.fn(),
+      dispatchTemplateMessage: jest.fn().mockResolvedValue({
+        status: 'SENT',
+        externalMessageId: 'wamid.1',
+      }),
     } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
     const whatsappTemplateService = {
       buildAuthorizationConfirmedTemplate: jest.fn().mockReturnValue({
@@ -74,11 +79,13 @@ describe('ServiceOrderMessageMatrixService', () => {
 
     await service.notifyAgreementConfirmed(createServiceOrder(), 9001);
 
-    expect(inboxService.sendSystemMessageForOrder).toHaveBeenCalledWith(
-      201,
-      expect.stringContaining('Tu orden SO-001 ya tiene el acuerdo confirmado.'),
+    expect(inboxService.hasCustomerServiceWindow).not.toHaveBeenCalled();
+    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateName: 'autorizacion_confirmada_inicio_servicio',
+        bodyParameters: ['Juan Pérez', 'SO-001', 'Laptop'],
+      }),
     );
-    expect(inboxChannelService.dispatchTemplateMessage).not.toHaveBeenCalled();
   });
 
   it('usa template para acuerdo confirmado cuando la ventana de 24h está cerrada', async () => {
@@ -86,7 +93,6 @@ describe('ServiceOrderMessageMatrixService', () => {
     const attemptRepository = createMockRepo();
     const inboxService = {
       hasCustomerServiceWindow: jest.fn().mockResolvedValue(false),
-      sendSystemMessageForOrder: jest.fn(),
       getThreadForServiceOrder: jest.fn().mockResolvedValue({
         clientPhone: '+51932998578',
         contextToken: 'ctx-201',
@@ -116,8 +122,34 @@ describe('ServiceOrderMessageMatrixService', () => {
 
     await service.notifyAgreementConfirmed(createServiceOrder(), 9002);
 
-    expect(inboxService.sendSystemMessageForOrder).not.toHaveBeenCalled();
     expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalled();
+  });
+
+  it('omite la encuesta automática cuando no existe una plantilla configurada', async () => {
+    const notificationRepository = createMockRepo();
+    const attemptRepository = createMockRepo();
+    const inboxService = {
+      getThreadForServiceOrder: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = {
+      buildSurveyRequestTemplate: jest.fn().mockReturnValue(null),
+    } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+    );
+
+    await service.notifySurveyRequest(createServiceOrder());
+
+    expect(notificationRepository.save).not.toHaveBeenCalled();
+    expect(inboxChannelService.dispatchTemplateMessage).not.toHaveBeenCalled();
   });
 
   it('stores batch metadata for intake notification', async () => {
@@ -129,7 +161,6 @@ describe('ServiceOrderMessageMatrixService', () => {
         clientPhone: '+51932998578',
         contextToken: 'ctx-201',
       }),
-      sendSystemMessageForOrder: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInboxService>;
     const inboxChannelService = {
       dispatchTemplateMessage: jest.fn().mockResolvedValue({
@@ -165,6 +196,7 @@ describe('ServiceOrderMessageMatrixService', () => {
 
     expect(notificationRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
+        body: null,
         scope: 'ORDER_BATCH',
         metadataJson: expect.stringContaining('"orderIds":[201,202]'),
       }),

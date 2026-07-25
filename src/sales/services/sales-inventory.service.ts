@@ -1,13 +1,15 @@
 // src/sales/services/sales-inventory.service.ts
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { EntityManager, Repository, In } from 'typeorm';
 import { MovementsService } from 'src/inventory/services/movements.service';
 import { StockService } from 'src/inventory/services/stock.service';
 import { Serial } from 'src/inventory/entities/serial.entity';
 import { Lot } from 'src/inventory/entities/lot.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { MovementTypeEnum } from 'src/inventory/dto/movement.dto';
+import { Movement } from 'src/inventory/entities/movement.entity';
+import { MovementSerial } from 'src/inventory/entities/movement-serial.entity';
 
 export interface StockValidationResult {
     productId: number;
@@ -245,7 +247,7 @@ export class SalesInventoryService {
         quantity: number;
         lotId?: number | null;
         serialIds?: number[];
-    }>, user: string) {
+    }>, user: string, manager?: EntityManager) {
         const movements = [];
 
         for (const item of items) {
@@ -262,7 +264,56 @@ export class SalesInventoryService {
                 user_created: user,
             };
 
-            await this.movementsService.createMovement(movement, user);
+            await this.movementsService.createMovement(movement, user, manager);
+        }
+    }
+
+    async registerSaleCancellationMovement(
+        saleId: number,
+        user: string,
+        manager: EntityManager,
+    ): Promise<void> {
+        const movementRepository = manager.getRepository(Movement);
+        const existingReversal = await movementRepository.findOne({
+            where: {
+                sourceDocType: 'SALE_CANCELLATION',
+                sourceDocId: String(saleId),
+            },
+        });
+        if (existingReversal) {
+            return;
+        }
+
+        const originalMovements = await movementRepository.find({
+            where: {
+                type: 'OUT',
+                sourceDocType: 'SALE',
+                sourceDocId: String(saleId),
+            },
+            order: { id: 'ASC' },
+        });
+
+        for (const movement of originalMovements) {
+            const serialLinks = await manager.getRepository(MovementSerial).find({
+                where: { movementId: movement.id },
+                relations: ['serial'],
+            });
+            await this.movementsService.createMovement(
+                {
+                    type: MovementTypeEnum.IN,
+                    product_id: movement.productId,
+                    qty: Number(movement.qty),
+                    lot_id: movement.lotId ?? undefined,
+                    serial_codes: serialLinks.map((link) => link.serial.serialCode),
+                    unit_cost: Number(movement.unitCost),
+                    reason_code: 'SALE_CANCELLATION',
+                    notes: `Anulación de venta #${saleId}`,
+                    source_doc_type: 'SALE_CANCELLATION',
+                    source_doc_id: String(saleId),
+                },
+                user,
+                manager,
+            );
         }
     }
 }

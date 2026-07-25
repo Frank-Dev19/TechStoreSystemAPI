@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In, IsNull, Brackets } from 'typeorm';
+import { Repository, DataSource, EntityManager, In, IsNull, Brackets } from 'typeorm';
 import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SalePayment } from '../entities/sale-payment.entity';
@@ -850,7 +850,8 @@ export class SalesService {
       await this.salesInventory.registerSaleMovement(
         savedSale.id,
         itemsWithAutoData,
-        user
+        user,
+        queryRunner.manager,
       );
 
       // Commit transacción
@@ -1175,7 +1176,7 @@ export class SalesService {
       );
 
       if (itemsWithAutoData.length) {
-        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user);
+        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
       }
 
       await queryRunner.commitTransaction();
@@ -1479,7 +1480,7 @@ export class SalesService {
       }
 
       if (itemsWithAutoData.length) {
-        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user);
+        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
       }
 
       await queryRunner.commitTransaction();
@@ -1718,31 +1719,164 @@ export class SalesService {
   // ANULAR VENTA
   // =========================
   async cancel(id: number, cancelDto: CancelSaleDto, user: string) {
-    const sale = await this.saleRepo.findOne({ where: { id } });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    if (!sale) {
-      throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+    try {
+      const sale = await queryRunner.manager.findOne(Sale, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!sale) {
+        throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+      }
+      if (sale.status === SaleStatus.CANCELLED) {
+        await queryRunner.rollbackTransaction();
+        return sale;
+      }
+      if (sale.status !== SaleStatus.CONFIRMED) {
+        throw new BadRequestException('Solo se pueden anular ventas en estado CONFIRMED');
+      }
+
+      await this.salesInventory.registerSaleCancellationMovement(sale.id, user, queryRunner.manager);
+      await this.reverseSaleCashEffects(sale, user, queryRunner.manager);
+
+      const activeLinks = await queryRunner.manager.find(ServiceOrderSaleLink, {
+        where: { saleId: sale.id, deletedAt: IsNull() },
+      });
+      if (activeLinks.length) {
+        await queryRunner.manager.softDelete(ServiceOrderSaleLink, {
+          id: In(activeLinks.map((link) => link.id)),
+        });
+        for (const serviceOrderId of new Set(activeLinks.map((link) => Number(link.serviceOrderId)))) {
+          await this.recomputeServiceOrderEconomicState(serviceOrderId, queryRunner.manager);
+        }
+      }
+
+      sale.status = SaleStatus.CANCELLED;
+      sale.cancelledBy = user;
+      sale.cancelledAt = new Date();
+      sale.cancelledReason = cancelDto.reason;
+      sale.observations = cancelDto.observations
+        ? `${sale.observations || ''}\nANULADA: ${cancelDto.observations}`.trim()
+        : sale.observations;
+      const cancelledSale = await queryRunner.manager.save(Sale, sale);
+
+      await queryRunner.commitTransaction();
+      return cancelledSale;
+    } catch (error) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  private async reverseSaleCashEffects(
+    sale: Sale,
+    user: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const payments = await manager.find(SalePayment, { where: { saleId: sale.id } });
+    if (!payments.length || !sale.cashRegisterId) {
+      return;
     }
 
-    if (sale.status === 'CANCELLED') {
-      return sale;
+    const existingReversal = await manager.findOne(CashFlowTransaction, {
+      where: {
+        saleId: sale.id,
+        type: 'RETURN' as any,
+      },
+    });
+    if (existingReversal) {
+      return;
     }
 
-    if (sale.status !== 'CONFIRMED') {
-      throw new BadRequestException('Solo se pueden anular ventas en estado CONFIRMED');
+    const cashRegister = await manager.findOne(CashRegister, {
+      where: { id: sale.cashRegisterId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!cashRegister) {
+      throw new BadRequestException('No se encontró la caja asociada a la venta');
     }
 
-    // TODO: Implementar devolución de stock
-    // Por ahora solo cambiamos el estado
-    sale.status = SaleStatus.CANCELLED;
-    sale.cancelledBy = user;
-    sale.cancelledAt = new Date();
-    sale.cancelledReason = cancelDto.reason;
-    sale.observations = cancelDto.observations
-      ? `${sale.observations || ''}\nANULADA: ${cancelDto.observations}`.trim()
-      : sale.observations;
+    let currentBalance = Number(cashRegister.currentBalance ?? 0);
+    for (const payment of payments) {
+      const amount = Number(payment.amount ?? 0);
+      if (payment.method === PaymentMethod.CASH) {
+        currentBalance -= amount;
+        cashRegister.currentBalance = currentBalance;
+        cashRegister.expectedBalance = Number(cashRegister.expectedBalance ?? 0) - amount;
+        cashRegister.totalCash = Number(cashRegister.totalCash ?? 0) - amount;
+      } else if (payment.method === PaymentMethod.CARD) {
+        cashRegister.totalCard = Number(cashRegister.totalCard ?? 0) - amount;
+      } else if (payment.method === PaymentMethod.TRANSFER) {
+        cashRegister.totalTransfer = Number(cashRegister.totalTransfer ?? 0) - amount;
+      } else if (payment.method === PaymentMethod.YAPE) {
+        cashRegister.totalYape = Number(cashRegister.totalYape ?? 0) - amount;
+      } else if (payment.method === PaymentMethod.PLIN) {
+        cashRegister.totalPlin = Number(cashRegister.totalPlin ?? 0) - amount;
+      }
 
-    return this.saleRepo.save(sale);
+      await manager.save(
+        CashFlowTransaction,
+        manager.create(CashFlowTransaction, {
+          cashRegisterId: cashRegister.id,
+          saleId: sale.id,
+          type: 'RETURN' as any,
+          subtype: payment.method as any,
+          amount: -amount,
+          balanceAfter: currentBalance,
+          description: `Reversión por anulación de venta ${sale.series}-${sale.number}`,
+          reference: `SALE-CANCELLATION:${sale.id}`,
+          recordedBy: user,
+          recordedAt: new Date(),
+        }),
+      );
+    }
+    await manager.save(CashRegister, cashRegister);
+  }
+
+  private async recomputeServiceOrderEconomicState(
+    serviceOrderId: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const order = await manager.findOne(ServiceOrder, {
+      where: { id: serviceOrderId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!order) {
+      throw new NotFoundException('Orden de servicio vinculada no encontrada');
+    }
+    const agreement = await manager.findOne(ServiceOrderAgreement, {
+      where: {
+        serviceOrderId,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+      },
+      order: { agreedAt: 'DESC', createdAt: 'DESC' },
+    });
+    const links = await manager.find(ServiceOrderSaleLink, {
+      where: { serviceOrderId, deletedAt: IsNull() },
+    });
+    const committed = Number(agreement?.totalAmount ?? 0);
+    const reconciled = Number(
+      links.reduce((sum, link) => sum + Number(link.linkedAmount ?? 0), 0).toFixed(2),
+    );
+
+    order.montoComprometidoVigente = committed;
+    order.montoReconciliado = reconciled;
+    order.economicStatus =
+      committed <= 0
+        ? ServiceOrderEconomicStatus.NO_APLICA
+        : reconciled <= 0
+          ? ServiceOrderEconomicStatus.PENDIENTE
+          : reconciled + 0.01 < committed
+            ? ServiceOrderEconomicStatus.PARCIAL
+            : ServiceOrderEconomicStatus.TOTAL;
+    await manager.save(ServiceOrder, order);
   }
 
   // =========================

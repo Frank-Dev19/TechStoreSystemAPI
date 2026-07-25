@@ -20,7 +20,7 @@ export function createTypeOrmOptions(
     entities: [path.join(__dirname, '..', '**', '*.entity.{ts,js}')],
     migrations: [path.join(__dirname, 'migrations', '*.{ts,js}')],
     migrationsTableName: 'typeorm_migrations',
-    synchronize: false,
+    synchronize: !isProduction,
     migrationsRun: false,
     logging: env.DB_LOGGING === 'true',
     timezone: '-05:00',

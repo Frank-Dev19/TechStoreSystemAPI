@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DataSource, Repository, IsNull, In } from 'typeorm';
+import { DataSource, EntityManager, Repository, IsNull, In } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Movement, MovementType } from '../entities/movement.entity';
 import { Product } from '../entities/product.entity';
@@ -21,11 +21,12 @@ export class MovementsService {
         @InjectRepository(MovementSerial) private movSerRepo: Repository<MovementSerial>,
     ) { }
 
-    async createMovement(dto: MovementDto, user: string = 'API') {
+    async createMovement(dto: MovementDto, user: string = 'API', manager?: EntityManager) {
         if (dto.type === 'ADJ' && Number(dto.qty) === 0) {
             throw new BadRequestException('El ajuste no puede ser 0');
         }
-        const product = await this.prodRepo.findOneBy({ id: dto.product_id });
+        const productRepository = manager ? manager.getRepository(Product) : this.prodRepo;
+        const product = await productRepository.findOneBy({ id: dto.product_id });
         if (!product) throw new NotFoundException('Producto no encontrado');
 
         const qtyAbs = Math.abs(Number(dto.qty));
@@ -50,7 +51,7 @@ export class MovementsService {
             }
         }
 
-        return this.ds.transaction(async (em) => {
+        const execute = async (em: EntityManager) => {
             let lotId: number | null = dto.lot_id ?? null;
             if (dto.type === 'IN' && product.managesExpiration && !lotId) {
                 throw new BadRequestException('Entrada de producto con vencimiento requiere lote existente');
@@ -227,7 +228,9 @@ export class MovementsService {
             }
 
             return savedMov;
-        });
+        };
+
+        return manager ? execute(manager) : this.ds.transaction(execute);
     }
 
     async listKardex(filters: { product_id?: number; reason_code?: string; date_from?: string; date_to?: string; page?: number; limit?: number; }) {

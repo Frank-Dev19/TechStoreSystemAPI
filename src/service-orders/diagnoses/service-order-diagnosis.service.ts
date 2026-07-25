@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity';
@@ -87,19 +87,25 @@ export class ServiceOrderDiagnosisService {
   }
 
   async create(dto: CreateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
-    const serviceOrder = await this.ensureServiceOrder(dto.serviceOrderId);
-    await this.ensureViewerCanAccessServiceOrder(serviceOrder, viewer);
-    this.ensureDiagnosisCreateAllowed(serviceOrder);
-    const previousCurrentDiagnosis = await this.diagnosisRepository.findOne({
-      where: {
-        serviceOrderId: dto.serviceOrderId,
-        status: ServiceOrderDiagnosisStatus.CURRENT,
-      },
-      order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
-    });
-
-    const diagnosis = await this.diagnosisRepository.manager.transaction(async (manager) => {
+    const result = await this.diagnosisRepository.manager.transaction(async (manager) => {
+      const serviceOrderRepository = manager.getRepository(ServiceOrder);
+      const serviceOrder = await serviceOrderRepository.findOne({
+        where: { id: dto.serviceOrderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!serviceOrder) {
+        throw new NotFoundException(`ServiceOrder with id ${dto.serviceOrderId} not found`);
+      }
+      await this.ensureViewerCanAccessServiceOrder(serviceOrder, viewer);
+      this.ensureDiagnosisCreateAllowed(serviceOrder);
       const repository = manager.getRepository(ServiceOrderDiagnosis);
+      const previousCurrentDiagnosis = await repository.findOne({
+        where: {
+          serviceOrderId: dto.serviceOrderId,
+          status: ServiceOrderDiagnosisStatus.CURRENT,
+        },
+        order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
+      });
       const sequenceNumber = dto.sequenceNumber ?? (await this.resolveNextSequence(repository, dto.serviceOrderId));
 
       await repository
@@ -121,18 +127,29 @@ export class ServiceOrderDiagnosisService {
         recommendedAction: dto.recommendedAction ?? null,
       });
 
-      return repository.save(entity);
+      const diagnosis = await repository.save(entity);
+      const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(
+        diagnosis.outcome,
+        serviceOrder.technicalStatus,
+      );
+      const updatedOrder = await this.workflowService.changeTechnicalStatus(
+        dto.serviceOrderId,
+        nextTechnicalStatus,
+        undefined,
+        undefined,
+        viewer,
+        manager,
+      );
+      await this.applyCommercialStatusFromDiagnosis(dto.serviceOrderId, diagnosis.outcome, manager);
+      return { diagnosis, previousCurrentDiagnosis, updatedOrder };
     });
 
-    const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(diagnosis.outcome, serviceOrder.technicalStatus);
-    await this.workflowService.changeTechnicalStatus(dto.serviceOrderId, nextTechnicalStatus);
-    await this.applyCommercialStatusFromDiagnosis(dto.serviceOrderId, diagnosis.outcome);
     await this.messageMatrixService.notifyDiagnosisUpdated(
-      await this.ensureServiceOrder(dto.serviceOrderId),
-      diagnosis,
-      previousCurrentDiagnosis,
+      result.updatedOrder,
+      result.diagnosis,
+      result.previousCurrentDiagnosis,
     );
-    return diagnosis;
+    return result.diagnosis;
   }
 
   async update(id: number, dto: UpdateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
@@ -282,8 +299,13 @@ export class ServiceOrderDiagnosisService {
   private async applyCommercialStatusFromDiagnosis(
     serviceOrderId: number,
     outcome: ServiceOrderDiagnosisOutcome,
+    manager?: EntityManager,
   ): Promise<void> {
-    const serviceOrder = await this.ensureServiceOrder(serviceOrderId);
+    const repository = manager?.getRepository(ServiceOrder) ?? this.serviceOrderRepository;
+    const serviceOrder = await repository.findOne({ where: { id: serviceOrderId } });
+    if (!serviceOrder) {
+      throw new NotFoundException(`ServiceOrder with id ${serviceOrderId} not found`);
+    }
 
     if (
       [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
@@ -293,7 +315,7 @@ export class ServiceOrderDiagnosisService {
       serviceOrder.commercialStatus = ServiceOrderCommercialStatus.NO_REQUIERE;
     }
 
-    await this.serviceOrderRepository.save(serviceOrder);
+    await repository.save(serviceOrder);
   }
 
   private async ensureDiagnosis(id: number, viewer?: DiagnosisViewer) {

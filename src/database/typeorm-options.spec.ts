@@ -18,7 +18,7 @@ describe('createTypeOrmOptions', () => {
     expect(options.migrationsTableName).toBe('typeorm_migrations');
   });
 
-  it('keeps synchronization disabled for local configuration', () => {
+  it('enables synchronization for local disposable databases', () => {
     const options = createTypeOrmOptions({
       DB_HOST: 'localhost',
       DB_PORT: '3306',
@@ -27,7 +27,7 @@ describe('createTypeOrmOptions', () => {
       DB_NAME: 'techstore',
     });
 
-    expect(options.synchronize).toBe(false);
+    expect(options.synchronize).toBe(true);
     expect(options.migrationsRun).toBe(false);
   });
 

@@ -72,19 +72,19 @@ export class ServiceOrderController {
     return this.serviceOrderService.findAll(query, req.user);
   }
 
-  @Permissions('service-order.read')
+  @Permissions('service-order.assign')
   @Get('technician-suggestion')
   getTechnicianSuggestion(@Query() query: ServiceOrderTechnicianSuggestionDto) {
     return this.workflowService.getAssignmentSuggestion(query.serviceType);
   }
 
-  @Permissions('service-order.read')
+  @Permissions('service-order.billing-link')
   @Get('backoffice/billing-links/search-sales')
   searchSales(@Query() query: any) {
     return this.saleLinkService.searchSales(query);
   }
 
-  @Permissions('service-order.read')
+  @Permissions('service-order.billing-link')
   @Get('backoffice/billing-links/by-orders')
   getLinksByOrders(@Query('serviceOrderIds') serviceOrderIds?: string) {
     const ids = String(serviceOrderIds ?? '')
@@ -94,13 +94,13 @@ export class ServiceOrderController {
     return this.saleLinkService.getLinksByServiceOrderIds(ids);
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.billing-link')
   @Post('backoffice/billing-links')
   linkSaleToOrders(@Body() dto: LinkSaleToServiceOrdersDto, @CurrentUser() userId?: number) {
     return this.saleLinkService.linkSaleToServiceOrders(dto, userId ? String(userId) : undefined);
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.billing-link')
   @Delete('backoffice/billing-links/:id')
   unlinkSale(@Param('id', ParseIntPipe) id: number) {
     return this.saleLinkService.unlink(id);
@@ -131,19 +131,19 @@ export class ServiceOrderController {
     return this.inboxService.getThreadForServiceOrder(id, this.inboxService.buildViewerContext(req.user));
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.edit')
   @Patch(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto, @Req() req: any) {
     return this.serviceOrderService.update(id, dto, req.user);
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.deliver')
   @Patch(':id/deliver')
   deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number, @Req() req?: any) {
     return this.serviceOrderService.markAsDelivered(id, userId, req?.user);
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.assign')
   @Patch(':id/assign-technician')
   assignTechnician(
     @Param('id', ParseIntPipe) id: number,
@@ -154,7 +154,7 @@ export class ServiceOrderController {
     return this.workflowService.assignTechnician(id, dto, userId, req?.user);
   }
 
-  @Permissions('service-order.update')
+  @Permissions('service-order.transition')
   @Patch(':id/technical/:status')
   changeTechnicalStatus(
     @Param('id', ParseIntPipe) id: number,

@@ -73,6 +73,7 @@ describe('ServiceOrderInboxService', () => {
       messageOrderLinkRepository as any,
       serviceOrderRepository as any,
       channelService,
+      { store: jest.fn() } as any,
     );
   });
 
@@ -192,6 +193,24 @@ describe('ServiceOrderInboxService', () => {
       page: 1,
       limit: 6,
     });
+  });
+
+  it('solo expone el teléfono del cliente a supervisor y administrador', async () => {
+    const thread = createThread({ clientPhoneSnapshot: '51999111222' });
+
+    const receptionSummary = await (service as any).mapThreadSummary(
+      thread,
+      { role: 'RECEPTION', userId: 22, displayName: 'Recepción' },
+      [],
+    );
+    const supervisorSummary = await (service as any).mapThreadSummary(
+      thread,
+      { role: 'SUPERVISOR', userId: 2, displayName: 'Supervisor' },
+      [],
+    );
+
+    expect(receptionSummary.clientPhone).toBeNull();
+    expect(supervisorSummary.clientPhone).toBe('51999111222');
   });
 
   it('procesa inbound con contextToken real y crea mensaje RECEIVED', async () => {

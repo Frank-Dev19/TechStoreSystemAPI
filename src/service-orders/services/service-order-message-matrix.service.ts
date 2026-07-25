@@ -12,13 +12,6 @@ import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { Sale } from '../../sales/entities/sale.entity';
 import { ServiceOrderWhatsAppTemplateService, WhatsAppTemplateDispatch } from './service-order-whatsapp-template.service';
 
-type DispatchMessageInput = {
-  serviceOrder: ServiceOrder;
-  idempotencyKey: string;
-  messageType: string;
-  body: string | null;
-};
-
 type DispatchOrderIntakeTemplateInput = {
   serviceOrders: ServiceOrder[];
   documentUrl: string;
@@ -30,9 +23,7 @@ type DispatchBusinessNotificationInput = {
   serviceOrder: ServiceOrder;
   idempotencyKey: string;
   messageType: string;
-  freeTextBody?: string | null;
-  template?: WhatsAppTemplateDispatch | null;
-  preferFreeTextWhenWindowOpen?: boolean;
+  template: WhatsAppTemplateDispatch;
 };
 
 @Injectable()
@@ -97,7 +88,7 @@ export class ServiceOrderMessageMatrixService {
         channel: 'WHATSAPP_TEMPLATE',
         messageType: 'order.intake.summary',
         recipient,
-        body: `Template ${template.templateName}`,
+        body: null,
         idempotencyKey,
         status: 'QUEUED',
         scope: serviceOrders.length === 1 ? 'ORDER' : 'ORDER_BATCH',
@@ -105,6 +96,8 @@ export class ServiceOrderMessageMatrixService {
           orderIds: serviceOrders.map((order) => order.id),
           tempDocumentToken: input.tempDocumentToken,
           templateName: template.templateName,
+          languageCode: template.languageCode,
+          bodyParameters: template.bodyParameters,
         }),
       }),
     );
@@ -164,13 +157,11 @@ export class ServiceOrderMessageMatrixService {
           serviceOrder,
           messageType: 'authorization.confirmed',
           idempotencyKey: `service_order:${serviceOrder.id}:authorization:confirmed`,
-          freeTextBody: `Tu orden ${serviceOrder.code} ya quedó autorizada para ejecución. Continuaremos con la atención del equipo.`,
           template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
             clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
             equipmentLabel: this.buildEquipmentLabel(serviceOrder),
             orderCode: serviceOrder.code,
           }),
-          preferFreeTextWhenWindowOpen: true,
         });
         return;
       case ServiceOrderTechnicalStatus.RESUELTA:
@@ -178,13 +169,11 @@ export class ServiceOrderMessageMatrixService {
           serviceOrder,
           messageType: 'ready.for.pickup',
           idempotencyKey: `service_order:${serviceOrder.id}:ready-for-pickup`,
-          freeTextBody: `Tu orden ${serviceOrder.code} ya quedó finalizada y lista para entrega o recojo.`,
           template: this.whatsappTemplateService.buildReadyForPickupTemplate({
             clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
             orderCode: serviceOrder.code,
             equipmentLabel: this.buildEquipmentLabel(serviceOrder),
           }),
-          preferFreeTextWhenWindowOpen: true,
         });
         return;
       case ServiceOrderTechnicalStatus.SIN_SOLUCION:
@@ -192,13 +181,11 @@ export class ServiceOrderMessageMatrixService {
           serviceOrder,
           messageType: 'no.solution',
           idempotencyKey: `service_order:${serviceOrder.id}:no-solution`,
-          freeTextBody: `Tu orden ${serviceOrder.code} no tiene una solución técnica viable. Si necesitas más detalle, podemos ayudarte por este mismo canal.`,
           template: this.whatsappTemplateService.buildNoSolutionTemplate({
             clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
             orderCode: serviceOrder.code,
             equipmentLabel: this.buildEquipmentLabel(serviceOrder),
           }),
-          preferFreeTextWhenWindowOpen: true,
         });
         return;
       case ServiceOrderTechnicalStatus.BLOQUEADA:
@@ -207,13 +194,11 @@ export class ServiceOrderMessageMatrixService {
           serviceOrder,
           messageType: 'pause.blocked',
           idempotencyKey: `service_order:${serviceOrder.id}:pause:${nextTechnicalStatus}`,
-          freeTextBody: `Tu orden ${serviceOrder.code} requiere una gestión adicional antes de continuar. Te avisaremos cuando retomemos la atención.`,
           template: this.whatsappTemplateService.buildPauseOrBlockedTemplate({
             clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
             orderCode: serviceOrder.code,
             equipmentLabel: this.buildEquipmentLabel(serviceOrder),
           }),
-          preferFreeTextWhenWindowOpen: true,
         });
         return;
       default:
@@ -248,11 +233,6 @@ export class ServiceOrderMessageMatrixService {
           orderCode: serviceOrder.code,
           statusLabel,
         }),
-        freeTextBody:
-          diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
-            ? `Tu orden ${serviceOrder.code} califica para atención por garantía.`
-            : `La garantía de tu orden ${serviceOrder.code} fue rechazada.`,
-        preferFreeTextWhenWindowOpen: true,
       });
     }
   }
@@ -262,13 +242,11 @@ export class ServiceOrderMessageMatrixService {
       serviceOrder,
       messageType: 'authorization.confirmed',
       idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:confirmed`,
-      freeTextBody: `Tu orden ${serviceOrder.code} ya tiene el acuerdo confirmado. Continuaremos con la atención del equipo y te avisaremos cuando haya una nueva etapa relevante.`,
       template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
         clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
         orderCode: serviceOrder.code,
         equipmentLabel: this.buildEquipmentLabel(serviceOrder),
       }),
-      preferFreeTextWhenWindowOpen: true,
     });
   }
 
@@ -277,16 +255,23 @@ export class ServiceOrderMessageMatrixService {
   }
 
   async notifySurveyRequest(serviceOrder: ServiceOrder): Promise<void> {
-    const hasWindow = await this.inboxService.hasCustomerServiceWindow(serviceOrder.id);
-    if (!hasWindow) {
+    const template = this.whatsappTemplateService.buildSurveyRequestTemplate({
+      clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+      orderCode: serviceOrder.code,
+      equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+    });
+    if (!template) {
+      this.logger.warn(
+        `Automatic survey notification skipped for order ${serviceOrder.id}: WHATSAPP_TEMPLATE_SURVEY_NAME is not configured`,
+      );
       return;
     }
 
-    await this.dispatchMessage({
+    await this.dispatchBusinessNotification({
       serviceOrder,
       messageType: 'survey.requested',
       idempotencyKey: `service_order:${serviceOrder.id}:survey:delivered`,
-      body: `Gracias por confiar en nosotros. Tu orden ${serviceOrder.code} fue entregada. Si deseas calificarnos, responde con una nota del 1 al 5 y, si quieres, un comentario breve sobre la atención.`,
+      template,
     });
   }
 
@@ -299,14 +284,12 @@ export class ServiceOrderMessageMatrixService {
       serviceOrder,
       messageType: 'agreement.available',
       idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:available`,
-      freeTextBody: `Ya tenemos el acuerdo comercial de tu orden ${serviceOrder.code} por un total de S/${Number(totalAmount).toFixed(2)}.`,
       template: this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate({
         clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
         equipmentLabel: this.buildEquipmentLabel(serviceOrder),
         orderCode: serviceOrder.code,
         totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
       }),
-      preferFreeTextWhenWindowOpen: false,
     });
   }
 
@@ -319,14 +302,12 @@ export class ServiceOrderMessageMatrixService {
       serviceOrder,
       messageType: 'agreement.available.rediagnosis',
       idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:rediagnosis`,
-      freeTextBody: `Actualizamos el acuerdo comercial de tu orden ${serviceOrder.code}. Nuevo total: S/${Number(totalAmount).toFixed(2)}.`,
       template: this.whatsappTemplateService.buildRediagnosisAgreementTemplate({
         clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
         equipmentLabel: this.buildEquipmentLabel(serviceOrder),
         orderCode: serviceOrder.code,
         totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
       }),
-      preferFreeTextWhenWindowOpen: false,
     });
   }
 
@@ -335,13 +316,11 @@ export class ServiceOrderMessageMatrixService {
       serviceOrder,
       messageType: 'cancellation.with.fee',
       idempotencyKey: `service_order:${serviceOrder.id}:cancellation:diagnosis-fee`,
-      freeTextBody: `La orden ${serviceOrder.code} fue cancelada y corresponde el cobro de S/20 por el diagnóstico realizado.`,
       template: this.whatsappTemplateService.buildCancellationWithFeeTemplate({
         clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
         orderCode: serviceOrder.code,
         equipmentLabel: this.buildEquipmentLabel(serviceOrder),
       }),
-      preferFreeTextWhenWindowOpen: false,
     });
   }
 
@@ -361,84 +340,7 @@ export class ServiceOrderMessageMatrixService {
     );
   }
 
-  private async dispatchMessage(input: DispatchMessageInput): Promise<void> {
-    const body = input.body?.trim() || null;
-    if (!body) {
-      return;
-    }
-
-    const existing = await this.notificationRepository.findOne({
-      where: { idempotencyKey: input.idempotencyKey },
-    });
-    if (existing) {
-      return;
-    }
-
-    const notification = await this.notificationRepository.save(
-      this.notificationRepository.create({
-        serviceOrderId: input.serviceOrder.id,
-        channel: 'WHATSAPP_INBOX',
-        messageType: input.messageType,
-        recipient: input.serviceOrder.clientSnapshotPhone ?? null,
-        body,
-        idempotencyKey: input.idempotencyKey,
-        status: 'QUEUED',
-      }),
-    );
-
-    const attempt = await this.attemptRepository.save(
-      this.attemptRepository.create({
-        notificationMessageId: notification.id,
-        status: 'QUEUED',
-        responsePayload: null,
-      }),
-    );
-
-    try {
-      const result = await this.inboxService.sendSystemMessageForOrder(input.serviceOrder.id, body);
-      notification.status = result.deliveryStatus;
-      attempt.status = result.deliveryStatus;
-      attempt.responsePayload = JSON.stringify(result);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
-      notification.status = 'FAILED';
-      attempt.status = 'FAILED';
-      attempt.responsePayload = JSON.stringify({ error: message });
-      this.logger.error(`Automatic message dispatch failed for order ${input.serviceOrder.id}: ${message}`);
-    }
-
-    await this.notificationRepository.save(notification);
-    await this.attemptRepository.save(attempt);
-  }
-
   private async dispatchBusinessNotification(input: DispatchBusinessNotificationInput): Promise<void> {
-    const hasWindow =
-      input.preferFreeTextWhenWindowOpen !== false &&
-      !!input.freeTextBody &&
-      (await this.inboxService.hasCustomerServiceWindow(input.serviceOrder.id));
-
-    if (hasWindow && input.freeTextBody) {
-      await this.dispatchMessage({
-        serviceOrder: input.serviceOrder,
-        idempotencyKey: input.idempotencyKey,
-        messageType: input.messageType,
-        body: input.freeTextBody,
-      });
-      return;
-    }
-
-    if (!input.template) {
-      if (input.freeTextBody) {
-        await this.dispatchMessage({
-          serviceOrder: input.serviceOrder,
-          idempotencyKey: input.idempotencyKey,
-          messageType: input.messageType,
-          body: input.freeTextBody,
-        });
-      }
-      return;
-    }
-
     await this.dispatchTemplateNotification(input.serviceOrder, input.idempotencyKey, input.messageType, input.template);
   }
 
@@ -471,11 +373,15 @@ export class ServiceOrderMessageMatrixService {
         channel: 'WHATSAPP_TEMPLATE',
         messageType,
         recipient,
-        body: `Template ${template.templateName}`,
+        body: null,
         idempotencyKey,
         status: 'QUEUED',
         scope: 'ORDER',
-        metadataJson: JSON.stringify({ templateName: template.templateName }),
+        metadataJson: JSON.stringify({
+          templateName: template.templateName,
+          languageCode: template.languageCode,
+          bodyParameters: template.bodyParameters,
+        }),
       }),
     );
 
@@ -532,10 +438,4 @@ export class ServiceOrderMessageMatrixService {
       .toLowerCase();
   }
 
-  private normalizeForMessage(value: string | null | undefined): string | null {
-    const normalized = String(value ?? '')
-      .trim()
-      .replace(/\s+/g, ' ');
-    return normalized || null;
-  }
 }

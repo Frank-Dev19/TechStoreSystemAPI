@@ -1,11 +1,13 @@
 import { ServiceOrderInboxController } from './service-order-inbox.controller';
 import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from './service-order-inbox.service';
+import { ServiceOrderInboxEventsService } from './service-order-inbox-events.service';
 
 describe('ServiceOrderInboxController', () => {
   let controller: ServiceOrderInboxController;
   let inboxService: jest.Mocked<ServiceOrderInboxService>;
   let channelService: jest.Mocked<ServiceOrderInboxChannelService>;
+  let eventsService: jest.Mocked<ServiceOrderInboxEventsService>;
 
   beforeEach(() => {
     inboxService = {
@@ -18,14 +20,19 @@ describe('ServiceOrderInboxController', () => {
       receiveInboundMessage: jest.fn(),
       updateDeliveryStatus: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    inboxService.updateDeliveryStatus.mockResolvedValue({ ok: true } as any);
 
     channelService = {
       verifyWebhookChallenge: jest.fn(),
       assertWebhookSignature: jest.fn(),
       normalizeWebhookPayload: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    eventsService = {
+      publishChanged: jest.fn(),
+      stream: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderInboxEventsService>;
 
-    controller = new ServiceOrderInboxController(inboxService, channelService);
+    controller = new ServiceOrderInboxController(inboxService, channelService, eventsService);
   });
 
   it('builds viewer context when listing threads', async () => {
@@ -48,6 +55,7 @@ describe('ServiceOrderInboxController', () => {
     await controller.sendMessage(15, { text: 'hola' } as any, files as any, { user: { id: 10 } });
 
     expect(inboxService.sendMessage).toHaveBeenCalledWith(15, { text: 'hola' }, files, viewer);
+    expect(eventsService.publishChanged).toHaveBeenCalled();
   });
 
   it('descarga adjunto seteando headers y sendFile', async () => {
@@ -98,6 +106,7 @@ describe('ServiceOrderInboxController', () => {
     expect(channelService.assertWebhookSignature).toHaveBeenCalledWith(Buffer.from('raw'), 'sha256=firma');
     expect(inboxService.receiveInboundMessage).toHaveBeenCalledWith({ externalMessageId: 'wamid-1' });
     expect(inboxService.updateDeliveryStatus).toHaveBeenCalledWith({ externalMessageId: 'wamid-1', status: 'delivered' });
+    expect(eventsService.publishChanged).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ ok: true, receivedMessages: 1, receivedStatuses: 1 });
   });
 

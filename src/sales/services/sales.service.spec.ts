@@ -14,6 +14,8 @@ import { ServiceOrderEconomicStatus } from 'src/service-orders/enums';
 import { ServiceOrderOperativeStatus } from 'src/service-orders/enums/service-order-operative-status.enum';
 import { ServiceOrderTechnicalStatus } from 'src/service-orders/enums/service-order-technical-status.enum';
 import { ClientKind } from 'src/clients/entities/client-kind.enum';
+import { Sale } from '../entities/sale.entity';
+import { SaleStatus } from '../enums/sale-status.enum';
 
 type MockRepo = {
   findOne: jest.Mock;
@@ -135,6 +137,74 @@ describe('SalesService', () => {
         'tester',
       ),
     ).rejects.toThrow('Las ventas manuales solo admiten productos');
+  });
+
+  it('cancela una venta y revierte inventario, caja y vínculos en una sola transacción', async () => {
+    const sale = {
+      id: 77,
+      status: SaleStatus.CONFIRMED,
+      cashRegisterId: 3,
+      series: 'B001',
+      number: '000077',
+    } as Sale;
+    const link = { id: 90, saleId: 77, serviceOrderId: 8 } as ServiceOrderSaleLink;
+    const manager = {
+      findOne: jest.fn().mockImplementation(async (entity) => {
+        if (entity === Sale) return sale;
+        return null;
+      }),
+      find: jest.fn().mockImplementation(async (entity) => {
+        if (entity === ServiceOrderSaleLink) return [link];
+        return [];
+      }),
+      softDelete: jest.fn().mockResolvedValue({ affected: 1 }),
+      save: jest.fn().mockImplementation(async (_entity, value) => value),
+    };
+    const queryRunner = {
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+      isTransactionActive: true,
+      manager,
+    };
+    dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
+    salesInventory.registerSaleCancellationMovement = jest.fn().mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'reverseSaleCashEffects').mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'recomputeServiceOrderEconomicState').mockResolvedValue(undefined);
+
+    const result = await service.cancel(77, { reason: 'Error de emisión' } as any, 'tester');
+
+    expect(salesInventory.registerSaleCancellationMovement).toHaveBeenCalledWith(77, 'tester', manager);
+    expect(manager.softDelete).toHaveBeenCalled();
+    expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    expect(result.status).toBe(SaleStatus.CANCELLED);
+  });
+
+  it('mantiene idempotencia cuando la venta ya fue cancelada', async () => {
+    const cancelled = { id: 77, status: SaleStatus.CANCELLED } as Sale;
+    const manager = {
+      findOne: jest.fn().mockResolvedValue(cancelled),
+    };
+    const queryRunner = {
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+      isTransactionActive: true,
+      manager,
+    };
+    dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
+    salesInventory.registerSaleCancellationMovement = jest.fn();
+
+    const result = await service.cancel(77, { reason: 'Repetida' } as any, 'tester');
+
+    expect(result).toBe(cancelled);
+    expect(salesInventory.registerSaleCancellationMovement).not.toHaveBeenCalled();
+    expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+    expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
   });
 
   it('crea ventas desde orden usando el último acuerdo confirmado y autoliga el comprobante', async () => {

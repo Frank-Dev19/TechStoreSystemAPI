@@ -11,6 +11,7 @@ import {
   Query,
   Req,
   Res,
+  Sse,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -31,6 +32,7 @@ import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.s
 import { ServiceOrderInboxService } from './service-order-inbox.service';
 import { ServiceOrderInboxQueryDto } from './dto/service-order-inbox-query.dto';
 import { SendServiceOrderInboxMessageDto } from './dto/send-service-order-inbox-message.dto';
+import { ServiceOrderInboxEventsService } from './service-order-inbox-events.service';
 
 @Controller('service-orders/inbox')
 export class ServiceOrderInboxController {
@@ -39,7 +41,16 @@ export class ServiceOrderInboxController {
   constructor(
     private readonly inboxService: ServiceOrderInboxService,
     private readonly channelService: ServiceOrderInboxChannelService,
+    private readonly eventsService: ServiceOrderInboxEventsService,
   ) {}
+
+  @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @Permissions('service-order-inbox.read')
+  @Sse('events')
+  streamEvents() {
+    return this.eventsService.stream();
+  }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
   @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -78,18 +89,20 @@ export class ServiceOrderInboxController {
   @Permissions('service-order-inbox.send')
   @Post('threads/:id/messages')
   @UseInterceptors(FilesInterceptor('attachments', 5))
-  sendMessage(
+  async sendMessage(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SendServiceOrderInboxMessageDto,
     @UploadedFiles() files: Array<Record<string, any>>,
     @Req() req: any,
   ) {
-    return this.inboxService.sendMessage(
+    const message = await this.inboxService.sendMessage(
       id,
       dto,
       (files ?? []) as Array<{ originalname: string; mimetype: string; size: number; buffer: Buffer }>,
       this.inboxService.buildViewerContext(req.user),
     );
+    this.eventsService.publishChanged();
+    return message;
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
@@ -131,6 +144,7 @@ export class ServiceOrderInboxController {
     for (const message of normalizedPayload.messages) {
       try {
         await this.inboxService.receiveInboundMessage(message);
+        this.eventsService.publishChanged();
       } catch (error) {
         firstMessageError ??= error;
         this.logger.warn(
@@ -140,7 +154,10 @@ export class ServiceOrderInboxController {
     }
 
     for (const status of normalizedPayload.statuses) {
-      await this.inboxService.updateDeliveryStatus(status);
+      const result = await this.inboxService.updateDeliveryStatus(status);
+      if (result.ok) {
+        this.eventsService.publishChanged();
+      }
     }
 
     if (firstMessageError) {

@@ -167,37 +167,40 @@ export class ServiceOrderWorkflowService {
     actorId?: number,
     viewer?: ServiceOrderViewer,
   ): Promise<ServiceOrder> {
-    const serviceOrder = await this.findOrder(serviceOrderId);
-    this.ensureViewerCanManageOrder(serviceOrder, viewer);
     await this.ensureTechnician(dto.technicianId);
+    return this.serviceOrderRepository.manager.transaction(async (manager) => {
+      const serviceOrder = await this.findOrder(serviceOrderId, manager, true);
+      this.ensureViewerCanManageOrder(serviceOrder, viewer);
+      const previousTechnicianId = serviceOrder.assignedToTechnicianId;
+      const previousTechnicalStatus = serviceOrder.technicalStatus;
+      if (previousTechnicianId === dto.technicianId) {
+        return serviceOrder;
+      }
 
-    const previousTechnicianId = serviceOrder.assignedToTechnicianId;
-    if (previousTechnicianId === dto.technicianId) {
-      return this.findOrder(serviceOrderId);
-    }
+      const assignedAt = new Date();
+      serviceOrder.assignedToTechnicianId = dto.technicianId;
+      serviceOrder.assignedAt = assignedAt;
+      serviceOrder.technicalStatus = ServiceOrderTechnicalStatus.ASIGNADA;
+      await manager.getRepository(ServiceOrder).save(serviceOrder);
 
-    const assignedAt = new Date();
-    await this.serviceOrderRepository.update(
-      { id: serviceOrderId },
-      {
-        assignedToTechnicianId: dto.technicianId,
-        assignedAt,
-        technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
-      },
-    );
-
-    if (previousTechnicianId && !this.isTerminalTechnical(serviceOrder.technicalStatus)) {
-      await this.adjustTechnicianBalance(previousTechnicianId, serviceOrder.serviceType, 0, -1);
-    }
-    await this.adjustTechnicianBalance(dto.technicianId, serviceOrder.serviceType, 1, 1, assignedAt);
-
-    await this.recordEvent(serviceOrder.id, 'assigned', 'tecnico', 'assignment', null, ServiceOrderTechnicalStatus.ASIGNADA, actorId, null, {
-      technicianId: dto.technicianId,
-      previousTechnicianId,
+      if (previousTechnicianId && !this.isTerminalTechnical(previousTechnicalStatus)) {
+        await this.adjustTechnicianBalance(previousTechnicianId, serviceOrder.serviceType, 0, -1, undefined, manager);
+      }
+      await this.adjustTechnicianBalance(dto.technicianId, serviceOrder.serviceType, 1, 1, assignedAt, manager);
+      await this.recordEvent(
+        serviceOrder.id,
+        'assigned',
+        'tecnico',
+        'assignment',
+        null,
+        ServiceOrderTechnicalStatus.ASIGNADA,
+        actorId,
+        null,
+        { technicianId: dto.technicianId, previousTechnicianId },
+        manager,
+      );
+      return this.findOrder(serviceOrderId, manager);
     });
-    const updatedOrder = await this.findOrder(serviceOrderId);
-
-    return updatedOrder;
   }
 
   async changeTechnicalStatus(
@@ -206,46 +209,51 @@ export class ServiceOrderWorkflowService {
     actorId?: number,
     reason?: string,
     viewer?: ServiceOrderViewer,
+    transactionManager?: EntityManager,
   ): Promise<ServiceOrder> {
-    const serviceOrder = await this.findOrder(serviceOrderId);
-    this.ensureViewerCanManageOrder(serviceOrder, viewer);
-    const previousTechnicalStatus = serviceOrder.technicalStatus;
+    const execute = async (manager: EntityManager) => {
+      const serviceOrder = await this.findOrder(serviceOrderId, manager, true);
+      this.ensureViewerCanManageOrder(serviceOrder, viewer);
+      const previousTechnicalStatus = serviceOrder.technicalStatus;
+      this.transitionPolicy.assertTransition('tecnico', previousTechnicalStatus, nextStatus);
 
-    this.transitionPolicy.assertTransition('tecnico', previousTechnicalStatus, nextStatus);
+      const now = new Date();
+      serviceOrder.technicalStatus = nextStatus;
+      this.applyCanonicalStatusesFromTechnicalTransition(serviceOrder, nextStatus, reason, now);
+      this.applyLifecycleTimestamps(serviceOrder, nextStatus, reason, now);
+      await manager.getRepository(ServiceOrder).save(serviceOrder);
 
-    const now = new Date();
-    serviceOrder.technicalStatus = nextStatus;
-    this.applyCanonicalStatusesFromTechnicalTransition(serviceOrder, nextStatus, reason, now);
-    this.applyLifecycleTimestamps(serviceOrder, nextStatus, reason, now);
-
-    await this.serviceOrderRepository.save(serviceOrder);
-
-    if (serviceOrder.assignedToTechnicianId) {
-      const movedToTerminal = !this.isTerminalTechnical(previousTechnicalStatus) && this.isTerminalTechnical(nextStatus);
-      const movedOutOfTerminal = this.isTerminalTechnical(previousTechnicalStatus) && !this.isTerminalTechnical(nextStatus);
-
-      if (movedToTerminal) {
-        await this.adjustTechnicianBalance(serviceOrder.assignedToTechnicianId, serviceOrder.serviceType, 0, -1);
-      } else if (movedOutOfTerminal) {
-        await this.adjustTechnicianBalance(serviceOrder.assignedToTechnicianId, serviceOrder.serviceType, 0, 1);
+      if (serviceOrder.assignedToTechnicianId) {
+        const movedToTerminal = !this.isTerminalTechnical(previousTechnicalStatus) && this.isTerminalTechnical(nextStatus);
+        const movedOutOfTerminal = this.isTerminalTechnical(previousTechnicalStatus) && !this.isTerminalTechnical(nextStatus);
+        if (movedToTerminal) {
+          await this.adjustTechnicianBalance(serviceOrder.assignedToTechnicianId, serviceOrder.serviceType, 0, -1, undefined, manager);
+        } else if (movedOutOfTerminal) {
+          await this.adjustTechnicianBalance(serviceOrder.assignedToTechnicianId, serviceOrder.serviceType, 0, 1, undefined, manager);
+        }
       }
+
+      await this.recordEvent(
+        serviceOrder.id,
+        'technical.changed',
+        'tecnico',
+        'workflow',
+        previousTechnicalStatus,
+        nextStatus,
+        actorId,
+        reason,
+        null,
+        manager,
+      );
+      return this.findOrder(serviceOrderId, manager);
+    };
+
+    const updatedOrder = transactionManager
+      ? await execute(transactionManager)
+      : await this.serviceOrderRepository.manager.transaction(execute);
+    if (!transactionManager) {
+      await this.messageMatrixService.notifyWorkflowTransition(updatedOrder, nextStatus);
     }
-
-    await this.recordEvent(
-      serviceOrder.id,
-      'technical.changed',
-      'tecnico',
-      'workflow',
-      previousTechnicalStatus,
-      nextStatus,
-      actorId,
-      reason,
-      null,
-    );
-
-    const updatedOrder = await this.findOrder(serviceOrderId);
-    await this.messageMatrixService.notifyWorkflowTransition(updatedOrder, nextStatus);
-
     return updatedOrder;
   }
 
@@ -277,10 +285,12 @@ export class ServiceOrderWorkflowService {
     );
   }
 
-  private async findOrder(id: number): Promise<ServiceOrder> {
-    const serviceOrder = await this.serviceOrderRepository.findOne({
+  private async findOrder(id: number, manager?: EntityManager, lock = false): Promise<ServiceOrder> {
+    const repository = manager?.getRepository(ServiceOrder) ?? this.serviceOrderRepository;
+    const serviceOrder = await repository.findOne({
       where: { id },
       relations: ['assignedTechnician'],
+      ...(lock ? { lock: { mode: 'pessimistic_write' as const } } : {}),
     });
     if (!serviceOrder) {
       throw new NotFoundException(`ServiceOrder with id ${id} not found`);

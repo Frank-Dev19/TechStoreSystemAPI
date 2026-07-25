@@ -24,13 +24,14 @@ import { ServiceOrderInboxThreadOrderLink } from './inbox/entities/service-order
 import { ServiceOrderInboxChannelService } from './inbox/service-order-inbox-channel.service';
 import { ServiceOrderInboxBackfillService } from './inbox/service-order-inbox-backfill.service';
 import { ServiceOrderInboxService } from './inbox/service-order-inbox.service';
+import { ServiceOrderInboxEventsService } from './inbox/service-order-inbox-events.service';
+import { PrivateFileStorageService } from './storage/private-file-storage.service';
 import { ServiceOrderAgreement } from './service-agreements/entities/service-agreement.entity';
 import { TechnicianAssignmentBalance } from './entities/technician-assignment-balance.entity';
 import { Sale } from '../sales/entities/sale.entity';
 import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
 import { ServiceOrderMessageMatrixService } from './services/service-order-message-matrix.service';
 import { ServiceOrderMetricsFactory } from './services/service-order-metrics.factory';
-import { ServiceOrderNotificationService } from './services/service-order-notification.service';
 import { ServiceOrderSaleLinkService } from './services/service-order-sale-link.service';
 import { ServiceOrderService } from './services/service-order.service';
 import { ServiceOrderSlaStageResolverService } from './services/service-order-sla-stage.resolver';
@@ -78,8 +79,9 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderDiagnosisService,
     ServiceOrderSaleLinkService,
     ServiceOrderMessageMatrixService,
-    ServiceOrderNotificationService,
     ServiceOrderInboxService,
+    ServiceOrderInboxEventsService,
+    PrivateFileStorageService,
     ServiceOrderInboxBackfillService,
     ServiceOrderInboxChannelService,
     ServiceOrderWhatsAppTemplateService,
@@ -92,7 +94,6 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderDiagnosisService,
     ServiceOrderSaleLinkService,
     ServiceOrderMessageMatrixService,
-    ServiceOrderNotificationService,
     ServiceOrderInboxService,
     ServiceOrderWhatsAppTemplateService,
     ServiceOrderTempDocumentsService,

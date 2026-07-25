@@ -139,6 +139,20 @@ export class ServiceOrderWhatsAppTemplateService {
     );
   }
 
+  buildSurveyRequestTemplate(input: SingleOrderTemplateInput): WhatsAppTemplateDispatch | null {
+    const templateName = this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_NAME')?.trim();
+    if (!templateName) {
+      return null;
+    }
+
+    return this.buildTemplate(
+      templateName,
+      this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_LANGUAGE') || 'es',
+      [input.clientName, input.orderCode, input.equipmentLabel],
+      input.quickReplyPayloads,
+    );
+  }
+
   private buildTemplate(
     templateName: string,
     languageCode: string,

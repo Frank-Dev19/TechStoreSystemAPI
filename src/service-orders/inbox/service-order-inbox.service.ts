@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
 import { promises as fs } from 'fs';
-import { basename, extname, join, resolve } from 'path';
+import { basename, extname, resolve } from 'path';
 import { randomUUID } from 'crypto';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderOperativeStatus } from '../enums';
@@ -42,6 +42,7 @@ import {
   ServiceOrderInboxDirection,
   ServiceOrderInboxViewerRole,
 } from './service-order-inbox.types';
+import { PrivateFileStorageService } from '../storage/private-file-storage.service';
 
 type InboxViewerContext = {
   userId: number | null;
@@ -111,6 +112,7 @@ export class ServiceOrderInboxService {
     @InjectRepository(ServiceOrder)
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     private readonly channelService: ServiceOrderInboxChannelService,
+    private readonly privateFileStorage: PrivateFileStorageService,
   ) {}
 
   buildViewerContext(user: any): InboxViewerContext {
@@ -606,99 +608,6 @@ export class ServiceOrderInboxService {
     return { ok: true };
   }
 
-  async sendSystemMessageForOrder(serviceOrderId: number, text: string) {
-    const normalizedText = text.trim();
-    if (!normalizedText) {
-      throw new BadRequestException('El mensaje automatico no puede estar vacio');
-    }
-
-    const systemViewer: InboxViewerContext = {
-      role: 'SUPERVISOR',
-      userId: null,
-      displayName: 'Sistema',
-    };
-    const thread = await this.ensureThreadForOrder(serviceOrderId, systemViewer);
-    const primaryServiceOrderId = this.resolvePrimaryServiceOrderId(thread) ?? serviceOrderId;
-    const message = await this.messageRepository.save(
-      this.messageRepository.create({
-        threadId: thread.id,
-        direction: ServiceOrderInboxDirection.OUTBOUND,
-        authorRole: ServiceOrderInboxAuthorRole.SYSTEM,
-        authorUserId: null,
-        authorDisplayName: 'Sistema',
-        text: normalizedText,
-        deliveryStatus: ServiceOrderInboxDeliveryStatus.QUEUED,
-      }),
-    );
-    await this.associateMessageWithOrders(message.id, [serviceOrderId]);
-
-    if (!thread.clientPhoneSnapshot) {
-      const dispatchResult = {
-        status: ServiceOrderInboxDeliveryStatus.SKIPPED,
-        providerPayload: { reason: 'missing-client-phone' },
-      };
-      await this.finalizeOutboundMessage(thread, message, dispatchResult, {
-        incrementReceptionUnread: this.hasActiveOrders(thread),
-        incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
-        incrementSupervisorUnread: true,
-      });
-
-      return this.mapMessage(
-        (await this.messageRepository.findOne({
-          where: { id: message.id },
-          relations: ['attachments'],
-        })) ?? message,
-      );
-    }
-
-    try {
-      const dispatchResult = await this.channelService.dispatchTextMessage({
-        threadId: thread.id,
-        serviceOrderId: primaryServiceOrderId,
-        contextToken: thread.externalThreadKey,
-        clientPhone: thread.clientPhoneSnapshot,
-        text: normalizedText,
-        authorRole: ServiceOrderInboxAuthorRole.SYSTEM,
-        authorDisplayName: 'Sistema',
-        attachments: [],
-      });
-
-      await this.finalizeOutboundMessage(thread, message, dispatchResult, {
-        incrementReceptionUnread: this.hasActiveOrders(thread),
-        incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
-        incrementSupervisorUnread: true,
-      });
-    } catch (error) {
-      await this.finalizeOutboundMessage(
-        thread,
-        message,
-        {
-          status: ServiceOrderInboxDeliveryStatus.FAILED,
-          providerPayload: {
-            error: error instanceof Error ? error.message : 'dispatch-failed',
-          },
-        },
-        {
-          incrementReceptionUnread: this.hasActiveOrders(thread),
-          incrementTechnicianUnread: this.hasTechnicianVisibleActiveOrders(thread),
-          incrementSupervisorUnread: true,
-        },
-      );
-      throw error;
-    }
-
-    const savedMessage = await this.messageRepository.findOne({
-      where: { id: message.id },
-      relations: ['attachments'],
-    });
-
-    if (!savedMessage) {
-      throw new NotFoundException('No se pudo recuperar el mensaje automatico');
-    }
-
-    return this.mapMessage(savedMessage);
-  }
-
   async downloadAttachment(attachmentId: number, viewer: InboxViewerContext) {
     const attachment = await this.attachmentRepository.findOne({
       where: { id: attachmentId },
@@ -1155,7 +1064,10 @@ export class ServiceOrderInboxService {
       technicalStatus: primaryOrder?.technicalStatus ?? null,
       commercialStatus: primaryOrder?.commercialStatus ?? null,
       economicStatus: primaryOrder?.economicStatus ?? null,
-      clientPhone: thread.clientPhoneSnapshot,
+      clientPhone:
+        viewer.role === 'SUPERVISOR' || viewer.role === 'ADMIN'
+          ? thread.clientPhoneSnapshot
+          : null,
       lastMessageText: lastMessageSummary.lastMessageText,
       lastMessageAt: lastMessageSummary.lastMessageAt,
       lastCustomerMessageAt: lastMessageSummary.lastCustomerMessageAt,
@@ -1667,12 +1579,8 @@ export class ServiceOrderInboxService {
     attachmentType: ServiceOrderInboxAttachmentType,
     buffer: Buffer,
   ) {
-    const folder = join(process.cwd(), 'storage', 'service-order-inbox', String(threadId));
-    await fs.mkdir(folder, { recursive: true });
     const safeName = this.normalizeAttachmentFileName(fileName, attachmentType);
-    const absolutePath = join(folder, `${randomUUID()}-${safeName}`);
-    await fs.writeFile(absolutePath, buffer);
-    return { absolutePath };
+    return this.privateFileStorage.store('service-order-inbox', [String(threadId)], safeName, buffer);
   }
 
   private buildAttachmentDownloadPath(id: number): string {

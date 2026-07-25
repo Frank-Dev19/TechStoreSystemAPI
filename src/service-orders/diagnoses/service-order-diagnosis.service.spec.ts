@@ -73,12 +73,14 @@ describe('ServiceOrderDiagnosisService', () => {
 
     diagnosisRepository.manager.transaction.mockImplementation(async (callback) =>
       callback({
-        getRepository: jest.fn(() => transactionRepository),
+        getRepository: jest.fn((entity) =>
+          entity === ServiceOrder ? serviceOrderRepository : transactionRepository,
+        ),
       }),
     );
 
     workflowService = {
-      changeTechnicalStatus: jest.fn(),
+      changeTechnicalStatus: jest.fn().mockImplementation(async () => serviceOrderRepository.findOne()),
     } as unknown as jest.Mocked<ServiceOrderWorkflowService>;
 
     messageMatrixService = {
@@ -105,7 +107,7 @@ describe('ServiceOrderDiagnosisService', () => {
       summary: 'Requiere cambio de fuente',
     } as ServiceOrderDiagnosis;
 
-    diagnosisRepository.findOne.mockResolvedValue(previousDiagnosis);
+    transactionRepository.findOne.mockResolvedValue(previousDiagnosis);
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
 
     const updateQueryBuilder = createUpdateQueryBuilder();
@@ -122,6 +124,10 @@ describe('ServiceOrderDiagnosisService', () => {
     expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
       serviceOrder.id,
       ServiceOrderTechnicalStatus.DIAGNOSTICADA,
+      undefined,
+      undefined,
+      undefined,
+      expect.anything(),
     );
     expect(serviceOrderRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -152,7 +158,7 @@ describe('ServiceOrderDiagnosisService', () => {
       summary: 'Fallo adicional detectado',
     } as ServiceOrderDiagnosis;
 
-    diagnosisRepository.findOne.mockResolvedValue(previousDiagnosis);
+    transactionRepository.findOne.mockResolvedValue(previousDiagnosis);
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
 
     const updateQueryBuilder = createUpdateQueryBuilder();
@@ -169,6 +175,10 @@ describe('ServiceOrderDiagnosisService', () => {
     expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
       serviceOrder.id,
       ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL,
+      undefined,
+      undefined,
+      undefined,
+      expect.anything(),
     );
     expect(serviceOrderRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -207,6 +217,10 @@ describe('ServiceOrderDiagnosisService', () => {
     expect(workflowService.changeTechnicalStatus).toHaveBeenCalledWith(
       serviceOrder.id,
       ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      undefined,
+      undefined,
+      undefined,
+      expect.anything(),
     );
     expect(serviceOrderRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -232,7 +246,7 @@ describe('ServiceOrderDiagnosisService', () => {
       }),
     ).rejects.toThrow(BadRequestException);
 
-    expect(diagnosisRepository.manager.transaction).not.toHaveBeenCalled();
+    expect(diagnosisRepository.manager.transaction).toHaveBeenCalled();
     expect(workflowService.changeTechnicalStatus).not.toHaveBeenCalled();
     expect(serviceOrderRepository.save).not.toHaveBeenCalled();
   });
@@ -252,7 +266,7 @@ describe('ServiceOrderDiagnosisService', () => {
       ),
     ).rejects.toThrow(ForbiddenException);
 
-    expect(diagnosisRepository.manager.transaction).not.toHaveBeenCalled();
+    expect(diagnosisRepository.manager.transaction).toHaveBeenCalled();
   });
 
   it('permite que recepción con rol técnico adicional cree diagnósticos para órdenes ajenas', async () => {
