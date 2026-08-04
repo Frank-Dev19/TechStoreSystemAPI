@@ -42,10 +42,10 @@ describe('ServiceOrderDiagnosisController', () => {
     service.create.mockResolvedValue({ id: 12 } as any);
     service.update.mockResolvedValue({ id: 12 } as any);
 
-    await controller.create({ serviceOrderId: 8, diagnosticSummary: 'placa dañada' } as any, { user: { sub: 22 } });
+    await controller.create({ serviceOrderItemId: 81, diagnosticSummary: 'placa dañada' } as any, { user: { sub: 22 } });
     await controller.update(12, { recommendedSolution: 'cambio de placa' } as any, { user: { sub: 22 } });
 
-    expect(service.create).toHaveBeenCalledWith(expect.objectContaining({ serviceOrderId: 8 }), { sub: 22 });
+    expect(service.create).toHaveBeenCalledWith(expect.objectContaining({ serviceOrderItemId: 81 }), { sub: 22 });
     expect(service.update).toHaveBeenCalledWith(12, expect.objectContaining({ recommendedSolution: 'cambio de placa' }), { sub: 22 });
   });
 

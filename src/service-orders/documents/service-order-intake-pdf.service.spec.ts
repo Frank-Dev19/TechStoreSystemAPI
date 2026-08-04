@@ -138,6 +138,53 @@ describe('ServiceOrderIntakePdfService', () => {
     expect(buffer.subarray(0, 4).toString()).toBe('%PDF');
   });
 
+  it('renderiza todos los equipos de una orden en orden de posición', async () => {
+    const drawItemSpy = jest.spyOn<any, any>(service as any, 'drawSingleOrderItemCard');
+
+    const buffer = await service.generateSingleOrderSummaryBuffer({
+      code: 'SO-02-08-2026-0001',
+      createdAt: new Date('2026-08-02T15:40:00.000Z'),
+      operativeStatus: 'ABIERTA',
+      serviceType: 'DIAGNOSIS',
+      clientName: 'Sergio Ávila',
+      clientDocument: 'DNI: 12345678',
+      clientPhone: '+51932998578',
+      clientEmail: null,
+      items: [
+        {
+          position: 2,
+          code: 'SO-02-08-2026-0001-02',
+          priority: 'HIGH',
+          equipmentType: 'PRINTER',
+          brand: 'Epson',
+          model: 'L4260',
+          serialNumber: 'EP-002',
+          accessories: 'Cable de poder',
+          notes: null,
+          initialIssue: 'Atasca papel',
+        },
+        {
+          position: 1,
+          code: 'SO-02-08-2026-0001-01',
+          priority: 'LOW',
+          equipmentType: 'LAPTOP',
+          brand: 'Lenovo',
+          model: 'T14',
+          serialNumber: 'LN-001',
+          accessories: 'Cargador',
+          notes: 'Carcasa marcada',
+          initialIssue: 'No enciende',
+        },
+      ],
+    });
+
+    expect(buffer.subarray(0, 4).toString()).toBe('%PDF');
+    expect(drawItemSpy.mock.calls.map((call) => (call[1] as { code: string }).code)).toEqual([
+      'SO-02-08-2026-0001-01',
+      'SO-02-08-2026-0001-02',
+    ]);
+  });
+
   it('no genera páginas en blanco extra en el resumen single', async () => {
     const buffer = await service.generateSingleOrderSummaryBuffer({
       code: 'SO202605200002',

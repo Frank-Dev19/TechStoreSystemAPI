@@ -30,6 +30,20 @@ export type GenerateSingleOrderSummaryPdfInput = {
   clientDocument: string | null;
   clientPhone: string | null;
   clientEmail?: string | null;
+  items?: GenerateSingleOrderSummaryPdfItem[];
+  equipmentType?: string;
+  brand?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+  accessories?: string | null;
+  notes?: string | null;
+  initialIssue?: string;
+};
+
+export type GenerateSingleOrderSummaryPdfItem = {
+  position: number;
+  code: string;
+  priority: string;
   equipmentType: string;
   brand: string | null;
   model: string | null;
@@ -208,24 +222,17 @@ export class ServiceOrderIntakePdfService {
     let cursorY = this.drawHeader(document, input.createdAt, 'Resumen de orden de servicio');
 
     cursorY = this.drawSingleOrderOverview(document, input, cursorY);
-    cursorY = this.ensureSectionSpace(
-      document,
-      cursorY,
-      this.measureSingleOrderEquipmentCardHeight(document, input),
-      input.createdAt,
-      'Resumen de orden de servicio',
-    );
-    cursorY = this.drawSingleOrderEquipmentCard(document, input, cursorY);
-
-    const initialDetailHeight = this.measureTextSectionHeight(document, 'Detalle inicial', input.initialIssue);
-    cursorY = this.ensureSectionSpace(
-      document,
-      cursorY,
-      initialDetailHeight,
-      input.createdAt,
-      'Resumen de orden de servicio',
-    );
-    cursorY = this.drawTextSectionCard(document, 'Detalle inicial', input.initialIssue, cursorY);
+    const items = this.resolveSingleOrderItems(input);
+    items.forEach((item, index) => {
+      cursorY = this.ensureSectionSpace(
+        document,
+        cursorY,
+        this.measureSingleOrderItemCardHeight(document, item, index),
+        input.createdAt,
+        'Resumen de orden de servicio',
+      );
+      cursorY = this.drawSingleOrderItemCard(document, item, index, cursorY);
+    });
 
     const termsHeight = this.measureTermsSectionHeight(document);
     cursorY = this.ensureSectionSpace(
@@ -357,21 +364,25 @@ export class ServiceOrderIntakePdfService {
     return boxY + boxHeight + SECTION_GAP;
   }
 
-  private drawSingleOrderEquipmentCard(
+  private drawSingleOrderItemCard(
     document: PdfDocumentInstance,
-    input: GenerateSingleOrderSummaryPdfInput,
+    item: GenerateSingleOrderSummaryPdfItem,
+    index: number,
     startY: number,
   ): number {
     const equipmentFields = [
-      { label: 'Tipo', value: this.formatEquipmentType(input.equipmentType) },
-      { label: 'Marca', value: input.brand?.trim() || 'No especificada' },
-      { label: 'Modelo', value: input.model?.trim() || 'No especificado' },
-      { label: 'Serie / identificador', value: input.serialNumber?.trim() || 'No especificada' },
-      { label: 'Accesorios', value: input.accessories?.trim() || 'Sin accesorios' },
-      { label: 'Notas u observaciones', value: input.notes?.trim() || 'Sin notas' },
+      { label: 'Código del equipo', value: item.code },
+      { label: 'Prioridad', value: this.formatPriority(item.priority) },
+      { label: 'Tipo', value: this.formatEquipmentType(item.equipmentType) },
+      { label: 'Marca', value: item.brand?.trim() || 'No especificada' },
+      { label: 'Modelo', value: item.model?.trim() || 'No especificado' },
+      { label: 'Serie / identificador', value: item.serialNumber?.trim() || 'No especificada' },
+      { label: 'Accesorios', value: item.accessories?.trim() || 'Sin accesorios' },
+      { label: 'Falla o solicitud reportada', value: item.initialIssue },
+      { label: 'Notas u observaciones', value: item.notes?.trim() || 'Sin notas' },
     ];
 
-    return this.drawFieldCard(document, 'Equipo', equipmentFields, startY);
+    return this.drawFieldCard(document, `Equipo ${index + 1}`, equipmentFields, startY);
   }
 
   private drawTextSectionCard(
@@ -624,27 +635,32 @@ export class ServiceOrderIntakePdfService {
     return ORDER_CARD_PADDING * 2 + titleHeight + 12 + Math.max(leftHeight, rightHeight);
   }
 
-  private measureSingleOrderEquipmentCardHeight(
+  private measureSingleOrderItemCardHeight(
     document: PdfDocumentInstance,
-    input: GenerateSingleOrderSummaryPdfInput,
+    item: GenerateSingleOrderSummaryPdfItem,
+    index: number,
   ): number {
     return this.measureFieldCardHeight(document, [
-      { label: 'Tipo', value: this.formatEquipmentType(input.equipmentType) },
-      { label: 'Marca', value: input.brand?.trim() || 'No especificada' },
-      { label: 'Modelo', value: input.model?.trim() || 'No especificado' },
-      { label: 'Serie / identificador', value: input.serialNumber?.trim() || 'No especificada' },
-      { label: 'Accesorios', value: input.accessories?.trim() || 'Sin accesorios' },
-      { label: 'Notas u observaciones', value: input.notes?.trim() || 'Sin notas' },
-    ]);
+      { label: 'Código del equipo', value: item.code },
+      { label: 'Prioridad', value: this.formatPriority(item.priority) },
+      { label: 'Tipo', value: this.formatEquipmentType(item.equipmentType) },
+      { label: 'Marca', value: item.brand?.trim() || 'No especificada' },
+      { label: 'Modelo', value: item.model?.trim() || 'No especificado' },
+      { label: 'Serie / identificador', value: item.serialNumber?.trim() || 'No especificada' },
+      { label: 'Accesorios', value: item.accessories?.trim() || 'Sin accesorios' },
+      { label: 'Falla o solicitud reportada', value: item.initialIssue },
+      { label: 'Notas u observaciones', value: item.notes?.trim() || 'Sin notas' },
+    ], `Equipo ${index + 1}`);
   }
 
   private measureFieldCardHeight(
     document: PdfDocumentInstance,
     fields: Array<{ label: string; value: string }>,
+    title = 'Equipo',
   ): number {
     const cardWidth = this.getContentWidth(document);
     const innerWidth = cardWidth - ORDER_CARD_ACCENT_WIDTH - ORDER_CARD_PADDING * 2;
-    const titleHeight = this.measureTextHeight(document, 'Helvetica-Bold', 14, 'Equipo', innerWidth);
+    const titleHeight = this.measureTextHeight(document, 'Helvetica-Bold', 14, title, innerWidth);
     const columnWidth = (innerWidth - COLUMN_GAP) / 2;
     const midpoint = Math.ceil(fields.length / 2);
     const leftHeight = this.measureColumnHeight(document, columnWidth, fields.slice(0, midpoint));
@@ -799,6 +815,31 @@ export class ServiceOrderIntakePdfService {
 
   private formatEquipmentType(value: string): string {
     return EQUIPMENT_TYPE_LABELS[value] || value;
+  }
+
+  private formatPriority(value: string): string {
+    const labels: Record<string, string> = { LOW: 'Baja', MEDIUM: 'Media', HIGH: 'Alta' };
+    return labels[value] || value;
+  }
+
+  private resolveSingleOrderItems(input: GenerateSingleOrderSummaryPdfInput): GenerateSingleOrderSummaryPdfItem[] {
+    if (input.items?.length) {
+      return [...input.items].sort((left, right) => left.position - right.position || left.code.localeCompare(right.code));
+    }
+    return [
+      {
+        position: 1,
+        code: input.code,
+        priority: 'LOW',
+        equipmentType: input.equipmentType ?? 'OTHER',
+        brand: input.brand ?? null,
+        model: input.model ?? null,
+        serialNumber: input.serialNumber ?? null,
+        accessories: input.accessories ?? null,
+        notes: input.notes ?? null,
+        initialIssue: input.initialIssue ?? 'Sin detalle',
+      },
+    ];
   }
 }
 

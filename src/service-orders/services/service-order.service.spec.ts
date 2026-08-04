@@ -8,6 +8,7 @@ import { ServiceOrderTempDocumentsService } from '../documents/service-order-tem
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import {
   EquipmentType,
   RequestOrigin,
@@ -193,6 +194,7 @@ describe('ServiceOrderService', () => {
         absolutePath: 'C:/tmp/resumen-ordenes.pdf',
         mimeType: 'application/pdf',
       }),
+      generateSingleOrderSummaryBuffer: jest.fn().mockResolvedValue(Buffer.from('%PDF-test')),
     } as unknown as jest.Mocked<ServiceOrderIntakePdfService>;
 
     configService = {
@@ -1116,6 +1118,92 @@ describe('ServiceOrderService', () => {
     expect(queryBuilder.andWhere).toHaveBeenCalledWith('serviceOrder.economicStatus IN (:...economicStatuses)', {
       economicStatuses: [ServiceOrderEconomicStatus.PENDIENTE],
     });
+    expect(queryBuilder.leftJoinAndSelect).toHaveBeenCalledWith('serviceOrder.items', 'items');
+  });
+
+  it('devuelve un resumen de equipos en cada cabecera listada', async () => {
+    const order = createServiceOrder({
+      items: [
+        {
+          id: 12,
+          position: 2,
+          code: 'SO-02-08-2026-0001-02',
+          technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+          operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
+        },
+        {
+          id: 11,
+          position: 1,
+          code: 'SO-02-08-2026-0001-01',
+          technicalStatus: ServiceOrderTechnicalStatus.RESUELTA,
+          operativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+        },
+      ] as ServiceOrderItem[],
+    });
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      withDeleted: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      setParameter: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[order], 1]),
+    };
+    serviceOrderRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    const result = await service.findAll({ page: 1, limit: 10 });
+
+    expect(result.data[0].itemsCount).toBe(2);
+    expect(result.data[0].itemCodes).toEqual([
+      'SO-02-08-2026-0001-01',
+      'SO-02-08-2026-0001-02',
+    ]);
+    expect(result.data[0].itemProgress).toEqual(
+      expect.objectContaining({ total: 2, resolved: 1, readyForPickup: 1, isPartial: true }),
+    );
+  });
+
+  it('genera un solo PDF con todos los equipos del detalle', async () => {
+    serviceOrderRepository.findOne.mockResolvedValue(
+      createServiceOrder({
+        code: 'SO-02-08-2026-0001',
+        items: [
+          {
+            id: 12,
+            position: 2,
+            code: 'SO-02-08-2026-0001-02',
+            priority: ServiceOrderPriority.HIGH,
+            equipmentType: EquipmentType.PRINTER,
+            initialIssue: 'Atasca papel',
+          },
+          {
+            id: 11,
+            position: 1,
+            code: 'SO-02-08-2026-0001-01',
+            priority: ServiceOrderPriority.LOW,
+            equipmentType: EquipmentType.LAPTOP,
+            initialIssue: 'No enciende',
+          },
+        ] as ServiceOrderItem[],
+      }),
+    );
+
+    const result = await service.generateSingleOrderSummaryPdf(1);
+
+    expect(result.fileName).toBe('SO-02-08-2026-0001-resumen.pdf');
+    expect(intakePdfService.generateSingleOrderSummaryBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'SO-02-08-2026-0001',
+        items: [
+          expect.objectContaining({ code: 'SO-02-08-2026-0001-01' }),
+          expect.objectContaining({ code: 'SO-02-08-2026-0001-02' }),
+        ],
+      }),
+    );
+    expect(serviceOrderRepository.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ relations: expect.arrayContaining(['items']) }),
+    );
   });
 
   it('acota el listado para técnicos a sus órdenes asignadas', async () => {

@@ -8,7 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { ServiceOrder } from '../../entities/service-order.entity';
+import { ServiceOrderItem } from '../../entities/service-order-item.entity';
 import { ServiceOrderDiagnosisStatus } from '../service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisOutcome } from '../service-order-diagnosis-outcome.enum';
 
@@ -17,12 +17,12 @@ export class ServiceOrderDiagnosis {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 
-  @ManyToOne(() => ServiceOrder, { eager: false, nullable: false, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'service_order_id' })
-  serviceOrder: ServiceOrder;
+  @ManyToOne(() => ServiceOrderItem, { eager: false, nullable: false, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'service_order_item_id' })
+  serviceOrderItem: ServiceOrderItem;
 
-  @Column({ name: 'service_order_id', type: 'bigint', unsigned: true })
-  serviceOrderId: number;
+  @Column({ name: 'service_order_item_id', type: 'bigint', unsigned: true })
+  serviceOrderItemId: number;
 
   @Column({ name: 'sequence_number', type: 'int', unsigned: true, default: 1 })
   sequenceNumber: number;

@@ -5,6 +5,11 @@ import { ServiceOrderWorkflowService } from '../services/service-order-workflow.
 import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { ServiceOrderTechnicalStatus, ServiceType } from '../enums';
+import { ServiceOrderAggregateService } from '../services/service-order-aggregate.service';
+import { ServiceOrderItemWorkflowService } from '../services/service-order-item-workflow.service';
+import { ServiceOrderItemCancellationService } from '../services/service-order-item-cancellation.service';
+import { ServiceOrderItemDeliveryService } from '../services/service-order-item-delivery.service';
+import { ServiceOrderCancellationChannel, ServiceOrderCancellationResolution } from '../enums';
 
 describe('ServiceOrderController', () => {
   let controller: ServiceOrderController;
@@ -12,11 +17,14 @@ describe('ServiceOrderController', () => {
   let workflowService: jest.Mocked<ServiceOrderWorkflowService>;
   let saleLinkService: jest.Mocked<ServiceOrderSaleLinkService>;
   let inboxService: jest.Mocked<ServiceOrderInboxService>;
+  let aggregateService: jest.Mocked<ServiceOrderAggregateService>;
+  let itemWorkflowService: jest.Mocked<ServiceOrderItemWorkflowService>;
+  let itemCancellationService: jest.Mocked<ServiceOrderItemCancellationService>;
+  let itemDeliveryService: jest.Mocked<ServiceOrderItemDeliveryService>;
 
   beforeEach(() => {
     serviceOrderService = {
       create: jest.fn(),
-      createBatch: jest.fn(),
       findAll: jest.fn(),
       findOne: jest.fn(),
       generateSingleOrderSummaryPdf: jest.fn(),
@@ -45,43 +53,76 @@ describe('ServiceOrderController', () => {
       buildViewerContext: jest.fn(),
       getThreadForServiceOrder: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    aggregateService = {
+      create: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderAggregateService>;
+    itemWorkflowService = {
+      changeTechnicalStatus: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderItemWorkflowService>;
+    itemCancellationService = {
+      requestCancellation: jest.fn(),
+      resolveCancellation: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderItemCancellationService>;
+    itemDeliveryService = {
+      deliverItem: jest.fn(),
+      deliverOnlyItem: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderItemDeliveryService>;
 
-    controller = new ServiceOrderController(serviceOrderService, workflowService, saleLinkService, inboxService);
+    controller = new ServiceOrderController(
+      serviceOrderService,
+      aggregateService,
+      itemWorkflowService,
+      itemCancellationService,
+      itemDeliveryService,
+      workflowService,
+      saleLinkService,
+      inboxService,
+    );
+  });
+
+  it('delega la solicitud de cancelación por equipo con actor y viewer', async () => {
+    itemCancellationService.requestCancellation.mockResolvedValue({ request: { id: 80 } } as any);
+    const dto = { channel: ServiceOrderCancellationChannel.WHATSAPP, reason: 'Cliente desistió.' };
+
+    await controller.requestItemCancellation(7, 71, dto, 44, { user: { sub: 44 } });
+
+    expect(itemCancellationService.requestCancellation).toHaveBeenCalledWith(7, 71, dto, 44, { sub: 44 });
+  });
+
+  it('delega la resolución supervisada de una cancelación tardía', async () => {
+    itemCancellationService.resolveCancellation.mockResolvedValue({ request: { id: 80 } } as any);
+    const dto = {
+      resolution: ServiceOrderCancellationResolution.REJECTED,
+      reason: 'Se continuará con el servicio.',
+    };
+
+    await controller.resolveItemCancellation(7, 71, 80, dto, 3, { user: { sub: 3 } });
+
+    expect(itemCancellationService.resolveCancellation).toHaveBeenCalledWith(7, 71, 80, dto, 3, { sub: 3 });
+  });
+
+  it('delega la entrega del equipo seleccionado con actor y viewer', async () => {
+    itemDeliveryService.deliverItem.mockResolvedValue({ id: 7 } as any);
+
+    await controller.deliverItem(7, 71, 44, { user: { sub: 44 } });
+
+    expect(itemDeliveryService.deliverItem).toHaveBeenCalledWith(7, 71, 44, { sub: 44 });
   });
 
   it('rechaza create si falta el usuario autenticado', () => {
     expect(() => controller.create({} as any, undefined)).toThrow(BadRequestException);
-    expect(serviceOrderService.create).not.toHaveBeenCalled();
+    expect(aggregateService.create).not.toHaveBeenCalled();
   });
 
-  it('delegates create con dto y userId', async () => {
-    serviceOrderService.create.mockResolvedValue({ id: 1 } as any);
+  it('delega una cabecera con items al servicio agregado', async () => {
+    aggregateService.create.mockResolvedValue({ id: 1 } as any);
 
-    await controller.create({ initialIssue: 'No enciende' } as any, 22);
+    await controller.create({ serviceType: ServiceType.DIAGNOSIS, items: [{ initialIssue: 'No enciende' }] } as any, 22);
 
-    expect(serviceOrderService.create).toHaveBeenCalledWith(expect.objectContaining({ initialIssue: 'No enciende' }), 22);
-  });
-
-  it('rechaza createBatch si falta el usuario autenticado', () => {
-    expect(() => controller.createBatch({ sharedContext: {}, orders: [] } as any, undefined)).toThrow(BadRequestException);
-    expect(serviceOrderService.createBatch).not.toHaveBeenCalled();
-  });
-
-  it('delegates createBatch con dto y userId', async () => {
-    serviceOrderService.createBatch.mockResolvedValue({ createdOrders: [{ id: 1 }] } as any);
-
-    await controller.createBatch(
-      {
-        sharedContext: { requestOrigin: 'CLIENT' as any, clientId: 22 },
-        orders: [{ equipmentType: 'LAPTOP' as any, initialIssue: 'No enciende' }],
-      } as any,
-      22,
-    );
-
-    expect(serviceOrderService.createBatch).toHaveBeenCalledWith(
+    expect(aggregateService.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        sharedContext: expect.objectContaining({ clientId: 22 }),
-        orders: [expect.objectContaining({ initialIssue: 'No enciende' })],
+        serviceType: ServiceType.DIAGNOSIS,
+        items: [expect.objectContaining({ initialIssue: 'No enciende' })],
       }),
       22,
     );
@@ -96,11 +137,11 @@ describe('ServiceOrderController', () => {
   });
 
   it('usa endpoint dedicado de entrega propagando actorId', async () => {
-    serviceOrderService.markAsDelivered.mockResolvedValue({ id: 7 } as any);
+    itemDeliveryService.deliverOnlyItem.mockResolvedValue({ id: 7 } as any);
 
     await controller.deliver(7, 44, { user: { sub: 44 } });
 
-    expect(serviceOrderService.markAsDelivered).toHaveBeenCalledWith(7, 44, { sub: 44 });
+    expect(itemDeliveryService.deliverOnlyItem).toHaveBeenCalledWith(7, 44, { sub: 44 });
   });
 
   it('resuelve el hilo unificado desde una orden', async () => {
@@ -162,6 +203,28 @@ describe('ServiceOrderController', () => {
       ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
       77,
       'Aprobado por supervisor',
+      { sub: 77 },
+    );
+  });
+
+  it('delega la transición técnica de un equipo sin cambiar a sus hermanos', async () => {
+    itemWorkflowService.changeTechnicalStatus.mockResolvedValue({ id: 5 } as any);
+
+    await controller.changeItemTechnicalStatus(
+      5,
+      51,
+      ServiceOrderTechnicalStatus.RESUELTA,
+      { reason: 'Equipo reparado' },
+      77,
+      { user: { sub: 77 } },
+    );
+
+    expect(itemWorkflowService.changeTechnicalStatus).toHaveBeenCalledWith(
+      5,
+      51,
+      ServiceOrderTechnicalStatus.RESUELTA,
+      77,
+      'Equipo reparado',
       { sub: 77 },
     );
   });

@@ -6,6 +6,7 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -22,6 +23,7 @@ import {
   ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
+import { ServiceOrderItem } from './service-order-item.entity';
 
 @Entity('service_orders')
 export class ServiceOrder {
@@ -30,6 +32,20 @@ export class ServiceOrder {
 
   @Column({ name: 'code', type: 'varchar', length: 50, unique: true })
   code: string;
+
+  @OneToMany(() => ServiceOrderItem, (item) => item.serviceOrder, { cascade: false })
+  items?: ServiceOrderItem[];
+
+  itemProgress?: {
+    total: number;
+    active: number;
+    resolved: number;
+    readyForPickup: number;
+    delivered: number;
+    cancelled: number;
+    cancellationPending: number;
+    isPartial: boolean;
+  };
 
   @Column({
     name: 'operative_status',

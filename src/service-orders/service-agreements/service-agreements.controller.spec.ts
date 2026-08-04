@@ -1,9 +1,13 @@
 import { ServiceOrderAgreementsController } from './service-agreements.controller';
 import { ServiceOrderAgreementsService } from './service-agreements.service';
+import { ServiceOrderCommercialRevisionService } from './service-order-commercial-revision.service';
+import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
 
 describe('ServiceOrderAgreementsController', () => {
   let controller: ServiceOrderAgreementsController;
   let service: jest.Mocked<ServiceOrderAgreementsService>;
+  let revisionService: jest.Mocked<ServiceOrderCommercialRevisionService>;
+  let decisionService: jest.Mocked<ServiceOrderCommercialDecisionService>;
 
   beforeEach(() => {
     service = {
@@ -21,7 +25,15 @@ describe('ServiceOrderAgreementsController', () => {
       bulkRestore: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderAgreementsService>;
 
-    controller = new ServiceOrderAgreementsController(service);
+    revisionService = {
+      createRevision: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderCommercialRevisionService>;
+
+    decisionService = {
+      recordDecision: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderCommercialDecisionService>;
+
+    controller = new ServiceOrderAgreementsController(service, revisionService, decisionService);
   });
 
   it('delegates list query as-is', async () => {
@@ -30,6 +42,30 @@ describe('ServiceOrderAgreementsController', () => {
     await controller.findAll({ page: 2, status: 'CONFIRMED' });
 
     expect(service.findAll).toHaveBeenCalledWith({ page: 2, status: 'CONFIRMED' });
+  });
+
+  it('delega la revisión consolidada con el usuario autenticado', async () => {
+    revisionService.createRevision.mockResolvedValue({ id: 90 } as any);
+    const dto = { serviceOrderId: 10, items: [{ serviceOrderItemId: 101, lines: [] }] } as any;
+
+    await controller.createRevision(dto, { user: { sub: 9, roles: [{ name: 'technician' }] } });
+
+    expect(revisionService.createRevision).toHaveBeenCalledWith(dto, {
+      sub: 9,
+      roles: [{ name: 'technician' }],
+    });
+  });
+
+  it('delega la decisión del cliente con el usuario autenticado', async () => {
+    decisionService.recordDecision.mockResolvedValue({ allAccepted: false } as any);
+    const dto = { commercialVersionId: 801, decision: 'ACCEPTED', channel: 'WHATSAPP' } as any;
+
+    await controller.recordClientDecision(dto, { user: { sub: 21, roles: [{ name: 'recepcionist' }] } });
+
+    expect(decisionService.recordDecision).toHaveBeenCalledWith(dto, {
+      sub: 21,
+      roles: [{ name: 'recepcionist' }],
+    });
   });
 
   it('interprets withDeleted flag only when true', async () => {

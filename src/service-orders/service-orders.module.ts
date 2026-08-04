@@ -14,6 +14,11 @@ import { NotificationDeliveryAttempt } from './entities/notification-delivery-at
 import { NotificationMessage } from './entities/notification-message.entity';
 import { ServiceOrderEvent } from './entities/service-order-event.entity';
 import { ServiceOrder } from './entities/service-order.entity';
+import { ServiceOrderDailySequence } from './entities/service-order-daily-sequence.entity';
+import { ServiceOrderItem } from './entities/service-order-item.entity';
+import { ServiceOrderItemCancellationRequest } from './entities/service-order-item-cancellation-request.entity';
+import { ServiceOrderItemCommercialLine } from './entities/service-order-item-commercial-line.entity';
+import { ServiceOrderItemCommercialVersion } from './entities/service-order-item-commercial-version.entity';
 import { ServiceOrderSaleLink } from './entities/service-order-sale-link.entity';
 import { ServiceOrderInboxController } from './inbox/service-order-inbox.controller';
 import { ServiceOrderInboxAttachment } from './inbox/entities/service-order-inbox-attachment.entity';
@@ -27,12 +32,21 @@ import { ServiceOrderInboxService } from './inbox/service-order-inbox.service';
 import { ServiceOrderInboxEventsService } from './inbox/service-order-inbox-events.service';
 import { PrivateFileStorageService } from './storage/private-file-storage.service';
 import { ServiceOrderAgreement } from './service-agreements/entities/service-agreement.entity';
+import { ServiceOrderAgreementItem } from './service-agreements/entities/service-agreement-item.entity';
 import { TechnicianAssignmentBalance } from './entities/technician-assignment-balance.entity';
 import { Sale } from '../sales/entities/sale.entity';
 import { ServiceOrderDiagnosisService } from './diagnoses/service-order-diagnosis.service';
 import { ServiceOrderMessageMatrixService } from './services/service-order-message-matrix.service';
 import { ServiceOrderMetricsFactory } from './services/service-order-metrics.factory';
 import { ServiceOrderSaleLinkService } from './services/service-order-sale-link.service';
+import { ServiceOrderAggregateService } from './services/service-order-aggregate.service';
+import { ServiceOrderAggregateProjectionService } from './services/service-order-aggregate-projection.service';
+import { ServiceOrderCodeService } from './services/service-order-code.service';
+import { ServiceOrderItemWorkflowService } from './services/service-order-item-workflow.service';
+import { ServiceOrderItemCancellationService } from './services/service-order-item-cancellation.service';
+import { ServiceOrderItemDeliveryService } from './services/service-order-item-delivery.service';
+import { ServiceOrderItemCommercialVersionService } from './services/service-order-item-commercial-version.service';
+import { ServiceOrderInitialCommercialService } from './services/service-order-initial-commercial.service';
 import { ServiceOrderService } from './services/service-order.service';
 import { ServiceOrderSlaStageResolverService } from './services/service-order-sla-stage.resolver';
 import { ServiceOrderStageSlaPolicyService } from './services/service-order-stage-sla-policy.service';
@@ -44,8 +58,14 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
   imports: [
     TypeOrmModule.forFeature([
       ServiceOrder,
+      ServiceOrderItem,
+      ServiceOrderItemCancellationRequest,
+      ServiceOrderDailySequence,
+      ServiceOrderItemCommercialVersion,
+      ServiceOrderItemCommercialLine,
       ServiceOrderSaleLink,
       ServiceOrderAgreement,
+      ServiceOrderAgreementItem,
       Sale,
       Client,
       ClientContact,
@@ -71,6 +91,14 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
   ],
   providers: [
     ServiceOrderService,
+    ServiceOrderAggregateService,
+    ServiceOrderAggregateProjectionService,
+    ServiceOrderCodeService,
+    ServiceOrderItemWorkflowService,
+    ServiceOrderItemCancellationService,
+    ServiceOrderItemDeliveryService,
+    ServiceOrderItemCommercialVersionService,
+    ServiceOrderInitialCommercialService,
     ServiceOrderWorkflowService,
     ServiceOrderSlaStageResolverService,
     ServiceOrderStageSlaPolicyService,
@@ -90,6 +118,12 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
   ],
   exports: [
     ServiceOrderService,
+    ServiceOrderAggregateService,
+    ServiceOrderAggregateProjectionService,
+    ServiceOrderItemWorkflowService,
+    ServiceOrderItemCancellationService,
+    ServiceOrderItemDeliveryService,
+    ServiceOrderItemCommercialVersionService,
     ServiceOrderWorkflowService,
     ServiceOrderDiagnosisService,
     ServiceOrderSaleLinkService,

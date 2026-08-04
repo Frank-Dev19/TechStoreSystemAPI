@@ -77,6 +77,20 @@ export class PricingConfigService {
         );
     }
 
+    async resolveGlobal(): Promise<PricingConfig> {
+        const config = await this.repo.findOne({
+            where: {
+                productId: IsNull(),
+                categoryId: IsNull(),
+                isActive: true,
+            },
+        });
+        if (!config) {
+            throw new BadRequestException('No hay una configuración global de descuentos activa');
+        }
+        return config;
+    }
+
     async create(dto: CreatePricingConfigDto): Promise<PricingConfig> {
         // Validar que no haya duplicado
         const existing = await this.repo.findOne({

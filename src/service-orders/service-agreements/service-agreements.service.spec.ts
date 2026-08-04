@@ -453,7 +453,7 @@ describe('ServiceOrderAgreementsService', () => {
 
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
     serviceOrderRepository.save.mockImplementation(async (entity) => entity);
-    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 2 } as any);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderItem: { id: 101, serviceOrderId: 10 }, sequenceNumber: 2 } as any);
     agreementRepository.findOne.mockResolvedValue(baseAgreement);
 
     const insertedProducts: Array<Record<string, unknown>> = [];
@@ -566,7 +566,7 @@ describe('ServiceOrderAgreementsService', () => {
 
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
     serviceOrderRepository.save.mockImplementation(async (entity) => entity);
-    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 2 } as any);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderItem: { id: 101, serviceOrderId: 10 }, sequenceNumber: 2 } as any);
     agreementRepository.findOne.mockResolvedValue(baseAgreement);
 
     const insertedProducts: Array<Record<string, unknown>> = [];
@@ -687,7 +687,7 @@ describe('ServiceOrderAgreementsService', () => {
 
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
     serviceOrderRepository.save.mockImplementation(async (entity) => entity);
-    diagnosisRepository.findOne.mockResolvedValue({ id: 191, serviceOrderId: 10, sequenceNumber: 3 } as any);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 191, serviceOrderItem: { id: 101, serviceOrderId: 10 }, sequenceNumber: 3 } as any);
     agreementRepository.findOne
       .mockResolvedValueOnce(latestActiveAgreement)
       .mockResolvedValueOnce(latestActiveAgreement);
@@ -752,7 +752,7 @@ describe('ServiceOrderAgreementsService', () => {
     const baseAgreement = createAgreement({ id: 44, status: ServiceOrderAgreementStatus.CONFIRMED });
 
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
-    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 1 } as any);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderItem: { id: 101, serviceOrderId: 10 }, sequenceNumber: 1 } as any);
     agreementRepository.findOne.mockResolvedValue(baseAgreement);
 
     await expect(
@@ -781,7 +781,7 @@ describe('ServiceOrderAgreementsService', () => {
   it('rechaza products cuando el create es derivado', async () => {
     const serviceOrder = createServiceOrder({ serviceType: ServiceType.DIAGNOSIS });
     serviceOrderRepository.findOne.mockResolvedValue(serviceOrder);
-    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderId: 10, sequenceNumber: 2 } as any);
+    diagnosisRepository.findOne.mockResolvedValue({ id: 91, serviceOrderItem: { id: 101, serviceOrderId: 10 }, sequenceNumber: 2 } as any);
     agreementRepository.findOne.mockResolvedValue(
       createAgreement({
         id: 44,

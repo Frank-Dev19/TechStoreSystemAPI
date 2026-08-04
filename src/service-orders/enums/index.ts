@@ -2,6 +2,8 @@ export * from './service-order-operative-status.enum';
 export * from './service-order-technical-status.enum';
 export * from './service-order-commercial-status.enum';
 export * from './service-order-economic-status.enum';
+export * from './service-order-cancellation-channel.enum';
+export * from './service-order-cancellation-status.enum';
 export * from './service-order-priority.enum';
 export * from './equipment-type.enum';
 export * from './service-type.enum';

@@ -10,8 +10,18 @@ import { PermissionModule } from 'src/roles/entities/permission-module.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 import { DocumentTypeKind } from 'src/catalogs/document-types/entities/document-type-kind.enum';
 
-type ModuleSeed = { moduleKey: string; label: string; sortOrder: number; icon?: string | null };
-type PermSeed = { moduleKey: string; actionKey: string; description: string; sortOrder?: number };
+type ModuleSeed = {
+  moduleKey: string;
+  label: string;
+  sortOrder: number;
+  icon?: string | null;
+};
+type PermSeed = {
+  moduleKey: string;
+  actionKey: string;
+  description: string;
+  sortOrder?: number;
+};
 
 @Injectable()
 export class BootstrapService implements OnModuleInit {
@@ -20,10 +30,13 @@ export class BootstrapService implements OnModuleInit {
   constructor(
     @InjectRepository(User) private readonly usersRepo: Repository<User>,
     @InjectRepository(Role) private readonly rolesRepo: Repository<Role>,
-    @InjectRepository(Permission) private readonly permsRepo: Repository<Permission>,
-    @InjectRepository(PermissionModule) private readonly permModulesRepo: Repository<PermissionModule>,
-    @InjectRepository(DocumentType) private readonly docTypesRepo: Repository<DocumentType>,
-  ) { }
+    @InjectRepository(Permission)
+    private readonly permsRepo: Repository<Permission>,
+    @InjectRepository(PermissionModule)
+    private readonly permModulesRepo: Repository<PermissionModule>,
+    @InjectRepository(DocumentType)
+    private readonly docTypesRepo: Repository<DocumentType>,
+  ) {}
 
   async onModuleInit() {
     // 0) Asegurar tipos de documento por defecto con soft delete considerado
@@ -31,113 +44,535 @@ export class BootstrapService implements OnModuleInit {
 
     // 1) Catalogo de modulos (fuente de verdad)
     const MODULES: ModuleSeed[] = [
-      { moduleKey: 'role', label: 'Roles', sortOrder: 10, icon: 'fas fa-shield-alt' },
-      { moduleKey: 'keys', label: 'Claves de Operacion', sortOrder: 15, icon: 'fas fa-key' },
-      { moduleKey: 'users', label: 'Usuarios', sortOrder: 20, icon: 'fas fa-users' },
-      { moduleKey: 'document-type', label: 'Tipos de Documento', sortOrder: 25, icon: 'fas fa-id-card' },
-      { moduleKey: 'clients', label: 'Clientes', sortOrder: 30, icon: 'fas fa-user-friends' },
-      { moduleKey: 'suppliers', label: 'Proveedores', sortOrder: 35, icon: 'fas fa-truck' },
-      { moduleKey: 'business-profile', label: 'Empresa Emisora', sortOrder: 40, icon: 'fas fa-building' },
-      { moduleKey: 'auditoria', label: 'Auditoria', sortOrder: 90, icon: 'fas fa-history' },
-      { moduleKey: 'service-order', label: 'Ordenes de Servicio', sortOrder: 115, icon: 'fas fa-clipboard-list' },
-      { moduleKey: 'service-order-diagnosis', label: 'Diagnosticos de Orden de Servicio', sortOrder: 117, icon: 'fas fa-stethoscope' },
-      { moduleKey: 'service-order-agreement', label: 'Acuerdos de Orden de Servicio', sortOrder: 118, icon: 'fas fa-handshake' },
-      { moduleKey: 'service-order-payment', label: 'Pagos de Orden de Servicio', sortOrder: 119, icon: 'fas fa-money-bill-wave' },
-      { moduleKey: 'service-order-event', label: 'Historial de Orden de Servicio', sortOrder: 120, icon: 'fas fa-stream' },
-      { moduleKey: 'service-order-inbox', label: 'Inbox de Orden de Servicio', sortOrder: 121, icon: 'fab fa-whatsapp' },
+      {
+        moduleKey: 'role',
+        label: 'Roles',
+        sortOrder: 10,
+        icon: 'fas fa-shield-alt',
+      },
+      {
+        moduleKey: 'keys',
+        label: 'Claves de Operacion',
+        sortOrder: 15,
+        icon: 'fas fa-key',
+      },
+      {
+        moduleKey: 'users',
+        label: 'Usuarios',
+        sortOrder: 20,
+        icon: 'fas fa-users',
+      },
+      {
+        moduleKey: 'document-type',
+        label: 'Tipos de Documento',
+        sortOrder: 25,
+        icon: 'fas fa-id-card',
+      },
+      {
+        moduleKey: 'clients',
+        label: 'Clientes',
+        sortOrder: 30,
+        icon: 'fas fa-user-friends',
+      },
+      {
+        moduleKey: 'suppliers',
+        label: 'Proveedores',
+        sortOrder: 35,
+        icon: 'fas fa-truck',
+      },
+      {
+        moduleKey: 'business-profile',
+        label: 'Empresa Emisora',
+        sortOrder: 40,
+        icon: 'fas fa-building',
+      },
+      {
+        moduleKey: 'auditoria',
+        label: 'Auditoria',
+        sortOrder: 90,
+        icon: 'fas fa-history',
+      },
+      {
+        moduleKey: 'service-order',
+        label: 'Ordenes de Servicio',
+        sortOrder: 115,
+        icon: 'fas fa-clipboard-list',
+      },
+      {
+        moduleKey: 'service-order-diagnosis',
+        label: 'Diagnosticos de Orden de Servicio',
+        sortOrder: 117,
+        icon: 'fas fa-stethoscope',
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        label: 'Acuerdos de Orden de Servicio',
+        sortOrder: 118,
+        icon: 'fas fa-handshake',
+      },
+      {
+        moduleKey: 'service-order-payment',
+        label: 'Pagos de Orden de Servicio',
+        sortOrder: 119,
+        icon: 'fas fa-money-bill-wave',
+      },
+      {
+        moduleKey: 'service-order-event',
+        label: 'Historial de Orden de Servicio',
+        sortOrder: 120,
+        icon: 'fas fa-stream',
+      },
+      {
+        moduleKey: 'service-order-inbox',
+        label: 'Inbox de Orden de Servicio',
+        sortOrder: 121,
+        icon: 'fab fa-whatsapp',
+      },
     ];
 
     // 2) Catalogo de permisos (fuente de verdad)
     const PERMS: PermSeed[] = [
       // Roles
-      { moduleKey: 'role', actionKey: 'create', description: 'Crear roles', sortOrder: 10 },
-      { moduleKey: 'role', actionKey: 'read', description: 'Listar/ver roles', sortOrder: 20 },
-      { moduleKey: 'role', actionKey: 'update', description: 'Actualizar roles', sortOrder: 30 },
-      { moduleKey: 'role', actionKey: 'delete', description: 'Eliminar roles', sortOrder: 40 },
+      {
+        moduleKey: 'role',
+        actionKey: 'create',
+        description: 'Crear roles',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'role',
+        actionKey: 'read',
+        description: 'Listar/ver roles',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'role',
+        actionKey: 'update',
+        description: 'Actualizar roles',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'role',
+        actionKey: 'delete',
+        description: 'Eliminar roles',
+        sortOrder: 40,
+      },
 
       // Keys
-      { moduleKey: 'keys', actionKey: 'manage', description: 'Crear/rotar claves de operacion', sortOrder: 10 },
-      { moduleKey: 'keys', actionKey: 'view', description: 'Ver claves de operacion activas', sortOrder: 20 },
+      {
+        moduleKey: 'keys',
+        actionKey: 'manage',
+        description: 'Crear/rotar claves de operacion',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'keys',
+        actionKey: 'view',
+        description: 'Ver claves de operacion activas',
+        sortOrder: 20,
+      },
 
       // Users (si no los tenias antes en la tabla)
-      { moduleKey: 'users', actionKey: 'create', description: 'Crear usuarios', sortOrder: 10 },
-      { moduleKey: 'users', actionKey: 'read', description: 'Ver usuarios', sortOrder: 20 },
-      { moduleKey: 'users', actionKey: 'update', description: 'Actualizar usuarios', sortOrder: 30 },
-      { moduleKey: 'users', actionKey: 'delete', description: 'Eliminar usuarios', sortOrder: 40 },
+      {
+        moduleKey: 'users',
+        actionKey: 'create',
+        description: 'Crear usuarios',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'users',
+        actionKey: 'read',
+        description: 'Ver usuarios',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'users',
+        actionKey: 'update',
+        description: 'Actualizar usuarios',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'users',
+        actionKey: 'delete',
+        description: 'Eliminar usuarios',
+        sortOrder: 40,
+      },
 
       // DocumentTypes (segun tu controller actual)
-      { moduleKey: 'document-type', actionKey: 'create', description: 'Crear tipos de documento', sortOrder: 10 },
-      { moduleKey: 'document-type', actionKey: 'read', description: 'Ver tipos de documento', sortOrder: 20 },
-      { moduleKey: 'document-type', actionKey: 'update', description: 'Actualizar tipos de documento', sortOrder: 30 },
-      { moduleKey: 'document-type', actionKey: 'delete', description: 'Eliminar tipo de documento', sortOrder: 40 },
-      { moduleKey: 'document-type', actionKey: 'restore', description: 'Restaurar tipo de documento', sortOrder: 50 },
+      {
+        moduleKey: 'document-type',
+        actionKey: 'create',
+        description: 'Crear tipos de documento',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'document-type',
+        actionKey: 'read',
+        description: 'Ver tipos de documento',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'document-type',
+        actionKey: 'update',
+        description: 'Actualizar tipos de documento',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'document-type',
+        actionKey: 'delete',
+        description: 'Eliminar tipo de documento',
+        sortOrder: 40,
+      },
+      {
+        moduleKey: 'document-type',
+        actionKey: 'restore',
+        description: 'Restaurar tipo de documento',
+        sortOrder: 50,
+      },
 
       // Clients
-      { moduleKey: 'clients', actionKey: 'create', description: 'Crear clientes', sortOrder: 10 },
-      { moduleKey: 'clients', actionKey: 'read', description: 'Ver clientes', sortOrder: 20 },
-      { moduleKey: 'clients', actionKey: 'update', description: 'Actualizar clientes', sortOrder: 30 },
-      { moduleKey: 'clients', actionKey: 'import', description: 'Importar clientes desde Excel', sortOrder: 40 },
-      { moduleKey: 'clients', actionKey: 'delete', description: 'Eliminar un cliente', sortOrder: 60 },
-      { moduleKey: 'clients', actionKey: 'restore', description: 'Restaurar un cliente', sortOrder: 70 },
+      {
+        moduleKey: 'clients',
+        actionKey: 'create',
+        description: 'Crear clientes',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'clients',
+        actionKey: 'read',
+        description: 'Ver clientes',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'clients',
+        actionKey: 'update',
+        description: 'Actualizar clientes',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'clients',
+        actionKey: 'import',
+        description: 'Importar clientes desde Excel',
+        sortOrder: 40,
+      },
+      {
+        moduleKey: 'clients',
+        actionKey: 'delete',
+        description: 'Eliminar un cliente',
+        sortOrder: 60,
+      },
+      {
+        moduleKey: 'clients',
+        actionKey: 'restore',
+        description: 'Restaurar un cliente',
+        sortOrder: 70,
+      },
 
       // Suppliers
-      { moduleKey: 'suppliers', actionKey: 'create', description: 'Crear proveedores', sortOrder: 10 },
-      { moduleKey: 'suppliers', actionKey: 'read', description: 'Ver proveedores', sortOrder: 20 },
-      { moduleKey: 'suppliers', actionKey: 'update', description: 'Actualizar proveedores', sortOrder: 30 },
-      { moduleKey: 'suppliers', actionKey: 'delete', description: 'Eliminar un proveedor', sortOrder: 60 },
-      { moduleKey: 'suppliers', actionKey: 'restore', description: 'Restaurar un proveedor', sortOrder: 70 },
+      {
+        moduleKey: 'suppliers',
+        actionKey: 'create',
+        description: 'Crear proveedores',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'suppliers',
+        actionKey: 'read',
+        description: 'Ver proveedores',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'suppliers',
+        actionKey: 'update',
+        description: 'Actualizar proveedores',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'suppliers',
+        actionKey: 'delete',
+        description: 'Eliminar un proveedor',
+        sortOrder: 60,
+      },
+      {
+        moduleKey: 'suppliers',
+        actionKey: 'restore',
+        description: 'Restaurar un proveedor',
+        sortOrder: 70,
+      },
 
       // Business profile
-      { moduleKey: 'business-profile', actionKey: 'read', description: 'Ver datos de empresa emisora', sortOrder: 10 },
-      { moduleKey: 'business-profile', actionKey: 'update', description: 'Actualizar datos de empresa emisora', sortOrder: 20 },
+      {
+        moduleKey: 'business-profile',
+        actionKey: 'read',
+        description: 'Ver datos de empresa emisora',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'business-profile',
+        actionKey: 'update',
+        description: 'Actualizar datos de empresa emisora',
+        sortOrder: 20,
+      },
 
       // Auditoria (demo; ajusta si lo implementas)
-      { moduleKey: 'auditoria', actionKey: 'read', description: 'Ver auditoria', sortOrder: 10 },
-      { moduleKey: 'auditoria', actionKey: 'delete', description: 'Eliminar eventos', sortOrder: 20 },
-      { moduleKey: 'auditoria', actionKey: 'stream', description: 'Ver eventos en vivo', sortOrder: 30 },
+      {
+        moduleKey: 'auditoria',
+        actionKey: 'read',
+        description: 'Ver auditoria',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'auditoria',
+        actionKey: 'delete',
+        description: 'Eliminar eventos',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'auditoria',
+        actionKey: 'stream',
+        description: 'Ver eventos en vivo',
+        sortOrder: 30,
+      },
 
       // Service Orders
-      { moduleKey: 'service-order', actionKey: 'create', description: 'Crear ordenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order', actionKey: 'read', description: 'Ver ordenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order', actionKey: 'update', description: 'Actualizar ordenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order', actionKey: 'edit', description: 'Editar datos operativos de órdenes de servicio', sortOrder: 31 },
-      { moduleKey: 'service-order', actionKey: 'assign', description: 'Asignar técnicos a órdenes de servicio', sortOrder: 32 },
-      { moduleKey: 'service-order', actionKey: 'transition', description: 'Cambiar etapa técnica de órdenes de servicio', sortOrder: 33 },
-      { moduleKey: 'service-order', actionKey: 'deliver', description: 'Registrar entrega de órdenes de servicio', sortOrder: 34 },
-      { moduleKey: 'service-order', actionKey: 'billing-link', description: 'Gestionar vínculos de facturación de órdenes', sortOrder: 35 },
-      { moduleKey: 'service-order', actionKey: 'delete', description: 'Eliminar ordenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order', actionKey: 'restore', description: 'Restaurar ordenes de servicio', sortOrder: 70 },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'create',
+        description: 'Crear ordenes de servicio',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'read',
+        description: 'Ver ordenes de servicio',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'update',
+        description: 'Actualizar ordenes de servicio',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'edit',
+        description: 'Editar datos operativos de órdenes de servicio',
+        sortOrder: 31,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'assign',
+        description: 'Asignar técnicos a órdenes de servicio',
+        sortOrder: 32,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'transition',
+        description: 'Cambiar etapa técnica de órdenes de servicio',
+        sortOrder: 33,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'item-transition',
+        description: 'Cambiar etapa técnica de equipos de una orden',
+        sortOrder: 34,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'deliver',
+        description: 'Registrar entrega de órdenes de servicio',
+        sortOrder: 35,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'item-deliver',
+        description: 'Registrar entrega individual de equipos',
+        sortOrder: 36,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'item-cancel',
+        description: 'Registrar cancelaciones de equipos',
+        sortOrder: 37,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'item-cancel-after-start',
+        description: 'Resolver cancelaciones solicitadas después de iniciar el trabajo',
+        sortOrder: 38,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'billing-link',
+        description: 'Gestionar vínculos de facturación de órdenes',
+        sortOrder: 36,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'delete',
+        description: 'Eliminar ordenes de servicio',
+        sortOrder: 60,
+      },
+      {
+        moduleKey: 'service-order',
+        actionKey: 'restore',
+        description: 'Restaurar ordenes de servicio',
+        sortOrder: 70,
+      },
 
       // Service Order Diagnoses
-      { moduleKey: 'service-order-diagnosis', actionKey: 'create', description: 'Crear diagnosticos de ordenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'read', description: 'Ver diagnosticos de ordenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'update', description: 'Actualizar diagnosticos de ordenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'delete', description: 'Eliminar diagnosticos de ordenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order-diagnosis', actionKey: 'restore', description: 'Restaurar diagnosticos de ordenes de servicio', sortOrder: 70 },
+      {
+        moduleKey: 'service-order-diagnosis',
+        actionKey: 'create',
+        description: 'Crear diagnosticos de ordenes de servicio',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'service-order-diagnosis',
+        actionKey: 'read',
+        description: 'Ver diagnosticos de ordenes de servicio',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'service-order-diagnosis',
+        actionKey: 'update',
+        description: 'Actualizar diagnosticos de ordenes de servicio',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'service-order-diagnosis',
+        actionKey: 'delete',
+        description: 'Eliminar diagnosticos de ordenes de servicio',
+        sortOrder: 60,
+      },
+      {
+        moduleKey: 'service-order-diagnosis',
+        actionKey: 'restore',
+        description: 'Restaurar diagnosticos de ordenes de servicio',
+        sortOrder: 70,
+      },
 
       // Service Order Agreements
-      { moduleKey: 'service-order-agreement', actionKey: 'create', description: 'Crear acuerdos de órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-agreement', actionKey: 'read', description: 'Ver acuerdos de órdenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-agreement', actionKey: 'update', description: 'Actualizar acuerdos de órdenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-agreement', actionKey: 'delete', description: 'Eliminar acuerdos de órdenes de servicio', sortOrder: 60 },
-      { moduleKey: 'service-order-agreement', actionKey: 'restore', description: 'Restaurar acuerdos de órdenes de servicio', sortOrder: 70 },
-      { moduleKey: 'service-order-agreement', actionKey: 'confirm', description: 'Confirmar acuerdos de órdenes de servicio', sortOrder: 80 },
-      { moduleKey: 'service-order-agreement', actionKey: 'void', description: 'Anular acuerdos de órdenes de servicio', sortOrder: 90 },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'create',
+        description: 'Crear acuerdos de órdenes de servicio',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'read',
+        description: 'Ver acuerdos de órdenes de servicio',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'update',
+        description: 'Actualizar acuerdos de órdenes de servicio',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'delete',
+        description: 'Eliminar acuerdos de órdenes de servicio',
+        sortOrder: 60,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'restore',
+        description: 'Restaurar acuerdos de órdenes de servicio',
+        sortOrder: 70,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'confirm',
+        description: 'Confirmar acuerdos de órdenes de servicio',
+        sortOrder: 80,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'void',
+        description: 'Anular acuerdos de órdenes de servicio',
+        sortOrder: 90,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'record-client-decision',
+        description: 'Registrar decisiones comerciales del cliente',
+        sortOrder: 100,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'apply-discount',
+        description: 'Aplicar descuentos dentro del límite comercial',
+        sortOrder: 110,
+      },
+      {
+        moduleKey: 'service-order-agreement',
+        actionKey: 'override-discount-limit',
+        description: 'Autorizar descuentos por encima del límite comercial',
+        sortOrder: 120,
+      },
 
       // Service Order Inbox
-      { moduleKey: 'service-order-inbox', actionKey: 'read', description: 'Ver inbox de órdenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-inbox', actionKey: 'send', description: 'Enviar mensajes en inbox de órdenes de servicio', sortOrder: 20 },
+      {
+        moduleKey: 'service-order-inbox',
+        actionKey: 'read',
+        description: 'Ver inbox de órdenes de servicio',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'service-order-inbox',
+        actionKey: 'send',
+        description: 'Enviar mensajes en inbox de órdenes de servicio',
+        sortOrder: 20,
+      },
 
       // Service Order Payments
-      { moduleKey: 'service-order-payment', actionKey: 'create', description: 'Registrar pagos de ordenes de servicio', sortOrder: 10 },
-      { moduleKey: 'service-order-payment', actionKey: 'read', description: 'Ver pagos de ordenes de servicio', sortOrder: 20 },
-      { moduleKey: 'service-order-payment', actionKey: 'update', description: 'Actualizar pagos de ordenes de servicio', sortOrder: 30 },
-      { moduleKey: 'service-order-payment', actionKey: 'delete', description: 'Eliminar pagos de ordenes de servicio', sortOrder: 40 },
-      { moduleKey: 'service-order-payment', actionKey: 'restore', description: 'Restaurar pagos de ordenes de servicio', sortOrder: 50 },
-      { moduleKey: 'service-order-payment', actionKey: 'confirm', description: 'Confirmar pagos de ordenes de servicio', sortOrder: 60 },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'create',
+        description: 'Registrar pagos de ordenes de servicio',
+        sortOrder: 10,
+      },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'read',
+        description: 'Ver pagos de ordenes de servicio',
+        sortOrder: 20,
+      },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'update',
+        description: 'Actualizar pagos de ordenes de servicio',
+        sortOrder: 30,
+      },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'delete',
+        description: 'Eliminar pagos de ordenes de servicio',
+        sortOrder: 40,
+      },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'restore',
+        description: 'Restaurar pagos de ordenes de servicio',
+        sortOrder: 50,
+      },
+      {
+        moduleKey: 'service-order-payment',
+        actionKey: 'confirm',
+        description: 'Confirmar pagos de ordenes de servicio',
+        sortOrder: 60,
+      },
 
       // Service Order Events
-      { moduleKey: 'service-order-event', actionKey: 'read', description: 'Ver historial de ordenes de servicio', sortOrder: 10 },
+      {
+        moduleKey: 'service-order-event',
+        actionKey: 'read',
+        description: 'Ver historial de ordenes de servicio',
+        sortOrder: 10,
+      },
     ];
 
     // 3) Sincronizar catalogo (modulos y permisos) SIEMPRE
@@ -156,14 +591,28 @@ export class BootstrapService implements OnModuleInit {
     await this.ensureDefaultUsers();
     await this.ensureOperationalUsers();
 
-    this.log.log('Bootstrap OK (catalogo sincronizado, admin con permisos, usuario inicial si hacia falta).');
+    this.log.log(
+      'Bootstrap OK (catalogo sincronizado, admin con permisos, usuario inicial si hacia falta).',
+    );
   }
 
   // ---------- helpers ----------
 
   private async ensureDefaultDocumentTypes() {
-    await this.ensureDocumentType('DNI', 8, 'Documento Nacional de Identidad', '1', DocumentTypeKind.PERSON);
-    await this.ensureDocumentType('RUC', 11, 'Registro Único de Contribuyentes', '6', DocumentTypeKind.COMPANY);
+    await this.ensureDocumentType(
+      'DNI',
+      8,
+      'Documento Nacional de Identidad',
+      '1',
+      DocumentTypeKind.PERSON,
+    );
+    await this.ensureDocumentType(
+      'RUC',
+      11,
+      'Registro Único de Contribuyentes',
+      '6',
+      DocumentTypeKind.COMPANY,
+    );
   }
 
   private async ensureDocumentType(
@@ -173,9 +622,18 @@ export class BootstrapService implements OnModuleInit {
     sunatCode?: string,
     kind?: DocumentTypeKind,
   ) {
-    let dt = await this.docTypesRepo.findOne({ where: { name }, withDeleted: true });
+    let dt = await this.docTypesRepo.findOne({
+      where: { name },
+      withDeleted: true,
+    });
     if (!dt) {
-      dt = this.docTypesRepo.create({ name, digits, description, sunatCode, kind });
+      dt = this.docTypesRepo.create({
+        name,
+        digits,
+        description,
+        sunatCode,
+        kind,
+      });
       await this.docTypesRepo.save(dt);
       this.log.log(`DocumentType "${name}" creado.`);
       return;
@@ -263,8 +721,12 @@ export class BootstrapService implements OnModuleInit {
       return;
     }
 
-    const legacySet = new Set(legacyPermissions.map((permission) => permission.code));
-    const roles = await this.rolesRepo.find({ relations: { permissions: true } });
+    const legacySet = new Set(
+      legacyPermissions.map((permission) => permission.code),
+    );
+    const roles = await this.rolesRepo.find({
+      relations: { permissions: true },
+    });
 
     for (const role of roles) {
       const filteredPermissions = (role.permissions ?? []).filter(
@@ -297,7 +759,7 @@ export class BootstrapService implements OnModuleInit {
 
       // --- modulos ---
       const existingMods = await modRepo.find();
-      const byKey = new Map(existingMods.map(m => [m.moduleKey, m]));
+      const byKey = new Map(existingMods.map((m) => [m.moduleKey, m]));
 
       for (const m of MODULES) {
         const found = byKey.get(m.moduleKey);
@@ -313,9 +775,18 @@ export class BootstrapService implements OnModuleInit {
           this.log.log(`+ modulo creado: ${m.moduleKey}`);
         } else {
           let dirty = false;
-          if (found.label !== m.label) { found.label = m.label; dirty = true; }
-          if ((found.sortOrder ?? 0) !== (m.sortOrder ?? 0)) { found.sortOrder = m.sortOrder ?? 0; dirty = true; }
-          if ((found.icon ?? null) !== (m.icon ?? null)) { found.icon = m.icon ?? null; dirty = true; }
+          if (found.label !== m.label) {
+            found.label = m.label;
+            dirty = true;
+          }
+          if ((found.sortOrder ?? 0) !== (m.sortOrder ?? 0)) {
+            found.sortOrder = m.sortOrder ?? 0;
+            dirty = true;
+          }
+          if ((found.icon ?? null) !== (m.icon ?? null)) {
+            found.icon = m.icon ?? null;
+            dirty = true;
+          }
           if (dirty) {
             await modRepo.save(found);
             this.log.log(`~ modulo actualizado: ${m.moduleKey}`);
@@ -325,7 +796,7 @@ export class BootstrapService implements OnModuleInit {
 
       // --- permisos ---
       const all = await permRepo.find({ relations: { module: true } });
-      const byCode = new Map(all.map(p => [p.code, p]));
+      const byCode = new Map(all.map((p) => [p.code, p]));
       const allCodes: string[] = [];
 
       for (const p of PERMS) {
@@ -334,7 +805,9 @@ export class BootstrapService implements OnModuleInit {
 
         const mod = byKey.get(p.moduleKey);
         if (!mod) {
-          this.log.warn(`(omitido) No existe modulo "${p.moduleKey}" para crear permiso ${code}`);
+          this.log.warn(
+            `(omitido) No existe modulo "${p.moduleKey}" para crear permiso ${code}`,
+          );
           continue;
         }
 
@@ -351,10 +824,22 @@ export class BootstrapService implements OnModuleInit {
           this.log.log(`+ permiso creado: ${code}`);
         } else {
           let dirty = false;
-          if (found.description !== p.description) { found.description = p.description; dirty = true; }
-          if ((found.sortOrder ?? 0) !== (p.sortOrder ?? 0)) { found.sortOrder = p.sortOrder ?? 0; dirty = true; }
-          if (found.actionKey !== p.actionKey) { found.actionKey = p.actionKey; dirty = true; }
-          if (!found.module || found.module.moduleKey !== mod.moduleKey) { found.module = mod; dirty = true; }
+          if (found.description !== p.description) {
+            found.description = p.description;
+            dirty = true;
+          }
+          if ((found.sortOrder ?? 0) !== (p.sortOrder ?? 0)) {
+            found.sortOrder = p.sortOrder ?? 0;
+            dirty = true;
+          }
+          if (found.actionKey !== p.actionKey) {
+            found.actionKey = p.actionKey;
+            dirty = true;
+          }
+          if (!found.module || found.module.moduleKey !== mod.moduleKey) {
+            found.module = mod;
+            dirty = true;
+          }
           if (dirty) {
             await permRepo.save(found);
             this.log.log(`~ permiso actualizado: ${code}`);
@@ -377,10 +862,14 @@ export class BootstrapService implements OnModuleInit {
       adminRole = this.rolesRepo.create({ name: 'admin', permissions: [] });
     }
 
-    const currentCodes = new Set((adminRole.permissions ?? []).map(p => p.code));
-    const toFetch = allCodes.filter(c => !currentCodes.has(c));
+    const currentCodes = new Set(
+      (adminRole.permissions ?? []).map((p) => p.code),
+    );
+    const toFetch = allCodes.filter((c) => !currentCodes.has(c));
     if (toFetch.length) {
-      const newPerms = await this.permsRepo.find({ where: { code: In(toFetch) } });
+      const newPerms = await this.permsRepo.find({
+        where: { code: In(toFetch) },
+      });
       adminRole.permissions = [...(adminRole.permissions ?? []), ...newPerms];
       await this.rolesRepo.save(adminRole);
       this.log.log(`~ admin recibio ${newPerms.length} permisos nuevos.`);
@@ -404,7 +893,10 @@ export class BootstrapService implements OnModuleInit {
           'service-order.edit',
           'service-order.assign',
           'service-order.transition',
+          'service-order.item-transition',
           'service-order.deliver',
+          'service-order.item-deliver',
+          'service-order.item-cancel',
           'service-order.billing-link',
           'clients.read',
           'clients.create',
@@ -418,6 +910,8 @@ export class BootstrapService implements OnModuleInit {
           'service-order-agreement.update',
           'service-order-agreement.confirm',
           'service-order-agreement.void',
+          'service-order-agreement.record-client-decision',
+          'service-order-agreement.apply-discount',
           'service-order-inbox.read',
           'service-order-inbox.send',
           'service-order-payment.create',
@@ -430,6 +924,8 @@ export class BootstrapService implements OnModuleInit {
           'service-order.read',
           'service-order.update',
           'service-order.transition',
+          'service-order.item-transition',
+          'service-order.item-cancel',
           'service-order-diagnosis.create',
           'service-order-diagnosis.read',
           'service-order-diagnosis.update',
@@ -437,6 +933,8 @@ export class BootstrapService implements OnModuleInit {
           'service-order-agreement.update',
           'service-order-agreement.read',
           'service-order-agreement.confirm',
+          'service-order-agreement.record-client-decision',
+          'service-order-agreement.apply-discount',
           'service-order-inbox.read',
           'service-order-inbox.send',
         ],
@@ -447,8 +945,16 @@ export class BootstrapService implements OnModuleInit {
           'service-order.read',
           'service-order.assign',
           'service-order.transition',
+          'service-order.item-transition',
+          'service-order.item-cancel',
+          'service-order.item-cancel-after-start',
           'service-order-diagnosis.read',
+          'service-order-agreement.create',
           'service-order-agreement.read',
+          'service-order-agreement.update',
+          'service-order-agreement.record-client-decision',
+          'service-order-agreement.apply-discount',
+          'service-order-agreement.override-discount-limit',
           'service-order-payment.read',
           'service-order-event.read',
           'service-order-inbox.read',
@@ -466,11 +972,17 @@ export class BootstrapService implements OnModuleInit {
         role = this.rolesRepo.create({ name: seed.name, permissions: [] });
       }
 
-      const grantedCodes = new Set((role.permissions ?? []).map((permission) => permission.code));
-      const missingCodes = seed.permissionCodes.filter((code) => !grantedCodes.has(code));
+      const grantedCodes = new Set(
+        (role.permissions ?? []).map((permission) => permission.code),
+      );
+      const missingCodes = seed.permissionCodes.filter(
+        (code) => !grantedCodes.has(code),
+      );
 
       if (missingCodes.length) {
-        const permissions = await this.permsRepo.find({ where: { code: In(missingCodes) } });
+        const permissions = await this.permsRepo.find({
+          where: { code: In(missingCodes) },
+        });
         role.permissions = [...(role.permissions ?? []), ...permissions];
       }
 
@@ -497,7 +1009,9 @@ export class BootstrapService implements OnModuleInit {
     }
 
     // document type por defecto (ya asegurado arriba)
-    const defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
+    const defaultDt = await this.docTypesRepo.findOne({
+      where: { name: 'DNI' },
+    });
 
     const adminUser = this.usersRepo.create({
       email,
@@ -505,7 +1019,7 @@ export class BootstrapService implements OnModuleInit {
       passwordHash,
       roles: [adminRole],
       isActive: true,
-      documentType: defaultDt!,    // seguro existe tras ensureDefaultDocumentType()
+      documentType: defaultDt!, // seguro existe tras ensureDefaultDocumentType()
       documentNumber: '00000000',
       phone: '999999999',
     });
@@ -514,7 +1028,9 @@ export class BootstrapService implements OnModuleInit {
     this.log.log(`Usuario inicial creado - ${email} / ${plainPwd}`);
   }
   private async ensureOperationalUsers() {
-    const defaultDt = await this.docTypesRepo.findOne({ where: { name: 'DNI' } });
+    const defaultDt = await this.docTypesRepo.findOne({
+      where: { name: 'DNI' },
+    });
     if (!defaultDt) {
       return;
     }
@@ -556,9 +1072,13 @@ export class BootstrapService implements OnModuleInit {
         continue;
       }
 
-      const role = await this.rolesRepo.findOne({ where: { name: seed.roleName } });
+      const role = await this.rolesRepo.findOne({
+        where: { name: seed.roleName },
+      });
       if (!role) {
-        this.log.warn(`No se pudo crear usuario ${seed.email}: rol ${seed.roleName} no encontrado.`);
+        this.log.warn(
+          `No se pudo crear usuario ${seed.email}: rol ${seed.roleName} no encontrado.`,
+        );
         continue;
       }
 
@@ -579,4 +1099,3 @@ export class BootstrapService implements OnModuleInit {
     }
   }
 }
-

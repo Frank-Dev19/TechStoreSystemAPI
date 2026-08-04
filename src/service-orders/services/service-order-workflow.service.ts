@@ -180,20 +180,26 @@ export class ServiceOrderWorkflowService {
       const assignedAt = new Date();
       serviceOrder.assignedToTechnicianId = dto.technicianId;
       serviceOrder.assignedAt = assignedAt;
-      serviceOrder.technicalStatus = ServiceOrderTechnicalStatus.ASIGNADA;
       await manager.getRepository(ServiceOrder).save(serviceOrder);
 
       if (previousTechnicianId && !this.isTerminalTechnical(previousTechnicalStatus)) {
         await this.adjustTechnicianBalance(previousTechnicianId, serviceOrder.serviceType, 0, -1, undefined, manager);
       }
-      await this.adjustTechnicianBalance(dto.technicianId, serviceOrder.serviceType, 1, 1, assignedAt, manager);
+      await this.adjustTechnicianBalance(
+        dto.technicianId,
+        serviceOrder.serviceType,
+        1,
+        this.isTerminalTechnical(previousTechnicalStatus) ? 0 : 1,
+        assignedAt,
+        manager,
+      );
       await this.recordEvent(
         serviceOrder.id,
         'assigned',
         'tecnico',
         'assignment',
         null,
-        ServiceOrderTechnicalStatus.ASIGNADA,
+        previousTechnicalStatus,
         actorId,
         null,
         { technicianId: dto.technicianId, previousTechnicianId },

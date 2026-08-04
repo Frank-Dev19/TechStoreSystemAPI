@@ -1,23 +1,26 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
-import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity';
-import { CreateServiceOrderDiagnosisDto } from './dto/create-service-order-diagnosis.dto';
-import { UpdateServiceOrderDiagnosisDto } from './dto/update-service-order-diagnosis.dto';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { ServiceOrderDiagnosisStatus } from './service-order-diagnosis-status.enum';
-import { ServiceOrderDiagnosisOutcome } from './service-order-diagnosis-outcome.enum';
-import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
-import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
 import { ServiceOrderCommercialStatus, ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceType } from '../enums/service-type.enum';
+import { ServiceOrderItemWorkflowService } from '../services/service-order-item-workflow.service';
+import { ServiceOrderItemCommercialVersionService } from '../services/service-order-item-commercial-version.service';
+import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
+import { CreateServiceOrderDiagnosisDto } from './dto/create-service-order-diagnosis.dto';
+import { UpdateServiceOrderDiagnosisDto } from './dto/update-service-order-diagnosis.dto';
+import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity';
+import { ServiceOrderDiagnosisOutcome } from './service-order-diagnosis-outcome.enum';
+import { ServiceOrderDiagnosisStatus } from './service-order-diagnosis-status.enum';
 
 type FindDiagnosisQuery = {
   page?: number | string;
   limit?: number | string;
   serviceOrderId?: number | string;
+  serviceOrderItemId?: number | string;
   status?: string;
   withDeleted?: string;
 };
@@ -29,9 +32,8 @@ export class ServiceOrderDiagnosisService {
   constructor(
     @InjectRepository(ServiceOrderDiagnosis)
     private readonly diagnosisRepository: Repository<ServiceOrderDiagnosis>,
-    @InjectRepository(ServiceOrder)
-    private readonly serviceOrderRepository: Repository<ServiceOrder>,
-    private readonly workflowService: ServiceOrderWorkflowService,
+    private readonly itemWorkflowService: ServiceOrderItemWorkflowService,
+    private readonly commercialVersionService: ServiceOrderItemCommercialVersionService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
@@ -46,18 +48,28 @@ export class ServiceOrderDiagnosisService {
 
     const qb = this.diagnosisRepository
       .createQueryBuilder('serviceOrderDiagnosis')
-      .innerJoin('serviceOrderDiagnosis.serviceOrder', 'serviceOrder')
+      .innerJoinAndSelect('serviceOrderDiagnosis.serviceOrderItem', 'serviceOrderItem')
+      .innerJoin('serviceOrderItem.serviceOrder', 'serviceOrder')
       .orderBy('serviceOrderDiagnosis.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
-    if (query.withDeleted === 'true') {
-      qb.withDeleted();
-    }
+    if (query.withDeleted === 'true') qb.withDeleted();
 
     if (query.serviceOrderId !== undefined) {
       const serviceOrderId = this.parsePositiveNumber(query.serviceOrderId, undefined, 'serviceOrderId');
-      qb.andWhere('serviceOrderDiagnosis.serviceOrderId = :serviceOrderId', { serviceOrderId });
+      qb.andWhere('serviceOrderItem.serviceOrderId = :serviceOrderId', { serviceOrderId });
+    }
+
+    if (query.serviceOrderItemId !== undefined) {
+      const serviceOrderItemId = this.parsePositiveNumber(
+        query.serviceOrderItemId,
+        undefined,
+        'serviceOrderItemId',
+      );
+      qb.andWhere('serviceOrderDiagnosis.serviceOrderItemId = :serviceOrderItemId', {
+        serviceOrderItemId,
+      });
     }
 
     if (statuses?.length) {
@@ -65,7 +77,6 @@ export class ServiceOrderDiagnosisService {
     }
 
     this.applyViewerScope(qb, viewer);
-
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
@@ -73,74 +84,88 @@ export class ServiceOrderDiagnosisService {
   async findOne(id: number, withDeleted = false, viewer?: DiagnosisViewer) {
     const diagnosis = await this.diagnosisRepository.findOne({
       where: { id },
-      relations: ['serviceOrder'],
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
       withDeleted,
     });
+    if (!diagnosis) throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
 
-    if (!diagnosis) {
-      throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
-    }
-
-    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
-
+    this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
     return diagnosis;
   }
 
   async create(dto: CreateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
     const result = await this.diagnosisRepository.manager.transaction(async (manager) => {
-      const serviceOrderRepository = manager.getRepository(ServiceOrder);
-      const serviceOrder = await serviceOrderRepository.findOne({
-        where: { id: dto.serviceOrderId },
+      const item = await this.resolveItemForCreate(dto, manager);
+      const order = await manager.getRepository(ServiceOrder).findOne({
+        where: { id: item.serviceOrderId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!serviceOrder) {
-        throw new NotFoundException(`ServiceOrder with id ${dto.serviceOrderId} not found`);
-      }
-      await this.ensureViewerCanAccessServiceOrder(serviceOrder, viewer);
-      this.ensureDiagnosisCreateAllowed(serviceOrder);
+      if (!order) throw new NotFoundException(`ServiceOrder with id ${item.serviceOrderId} not found`);
+
+      this.ensureViewerCanAccessServiceOrder(order, viewer);
+      this.ensureDiagnosisCreateAllowed(order, item);
+
       const repository = manager.getRepository(ServiceOrderDiagnosis);
       const previousCurrentDiagnosis = await repository.findOne({
         where: {
-          serviceOrderId: dto.serviceOrderId,
+          serviceOrderItemId: item.id,
           status: ServiceOrderDiagnosisStatus.CURRENT,
         },
         order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
       });
-      const sequenceNumber = dto.sequenceNumber ?? (await this.resolveNextSequence(repository, dto.serviceOrderId));
+      const sequenceNumber =
+        dto.sequenceNumber ?? (await this.resolveNextSequence(repository, item.id));
 
       await repository
         .createQueryBuilder()
         .update()
         .set({ status: ServiceOrderDiagnosisStatus.SUPERSEDED })
-        .where('service_order_id = :serviceOrderId', { serviceOrderId: dto.serviceOrderId })
+        .where('service_order_item_id = :serviceOrderItemId', { serviceOrderItemId: item.id })
         .andWhere('status = :status', { status: ServiceOrderDiagnosisStatus.CURRENT })
         .execute();
 
-      const entity = repository.create({
-        serviceOrderId: dto.serviceOrderId,
-        sequenceNumber,
-        status: ServiceOrderDiagnosisStatus.CURRENT,
-        outcome: dto.outcome ?? ServiceOrderDiagnosisOutcome.REPAIRABLE,
-        summary: dto.summary,
-        details: dto.details ?? null,
-        outcomeReason: dto.outcomeReason ?? null,
-        recommendedAction: dto.recommendedAction ?? null,
-      });
-
-      const diagnosis = await repository.save(entity);
-      const nextTechnicalStatus = this.resolveTechnicalStatusFromOutcome(
-        diagnosis.outcome,
-        serviceOrder.technicalStatus,
+      const diagnosis = await repository.save(
+        repository.create({
+          serviceOrderItemId: item.id,
+          sequenceNumber,
+          status: ServiceOrderDiagnosisStatus.CURRENT,
+          outcome: dto.outcome ?? ServiceOrderDiagnosisOutcome.REPAIRABLE,
+          summary: dto.summary,
+          details: dto.details ?? null,
+          outcomeReason: dto.outcomeReason ?? null,
+          recommendedAction: dto.recommendedAction ?? null,
+        }),
       );
-      const updatedOrder = await this.workflowService.changeTechnicalStatus(
-        dto.serviceOrderId,
-        nextTechnicalStatus,
+
+      if (
+        item.technicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION &&
+        [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(
+          diagnosis.outcome,
+        )
+      ) {
+        const creatorId = Number(viewer?.sub ?? order.assignedToTechnicianId ?? 0);
+        if (!creatorId) throw new BadRequestException('No se pudo identificar al autor del rediagnóstico');
+        await this.commercialVersionService.createRediagnosisDraft(
+          manager,
+          item.id,
+          creatorId,
+          diagnosis.summary,
+        );
+      }
+
+      item.commercialStatus = this.resolveCommercialStatusFromOutcome(diagnosis.outcome);
+      await manager.getRepository(ServiceOrderItem).save(item);
+
+      const updatedOrder = await this.itemWorkflowService.changeTechnicalStatus(
+        order.id,
+        item.id,
+        this.resolveTechnicalStatusFromOutcome(diagnosis.outcome, item.technicalStatus),
         undefined,
         undefined,
         viewer,
         manager,
       );
-      await this.applyCommercialStatusFromDiagnosis(dto.serviceOrderId, diagnosis.outcome, manager);
+      diagnosis.serviceOrderItem = item;
       return { diagnosis, previousCurrentDiagnosis, updatedOrder };
     });
 
@@ -153,16 +178,14 @@ export class ServiceOrderDiagnosisService {
   }
 
   async update(id: number, dto: UpdateServiceOrderDiagnosisDto, viewer?: DiagnosisViewer) {
-    const diagnosis = await this.diagnosisRepository.findOne({ where: { id }, relations: ['serviceOrder'] });
-    if (!diagnosis) {
-      throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
-    }
+    const diagnosis = await this.diagnosisRepository.findOne({
+      where: { id },
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
+    });
+    if (!diagnosis) throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
 
-    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
-
-    if (diagnosis.deletedAt) {
-      throw new BadRequestException('Cannot update a deleted diagnosis');
-    }
+    this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
+    if (diagnosis.deletedAt) throw new BadRequestException('Cannot update a deleted diagnosis');
 
     if (dto.summary !== undefined) diagnosis.summary = dto.summary;
     if (dto.details !== undefined) diagnosis.details = dto.details;
@@ -173,13 +196,14 @@ export class ServiceOrderDiagnosisService {
 
     return this.diagnosisRepository.manager.transaction(async (manager) => {
       const repository = manager.getRepository(ServiceOrderDiagnosis);
-
       if (dto.status === ServiceOrderDiagnosisStatus.CURRENT) {
         await repository
           .createQueryBuilder()
           .update()
           .set({ status: ServiceOrderDiagnosisStatus.SUPERSEDED })
-          .where('service_order_id = :serviceOrderId', { serviceOrderId: diagnosis.serviceOrderId })
+          .where('service_order_item_id = :serviceOrderItemId', {
+            serviceOrderItemId: diagnosis.serviceOrderItemId,
+          })
           .andWhere('id <> :id', { id: diagnosis.id })
           .andWhere('status = :status', { status: ServiceOrderDiagnosisStatus.CURRENT })
           .execute();
@@ -187,7 +211,6 @@ export class ServiceOrderDiagnosisService {
       } else if (dto.status === ServiceOrderDiagnosisStatus.SUPERSEDED) {
         diagnosis.status = ServiceOrderDiagnosisStatus.SUPERSEDED;
       }
-
       return repository.save(diagnosis);
     });
   }
@@ -208,19 +231,13 @@ export class ServiceOrderDiagnosisService {
   async restore(id: number, viewer?: DiagnosisViewer) {
     const diagnosis = await this.diagnosisRepository.findOne({
       where: { id },
-      relations: ['serviceOrder'],
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
       withDeleted: true,
     });
+    if (!diagnosis) throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
 
-    if (!diagnosis) {
-      throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
-    }
-
-    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
-
-    if (!diagnosis.deletedAt) {
-      return { ok: true, message: 'ServiceOrderDiagnosis already active' };
-    }
+    this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
+    if (!diagnosis.deletedAt) return { ok: true, message: 'ServiceOrderDiagnosis already active' };
 
     await this.diagnosisRepository.restore(id);
     return { ok: true, message: `ServiceOrderDiagnosis ${id} restored successfully` };
@@ -230,21 +247,67 @@ export class ServiceOrderDiagnosisService {
     this.ensureIds(ids);
     const existing = await this.diagnosisRepository.find({
       where: { id: In(ids) },
-      relations: ['serviceOrder'],
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
       withDeleted: true,
     });
-
     for (const diagnosis of existing) {
-      await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+      this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
     }
 
     const toRestore = existing.filter((entry) => entry.deletedAt);
-    if (!toRestore.length) {
-      throw new NotFoundException('No service order diagnoses found to restore');
-    }
+    if (!toRestore.length) throw new NotFoundException('No service order diagnoses found to restore');
 
     await this.diagnosisRepository.restore(toRestore.map((entry) => entry.id));
     return { ok: true, message: `${toRestore.length} service order diagnoses restored successfully` };
+  }
+
+  private async resolveItemForCreate(
+    dto: CreateServiceOrderDiagnosisDto,
+    manager: EntityManager,
+  ): Promise<ServiceOrderItem> {
+    const repository = manager.getRepository(ServiceOrderItem);
+    let itemId = dto.serviceOrderItemId;
+
+    if (!itemId) {
+      const legacyOrderId = Number(dto.serviceOrderId);
+      const items = await repository.find({ where: { serviceOrderId: legacyOrderId }, order: { position: 'ASC' } });
+      if (items.length !== 1) {
+        throw new BadRequestException(
+          'serviceOrderItemId es obligatorio cuando la orden tiene cero o varios equipos',
+        );
+      }
+      itemId = items[0].id;
+    }
+
+    const item = await repository.findOne({
+      where: { id: itemId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!item) throw new NotFoundException(`ServiceOrderItem with id ${itemId} not found`);
+    if (dto.serviceOrderId && Number(dto.serviceOrderId) !== Number(item.serviceOrderId)) {
+      throw new BadRequestException('El equipo no pertenece a la orden indicada');
+    }
+    return item;
+  }
+
+  private ensureDiagnosisCreateAllowed(order: ServiceOrder, item: ServiceOrderItem): void {
+    if (item.technicalStatus === ServiceOrderTechnicalStatus.EN_DIAGNOSTICO) {
+      if (![ServiceType.DIAGNOSIS, ServiceType.WARRANTY_SERVICE].includes(order.serviceType)) {
+        throw new BadRequestException('Only diagnosis or warranty service orders can register a diagnosis');
+      }
+      return;
+    }
+
+    if (item.technicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION) {
+      if (order.serviceType !== ServiceType.DIAGNOSIS) {
+        throw new BadRequestException('Only diagnosis service orders can create a new diagnosis from IN_SERVICE');
+      }
+      return;
+    }
+
+    throw new BadRequestException(
+      `Cannot register a diagnosis while the service order item is ${item.technicalStatus}`,
+    );
   }
 
   private resolveTechnicalStatusFromOutcome(
@@ -257,108 +320,57 @@ export class ServiceOrderDiagnosisService {
     ) {
       return ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL;
     }
-
-    return [
-      ServiceOrderDiagnosisOutcome.REPAIRABLE,
-      ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
-    ].includes(outcome)
+    return [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
       ? ServiceOrderTechnicalStatus.DIAGNOSTICADA
       : ServiceOrderTechnicalStatus.SIN_SOLUCION;
   }
 
-  private async ensureServiceOrder(id: number) {
-    const serviceOrder = await this.serviceOrderRepository.findOne({ where: { id } });
-    if (!serviceOrder) {
-      throw new NotFoundException(`ServiceOrder with id ${id} not found`);
-    }
-    return serviceOrder;
-  }
-
-  private ensureDiagnosisCreateAllowed(serviceOrder: ServiceOrder) {
-    if (serviceOrder.technicalStatus === ServiceOrderTechnicalStatus.EN_DIAGNOSTICO) {
-      if (
-        ![ServiceType.DIAGNOSIS, ServiceType.WARRANTY_SERVICE].includes(serviceOrder.serviceType)
-      ) {
-        throw new BadRequestException('Only diagnosis or warranty service orders can register a diagnosis');
-      }
-      return;
-    }
-
-    if (serviceOrder.technicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION) {
-      if (serviceOrder.serviceType !== ServiceType.DIAGNOSIS) {
-        throw new BadRequestException('Only diagnosis service orders can create a new diagnosis from IN_SERVICE');
-      }
-      return;
-    }
-
-    throw new BadRequestException(
-      `Cannot register a diagnosis while the service order is ${serviceOrder.technicalStatus}`,
-    );
-  }
-
-  private async applyCommercialStatusFromDiagnosis(
-    serviceOrderId: number,
+  private resolveCommercialStatusFromOutcome(
     outcome: ServiceOrderDiagnosisOutcome,
-    manager?: EntityManager,
-  ): Promise<void> {
-    const repository = manager?.getRepository(ServiceOrder) ?? this.serviceOrderRepository;
-    const serviceOrder = await repository.findOne({ where: { id: serviceOrderId } });
-    if (!serviceOrder) {
-      throw new NotFoundException(`ServiceOrder with id ${serviceOrderId} not found`);
-    }
-
-    if (
-      [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
-    ) {
-      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
-    } else {
-      serviceOrder.commercialStatus = ServiceOrderCommercialStatus.NO_REQUIERE;
-    }
-
-    await repository.save(serviceOrder);
+  ): ServiceOrderCommercialStatus {
+    return [ServiceOrderDiagnosisOutcome.REPAIRABLE, ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES].includes(outcome)
+      ? ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA
+      : ServiceOrderCommercialStatus.NO_REQUIERE;
   }
 
   private async ensureDiagnosis(id: number, viewer?: DiagnosisViewer) {
-    const diagnosis = await this.diagnosisRepository.findOne({ where: { id }, relations: ['serviceOrder'] });
-    if (!diagnosis) {
-      throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
-    }
-
-    await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+    const diagnosis = await this.diagnosisRepository.findOne({
+      where: { id },
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
+    });
+    if (!diagnosis) throw new NotFoundException(`ServiceOrderDiagnosis with id ${id} not found`);
+    this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
   }
 
   private async ensureDiagnoses(ids: number[], viewer?: DiagnosisViewer) {
-    const diagnoses = await this.diagnosisRepository.find({ where: { id: In(ids) }, relations: ['serviceOrder'] });
+    const diagnoses = await this.diagnosisRepository.find({
+      where: { id: In(ids) },
+      relations: ['serviceOrderItem', 'serviceOrderItem.serviceOrder'],
+    });
     for (const diagnosis of diagnoses) {
-      await this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrder, viewer);
+      this.ensureViewerCanAccessServiceOrder(diagnosis.serviceOrderItem?.serviceOrder, viewer);
     }
   }
 
-  private applyViewerScope(qb: any, viewer?: DiagnosisViewer): void {
-    if (!this.isTechnicianViewer(viewer)) {
-      return;
-    }
-
+  private applyViewerScope(
+    qb: SelectQueryBuilder<ServiceOrderDiagnosis>,
+    viewer?: DiagnosisViewer,
+  ): void {
+    if (!this.isTechnicianViewer(viewer)) return;
     const technicianId = Number(viewer?.sub ?? 0);
-    if (!technicianId) {
-      throw new ForbiddenException('Usuario tecnico no identificado');
-    }
-
+    if (!technicianId) throw new ForbiddenException('Usuario tecnico no identificado');
     qb.andWhere('serviceOrder.assignedToTechnicianId = :viewerTechnicianId', {
       viewerTechnicianId: technicianId,
     });
   }
 
-  private async ensureViewerCanAccessServiceOrder(serviceOrder: ServiceOrder | null | undefined, viewer?: DiagnosisViewer) {
-    if (!this.isTechnicianViewer(viewer)) {
-      return;
-    }
-
+  private ensureViewerCanAccessServiceOrder(
+    serviceOrder: ServiceOrder | null | undefined,
+    viewer?: DiagnosisViewer,
+  ): void {
+    if (!this.isTechnicianViewer(viewer)) return;
     const technicianId = Number(viewer?.sub ?? 0);
-    if (!technicianId) {
-      throw new ForbiddenException('Usuario tecnico no identificado');
-    }
-
+    if (!technicianId) throw new ForbiddenException('Usuario tecnico no identificado');
     if (!serviceOrder || Number(serviceOrder.assignedToTechnicianId) !== technicianId) {
       throw new ForbiddenException('No tienes acceso a esta orden de servicio');
     }
@@ -370,15 +382,14 @@ export class ServiceOrderDiagnosisService {
 
   private async resolveNextSequence(
     repository: Repository<ServiceOrderDiagnosis>,
-    serviceOrderId: number,
-  ) {
+    serviceOrderItemId: number,
+  ): Promise<number> {
     const raw = await repository
       .createQueryBuilder('serviceOrderDiagnosis')
       .select('MAX(serviceOrderDiagnosis.sequenceNumber)', 'max')
-      .where('serviceOrderDiagnosis.serviceOrderId = :serviceOrderId', { serviceOrderId })
+      .where('serviceOrderDiagnosis.serviceOrderItemId = :serviceOrderItemId', { serviceOrderItemId })
       .withDeleted()
       .getRawOne<{ max: string | null } | undefined>();
-
     return (Number(raw?.max ?? null) || 0) + 1;
   }
 
@@ -389,22 +400,15 @@ export class ServiceOrderDiagnosisService {
     max?: number,
   ): number {
     if (value === undefined || value === null || value === '') {
-      return fallback ?? (() => {
-        throw new BadRequestException(`${field} is required`);
-      })();
+      if (fallback !== undefined) return fallback;
+      throw new BadRequestException(`${field} is required`);
     }
-
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       throw new BadRequestException(`${field} must be a positive number`);
     }
-
     const normalized = Math.floor(parsed);
-    if (max && normalized > max) {
-      return max;
-    }
-
-    return normalized;
+    return max && normalized > max ? max : normalized;
   }
 
   private parseEnumList<T extends string>(
@@ -412,10 +416,7 @@ export class ServiceOrderDiagnosisService {
     enumObject: Record<string, string>,
     field: string,
   ): T[] | undefined {
-    if (!value) {
-      return undefined;
-    }
-
+    if (!value) return undefined;
     const values = value.split(',').map((entry) => entry.trim()).filter(Boolean) as T[];
     const allowed = Object.values(enumObject);
     const invalid = values.filter((entry) => !allowed.includes(entry));
@@ -426,8 +427,6 @@ export class ServiceOrderDiagnosisService {
   }
 
   private ensureIds(ids: number[]) {
-    if (!ids?.length) {
-      throw new BadRequestException('No ids provided');
-    }
+    if (!ids?.length) throw new BadRequestException('No ids provided');
   }
 }

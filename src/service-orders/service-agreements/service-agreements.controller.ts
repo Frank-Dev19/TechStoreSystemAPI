@@ -8,6 +8,7 @@
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ServiceOrderAgreementsService } from './service-agreements.service';
@@ -19,13 +20,25 @@ import { Permissions } from '../../rbac/decorators/permissions.decorator';
 import { CreateServiceOrderAgreementDto } from './dto/create-service-agreement.dto';
 import { UpdateServiceOrderAgreementDto } from './dto/update-service-agreement.dto';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
-import { RECEPTIONIST_ROLE_NAMES, SUPERVISOR_ROLE_NAMES } from '../../common/constants/role-names';
+import {
+  RECEPTIONIST_ROLE_NAMES,
+  SUPERVISOR_ROLE_NAMES,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
+import { CreateServiceOrderCommercialRevisionDto } from './dto/create-service-order-commercial-revision.dto';
+import { ServiceOrderCommercialRevisionService } from './service-order-commercial-revision.service';
+import { RecordServiceOrderClientDecisionDto } from './dto/record-service-order-client-decision.dto';
+import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES)
+@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
 @Controller('service-order-agreements')
 export class ServiceOrderAgreementsController {
-  constructor(private readonly serviceOrderAgreementsService: ServiceOrderAgreementsService) {}
+  constructor(
+    private readonly serviceOrderAgreementsService: ServiceOrderAgreementsService,
+    private readonly commercialRevisionService: ServiceOrderCommercialRevisionService,
+    private readonly commercialDecisionService: ServiceOrderCommercialDecisionService,
+  ) {}
 
   @Permissions('service-order-agreement.read')
   @Get()
@@ -37,6 +50,18 @@ export class ServiceOrderAgreementsController {
   @Get('technician-rankings')
   getTechnicianRevenueRankings() {
     return this.serviceOrderAgreementsService.getTechnicianRevenueRankings();
+  }
+
+  @Permissions('service-order-agreement.create')
+  @Post('revisions')
+  createRevision(@Body() dto: CreateServiceOrderCommercialRevisionDto, @Req() req: any) {
+    return this.commercialRevisionService.createRevision(dto, req.user);
+  }
+
+  @Permissions('service-order-agreement.record-client-decision')
+  @Post('client-decisions')
+  recordClientDecision(@Body() dto: RecordServiceOrderClientDecisionDto, @Req() req: any) {
+    return this.commercialDecisionService.recordDecision(dto, req.user);
   }
 
   @Permissions('service-order-agreement.read')

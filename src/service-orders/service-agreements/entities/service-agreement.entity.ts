@@ -15,6 +15,7 @@ import { ServiceOrderAgreementProduct } from './service-agreement-product.entity
 import { ServiceOrderAgreementServiceItem } from './service-agreement-service-item.entity';
 import { ServiceOrderAgreementStatus } from '../service-agreement-status.enum';
 import { ServiceOrderAgreementSource } from '../service-agreement-source.enum';
+import { ServiceOrderAgreementItem } from './service-agreement-item.entity';
 
 @Entity('service_order_agreements')
 export class ServiceOrderAgreement {
@@ -74,6 +75,9 @@ export class ServiceOrderAgreement {
 
   @OneToMany(() => ServiceOrderAgreementServiceItem, (service) => service.serviceOrderAgreement, { cascade: true })
   serviceItems: ServiceOrderAgreementServiceItem[];
+
+  @OneToMany(() => ServiceOrderAgreementItem, (item) => item.serviceOrderAgreement, { cascade: true })
+  items: ServiceOrderAgreementItem[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

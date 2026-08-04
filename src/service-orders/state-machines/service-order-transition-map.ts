@@ -17,6 +17,12 @@ export const serviceOrderTransitionMap = {
       ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION,
     ],
     [ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA]: [ServiceOrderOperativeStatus.ENTREGADA],
+    [ServiceOrderOperativeStatus.ENTREGA_PARCIAL]: [ServiceOrderOperativeStatus.ENTREGADA],
+    [ServiceOrderOperativeStatus.CANCELACION_SOLICITADA]: [
+      ServiceOrderOperativeStatus.EN_PROCESO,
+      ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+      ServiceOrderOperativeStatus.CANCELADA,
+    ],
     [ServiceOrderOperativeStatus.ENTREGADA]: [],
     [ServiceOrderOperativeStatus.CANCELADA]: [],
     [ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION]: [],

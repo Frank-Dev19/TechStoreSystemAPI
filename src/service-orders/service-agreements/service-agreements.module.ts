@@ -10,6 +10,15 @@ import { ServiceOrdersModule } from '../service-orders.module';
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../inventory/entities/product.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
+import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
+import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-commercial-line.entity';
+import { ServiceOrderAgreementItem } from './entities/service-agreement-item.entity';
+import { ServiceOrderCommercialRevisionService } from './service-order-commercial-revision.service';
+import { ServiceOrderClientDecision } from './entities/service-order-client-decision.entity';
+import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
+import { ServiceOrderLineDiscount } from './entities/service-order-line-discount.entity';
+import { PricingModule } from '../../pricing/pricing.module';
 
 @Module({
   imports: [
@@ -19,14 +28,28 @@ import { ServiceOrder } from '../entities/service-order.entity';
       ServiceOrderAgreementServiceItem,
       ServiceOrder,
       ServiceOrderDiagnosis,
+      ServiceOrderItem,
+      ServiceOrderItemCommercialVersion,
+      ServiceOrderItemCommercialLine,
+      ServiceOrderAgreementItem,
+      ServiceOrderClientDecision,
+      ServiceOrderLineDiscount,
       User,
       Product,
     ]),
     ServiceOrdersModule,
+    PricingModule,
   ],
   controllers: [ServiceOrderAgreementsController],
-  providers: [ServiceOrderAgreementsService],
-  exports: [ServiceOrderAgreementsService],
+  providers: [
+    ServiceOrderAgreementsService,
+    ServiceOrderCommercialRevisionService,
+    ServiceOrderCommercialDecisionService,
+  ],
+  exports: [
+    ServiceOrderAgreementsService,
+    ServiceOrderCommercialRevisionService,
+    ServiceOrderCommercialDecisionService,
+  ],
 })
 export class ServiceOrderAgreementsModule {}
-

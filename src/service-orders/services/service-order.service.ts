@@ -41,11 +41,13 @@ import { ServiceOrderSlaDto } from '../dto/service-order-sla.dto';
 import { ServiceOrderTimeMetricsDto } from '../dto/service-order-time-metrics.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
 import { ServiceOrderIntakePdfService } from '../documents/service-order-intake-pdf.service';
 import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
+import { buildServiceOrderItemProgress } from './service-order-aggregate-projection.service';
 
 type FindAllServiceOrdersQuery = {
   page?: number | string;
@@ -66,6 +68,8 @@ type FindAllServiceOrdersQuery = {
 type ServiceOrderWithMetrics = ServiceOrder & {
   sla: ServiceOrderSlaDto;
   timeMetrics: ServiceOrderTimeMetricsDto;
+  itemsCount: number;
+  itemCodes: string[];
 };
 
 type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
@@ -236,7 +240,9 @@ export class ServiceOrderService {
     const qb = this.serviceOrderRepository
       .createQueryBuilder('serviceOrder')
       .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
-      .leftJoinAndSelect('serviceOrder.client', 'client');
+      .leftJoinAndSelect('serviceOrder.client', 'client')
+      .leftJoinAndSelect('serviceOrder.items', 'items');
+    qb.leftJoinAndSelect('items.cancellationRequests', 'itemCancellationRequests');
 
     if (includeDeleted) {
       qb.withDeleted();
@@ -258,7 +264,7 @@ export class ServiceOrderService {
       qb.andWhere('serviceOrder.economicStatus IN (:...economicStatuses)', { economicStatuses });
     }
     if (priorities?.length) {
-      qb.andWhere('serviceOrder.priority IN (:...priorities)', { priorities });
+      qb.andWhere('items.priority IN (:...priorities)', { priorities });
     }
     if (query.clientId !== undefined) {
       const clientId = this.parsePositiveNumber(query.clientId, undefined, 'clientId');
@@ -277,12 +283,13 @@ export class ServiceOrderService {
         new Brackets((expr) => {
           expr
             .where('LOWER(serviceOrder.code) LIKE :search')
-            .orWhere('LOWER(serviceOrder.serialNumber) LIKE :search')
-            .orWhere('LOWER(serviceOrder.initialIssue) LIKE :search')
-            .orWhere('LOWER(serviceOrder.brand) LIKE :search')
-            .orWhere('LOWER(serviceOrder.model) LIKE :search')
+            .orWhere('LOWER(items.code) LIKE :search')
+            .orWhere('LOWER(items.serialNumber) LIKE :search')
+            .orWhere('LOWER(items.initialIssue) LIKE :search')
+            .orWhere('LOWER(items.brand) LIKE :search')
+            .orWhere('LOWER(items.model) LIKE :search')
             .orWhere('LOWER(serviceOrder.clientSnapshotName) LIKE :search')
-            .orWhere('LOWER(serviceOrder.equipmentTypeOther) LIKE :search');
+            .orWhere('LOWER(items.equipmentTypeOther) LIKE :search');
         }),
       ).setParameter('search', normalized);
     }
@@ -327,13 +334,18 @@ export class ServiceOrderService {
           .join(': ') || null,
       clientPhone: serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null,
       clientEmail: serviceOrder.clientSnapshotEmail ?? serviceOrder.client?.email ?? null,
-      equipmentType: serviceOrder.equipmentTypeOther?.trim() || serviceOrder.equipmentType,
-      brand: serviceOrder.brand ?? null,
-      model: serviceOrder.model ?? null,
-      serialNumber: serviceOrder.serialNumber ?? null,
-      accessories: serviceOrder.accessories ?? null,
-      notes: serviceOrder.notes ?? null,
-      initialIssue: serviceOrder.initialIssue,
+      items: this.resolveOrderItems(serviceOrder).map((item) => ({
+        position: item.position,
+        code: item.code,
+        priority: item.priority,
+        equipmentType: item.equipmentTypeOther?.trim() || item.equipmentType,
+        brand: item.brand ?? null,
+        model: item.model ?? null,
+        serialNumber: item.serialNumber ?? null,
+        accessories: item.accessories ?? null,
+        notes: item.notes ?? null,
+        initialIssue: item.initialIssue,
+      })),
     });
 
     return {
@@ -829,10 +841,43 @@ export class ServiceOrderService {
 
   private enrichWithMetrics(serviceOrder: ServiceOrder): ServiceOrderWithMetrics {
     const metrics = this.metricsFactory.build(serviceOrder);
+    const items = this.resolveOrderItems(serviceOrder);
     return Object.assign(serviceOrder, {
       sla: metrics.sla,
       timeMetrics: metrics.timeMetrics,
+      itemsCount: items.length,
+      itemCodes: items.map((item) => item.code),
+      itemProgress: buildServiceOrderItemProgress(
+        items.map((item) => ({
+          ...item,
+          operativeStatus: item.operativeStatus ?? serviceOrder.operativeStatus,
+          technicalStatus: item.technicalStatus ?? serviceOrder.technicalStatus,
+        })) as ServiceOrderItem[],
+      ),
     }) as ServiceOrderWithMetrics;
+  }
+
+  private resolveOrderItems(serviceOrder: ServiceOrder) {
+    if (serviceOrder.items?.length) {
+      return [...serviceOrder.items].sort(
+        (left, right) => left.position - right.position || left.code.localeCompare(right.code),
+      );
+    }
+    return [
+      {
+        position: 1,
+        code: serviceOrder.code,
+        priority: serviceOrder.priority,
+        equipmentType: serviceOrder.equipmentType,
+        equipmentTypeOther: serviceOrder.equipmentTypeOther,
+        brand: serviceOrder.brand,
+        model: serviceOrder.model,
+        serialNumber: serviceOrder.serialNumber,
+        accessories: serviceOrder.accessories,
+        notes: serviceOrder.notes,
+        initialIssue: serviceOrder.initialIssue,
+      },
+    ];
   }
 
   private async dispatchIntakeSummaryForOrders(serviceOrders: ServiceOrderWithMetrics[]): Promise<void> {
@@ -952,7 +997,7 @@ export class ServiceOrderService {
   ): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.getRepository(ServiceOrder, manager).findOne({
       where: { id },
-      relations: ['assignedTechnician', 'client'],
+      relations: ['assignedTechnician', 'client', 'items', 'items.cancellationRequests'],
       withDeleted,
     });
 

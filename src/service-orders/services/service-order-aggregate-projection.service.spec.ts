@@ -1,0 +1,208 @@
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
+import { ServiceOrder } from '../entities/service-order.entity';
+import {
+  ServiceOrderCommercialStatus,
+  ServiceOrderOperativeStatus,
+  ServiceOrderTechnicalStatus,
+} from '../enums';
+import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
+
+describe('ServiceOrderAggregateProjectionService', () => {
+  const service = new ServiceOrderAggregateProjectionService();
+
+  it('proyecta estado parcial cuando un equipo está resuelto y otro sigue en ejecución', async () => {
+    const order = {
+      id: 10,
+      reviewStartedAt: null,
+      serviceStartedAt: null,
+      serviceCompletedAt: null,
+      readyForPickupAt: null,
+      deliveredAt: null,
+      resolvedAt: null,
+    } as ServiceOrder;
+    const items = [
+      createItem(101, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA),
+      createItem(102, ServiceOrderTechnicalStatus.EN_EJECUCION, ServiceOrderOperativeStatus.EN_PROCESO),
+    ];
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const itemRepository = { find: jest.fn().mockResolvedValue(items) };
+    const manager = {
+      getRepository: jest.fn((entity) => (entity === ServiceOrder ? orderRepository : itemRepository)),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.technicalStatus).toBe(ServiceOrderTechnicalStatus.EN_EJECUCION);
+    expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.EN_PROCESO);
+    expect(result.itemProgress).toEqual({
+      total: 2,
+      active: 2,
+      resolved: 1,
+      readyForPickup: 1,
+      delivered: 0,
+      cancelled: 0,
+      cancellationPending: 0,
+      isPartial: true,
+    });
+    expect(orderRepository.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
+    );
+    expect(orderRepository.save).toHaveBeenCalledWith(order);
+  });
+
+  it('proyecta cancelación solicitada mientras un equipo espera resolución', async () => {
+    const order = {
+      id: 12,
+      reviewStartedAt: null,
+      serviceStartedAt: null,
+      serviceCompletedAt: null,
+      readyForPickupAt: null,
+      deliveredAt: null,
+      resolvedAt: null,
+    } as ServiceOrder;
+    const items = [
+      createItem(121, ServiceOrderTechnicalStatus.EN_EJECUCION, ServiceOrderOperativeStatus.CANCELACION_SOLICITADA),
+      createItem(122, ServiceOrderTechnicalStatus.EN_EJECUCION, ServiceOrderOperativeStatus.EN_PROCESO),
+    ];
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === ServiceOrder ? orderRepository : { find: jest.fn().mockResolvedValue(items) },
+      ),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELACION_SOLICITADA);
+    expect(result.itemProgress?.cancellationPending).toBe(1);
+    expect(result.itemProgress?.cancelled).toBe(0);
+  });
+
+  it('marca lista la cabecera solo cuando todos los equipos activos terminaron', async () => {
+    const order = {
+      id: 11,
+      reviewStartedAt: null,
+      serviceStartedAt: null,
+      serviceCompletedAt: null,
+      readyForPickupAt: null,
+      deliveredAt: null,
+      resolvedAt: null,
+    } as ServiceOrder;
+    const items = [
+      createItem(111, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA),
+      createItem(112, ServiceOrderTechnicalStatus.SIN_SOLUCION, ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION),
+    ];
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === ServiceOrder ? orderRepository : { find: jest.fn().mockResolvedValue(items) },
+      ),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.technicalStatus).toBe(ServiceOrderTechnicalStatus.RESUELTA);
+    expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA);
+    expect(result.itemProgress?.isPartial).toBe(false);
+  });
+
+  it('proyecta entrega parcial y finaliza solo cuando todos los equipos activos fueron entregados', async () => {
+    const order = createProjectionOrder(13);
+    const deliveredAt = new Date('2026-08-03T14:00:00.000Z');
+    const first = createItem(131, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.ENTREGADA);
+    first.deliveredAt = deliveredAt;
+    const second = createItem(
+      132,
+      ServiceOrderTechnicalStatus.RESUELTA,
+      ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+    );
+    const itemRepository = { find: jest.fn().mockResolvedValue([first, second]) };
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) => (entity === ServiceOrder ? orderRepository : itemRepository)),
+    } as any;
+
+    const partial = await service.recalculateLocked(manager, order.id);
+
+    expect(partial.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGA_PARCIAL);
+    expect(partial.deliveredAt).toBeNull();
+    expect(partial.itemProgress).toEqual(expect.objectContaining({ delivered: 1, active: 2, isPartial: true }));
+
+    second.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;
+    second.deliveredAt = new Date('2026-08-03T15:00:00.000Z');
+    const completed = await service.recalculateLocked(manager, order.id);
+
+    expect(completed.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
+    expect(completed.deliveredAt).toEqual(second.deliveredAt);
+    expect(completed.itemProgress).toEqual(expect.objectContaining({ delivered: 2, active: 2, isPartial: false }));
+  });
+
+  it('ignora equipos cancelados al calcular la fecha final de entrega', async () => {
+    const order = createProjectionOrder(14);
+    const delivered = createItem(141, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.ENTREGADA);
+    delivered.deliveredAt = new Date('2026-08-03T16:00:00.000Z');
+    const cancelled = createItem(142, ServiceOrderTechnicalStatus.EN_EJECUCION, ServiceOrderOperativeStatus.CANCELADA);
+    cancelled.cancelledAt = new Date('2026-08-03T15:00:00.000Z');
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === ServiceOrder ? orderRepository : { find: jest.fn().mockResolvedValue([delivered, cancelled]) },
+      ),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
+    expect(result.deliveredAt).toEqual(delivered.deliveredAt);
+  });
+});
+
+function createProjectionOrder(id: number): ServiceOrder {
+  return {
+    id,
+    reviewStartedAt: null,
+    serviceStartedAt: null,
+    serviceCompletedAt: null,
+    readyForPickupAt: null,
+    deliveredAt: null,
+    resolvedAt: null,
+  } as ServiceOrder;
+}
+
+function createItem(
+  id: number,
+  technicalStatus: ServiceOrderTechnicalStatus,
+  operativeStatus: ServiceOrderOperativeStatus,
+): ServiceOrderItem {
+  const now = technicalStatus === ServiceOrderTechnicalStatus.RESUELTA ? new Date('2026-08-03T12:00:00Z') : null;
+  return {
+    id,
+    serviceOrderId: 10,
+    position: id,
+    code: `SO-ITEM-${id}`,
+    technicalStatus,
+    operativeStatus,
+    commercialStatus: ServiceOrderCommercialStatus.AUTORIZADA,
+    reviewStartedAt: null,
+    serviceStartedAt: technicalStatus === ServiceOrderTechnicalStatus.EN_EJECUCION ? new Date() : null,
+    serviceCompletedAt: now,
+    readyForPickupAt: now,
+    resolvedAt: now,
+    deliveredAt: null,
+  } as ServiceOrderItem;
+}

@@ -169,6 +169,70 @@ describe('ServiceOrderWorkflowService', () => {
     );
   });
 
+  it('reasigna toda la orden sin reiniciar la etapa técnica de sus equipos', async () => {
+    const order = createServiceOrder({
+      assignedToTechnicianId: 7,
+      technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+      operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
+      items: [
+        { id: 101, technicalStatus: ServiceOrderTechnicalStatus.RESUELTA },
+        { id: 102, technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION },
+      ] as any,
+    });
+    userRepository.findOne.mockResolvedValue({
+      id: 8,
+      isActive: true,
+      deletedAt: null,
+      roles: [{ name: 'technician' }],
+    });
+    serviceOrderRepository.findOne
+      .mockResolvedValueOnce(order)
+      .mockImplementationOnce(async () => order);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+    const adjustBalance = jest.spyOn(service as any, 'adjustTechnicianBalance').mockResolvedValue(undefined);
+
+    const result = await service.assignTechnician(order.id, { technicianId: 8 }, 99);
+
+    expect(result.assignedToTechnicianId).toBe(8);
+    expect(result.technicalStatus).toBe(ServiceOrderTechnicalStatus.EN_EJECUCION);
+    expect(result.items?.map((item) => item.technicalStatus)).toEqual([
+      ServiceOrderTechnicalStatus.RESUELTA,
+      ServiceOrderTechnicalStatus.EN_EJECUCION,
+    ]);
+    expect(adjustBalance).toHaveBeenCalledWith(7, order.serviceType, 0, -1, undefined, expect.anything());
+    expect(adjustBalance).toHaveBeenCalledWith(8, order.serviceType, 1, 1, expect.any(Date), expect.anything());
+    expect(eventRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+        payloadJson: { technicianId: 8, previousTechnicianId: 7 },
+      }),
+    );
+  });
+
+  it('no incrementa carga activa al reasignar una orden ya terminada', async () => {
+    const order = createServiceOrder({
+      assignedToTechnicianId: 7,
+      technicalStatus: ServiceOrderTechnicalStatus.RESUELTA,
+      operativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+    });
+    userRepository.findOne.mockResolvedValue({
+      id: 8,
+      isActive: true,
+      deletedAt: null,
+      roles: [{ name: 'technician' }],
+    });
+    serviceOrderRepository.findOne
+      .mockResolvedValueOnce(order)
+      .mockImplementationOnce(async () => order);
+    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
+    const adjustBalance = jest.spyOn(service as any, 'adjustTechnicianBalance').mockResolvedValue(undefined);
+
+    await service.assignTechnician(order.id, { technicianId: 8 }, 99);
+
+    expect(adjustBalance).not.toHaveBeenCalledWith(7, order.serviceType, 0, -1, undefined, expect.anything());
+    expect(adjustBalance).toHaveBeenCalledWith(8, order.serviceType, 1, 0, expect.any(Date), expect.anything());
+  });
+
   it('uses the provided transaction manager repositories for assignment suggestions', async () => {
     const managerServiceOrderRepository = createMockRepo<ServiceOrder>();
     const manager = {

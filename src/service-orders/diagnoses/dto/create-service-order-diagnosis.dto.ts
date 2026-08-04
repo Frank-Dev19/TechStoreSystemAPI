@@ -1,11 +1,27 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 import { ServiceOrderDiagnosisStatus } from '../service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisOutcome } from '../service-order-diagnosis-outcome.enum';
 
 export class CreateServiceOrderDiagnosisDto {
+  @ValidateIf((dto: CreateServiceOrderDiagnosisDto) => dto.serviceOrderId == null)
   @IsNumber()
   @IsPositive()
-  serviceOrderId: number;
+  serviceOrderItemId?: number;
+
+  /** @deprecated Compatibilidad temporal para órdenes antiguas de un solo equipo. */
+  @ValidateIf((dto: CreateServiceOrderDiagnosisDto) => dto.serviceOrderItemId == null)
+  @IsNumber()
+  @IsPositive()
+  serviceOrderId?: number;
 
   @IsNumber()
   @IsPositive()

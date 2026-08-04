@@ -17,8 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ServiceOrderService } from '../services/service-order.service';
-import { CreateServiceOrderBatchDto } from '../dto/create-service-order-batch.dto';
-import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
+import { CreateServiceOrderAggregateDto } from '../dto/create-service-order-aggregate.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { BulkOperationsDto } from '../../common/dtos/bulk-ids.dto';
 import { CurrentUser } from '../../rbac/decorators/current-user.decorator';
@@ -36,6 +35,12 @@ import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.d
 import { ServiceOrderSaleLinkService } from '../services/service-order-sale-link.service';
 import { TransitionServiceOrderTechnicalDto } from '../dto/transition-service-order-technical.dto';
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
+import { ServiceOrderAggregateService } from '../services/service-order-aggregate.service';
+import { ServiceOrderItemWorkflowService } from '../services/service-order-item-workflow.service';
+import { ServiceOrderItemCancellationService } from '../services/service-order-item-cancellation.service';
+import { ServiceOrderItemDeliveryService } from '../services/service-order-item-delivery.service';
+import { RequestServiceOrderItemCancellationDto } from '../dto/request-service-order-item-cancellation.dto';
+import { ResolveServiceOrderItemCancellationDto } from '../dto/resolve-service-order-item-cancellation.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -43,6 +48,10 @@ import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 export class ServiceOrderController {
   constructor(
     private readonly serviceOrderService: ServiceOrderService,
+    private readonly aggregateService: ServiceOrderAggregateService,
+    private readonly itemWorkflowService: ServiceOrderItemWorkflowService,
+    private readonly itemCancellationService: ServiceOrderItemCancellationService,
+    private readonly itemDeliveryService: ServiceOrderItemDeliveryService,
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly saleLinkService: ServiceOrderSaleLinkService,
     private readonly inboxService: ServiceOrderInboxService,
@@ -50,20 +59,11 @@ export class ServiceOrderController {
 
   @Permissions('service-order.create')
   @Post()
-  create(@Body() dto: CreateServiceOrderDto, @CurrentUser() userId?: number) {
+  create(@Body() dto: CreateServiceOrderAggregateDto, @CurrentUser() userId?: number) {
     if (!userId) {
       throw new BadRequestException('Usuario autenticado no encontrado');
     }
-    return this.serviceOrderService.create(dto, userId);
-  }
-
-  @Permissions('service-order.create')
-  @Post('batch')
-  createBatch(@Body() dto: CreateServiceOrderBatchDto, @CurrentUser() userId?: number) {
-    if (!userId) {
-      throw new BadRequestException('Usuario autenticado no encontrado');
-    }
-    return this.serviceOrderService.createBatch(dto, userId);
+    return this.aggregateService.create(dto, userId);
   }
 
   @Permissions('service-order.read')
@@ -140,7 +140,18 @@ export class ServiceOrderController {
   @Permissions('service-order.deliver')
   @Patch(':id/deliver')
   deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number, @Req() req?: any) {
-    return this.serviceOrderService.markAsDelivered(id, userId, req?.user);
+    return this.itemDeliveryService.deliverOnlyItem(id, userId, req?.user);
+  }
+
+  @Permissions('service-order.item-deliver')
+  @Patch(':id/items/:itemId/deliver')
+  deliverItem(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemDeliveryService.deliverItem(id, itemId, userId, req?.user);
   }
 
   @Permissions('service-order.assign')
@@ -152,6 +163,44 @@ export class ServiceOrderController {
     @Req() req?: any,
   ) {
     return this.workflowService.assignTechnician(id, dto, userId, req?.user);
+  }
+
+  @Permissions('service-order.item-transition')
+  @Patch(':id/items/:itemId/technical/:status')
+  changeItemTechnicalStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus)) status: ServiceOrderTechnicalStatus,
+    @Body() dto?: TransitionServiceOrderTechnicalDto,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemWorkflowService.changeTechnicalStatus(id, itemId, status, userId, dto?.reason, req?.user);
+  }
+
+  @Permissions('service-order.item-cancel')
+  @Post(':id/items/:itemId/cancellations')
+  requestItemCancellation(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: RequestServiceOrderItemCancellationDto,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemCancellationService.requestCancellation(id, itemId, dto, userId, req?.user);
+  }
+
+  @Permissions('service-order.item-cancel-after-start')
+  @Patch(':id/items/:itemId/cancellations/:requestId/resolve')
+  resolveItemCancellation(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Param('requestId', ParseIntPipe) requestId: number,
+    @Body() dto: ResolveServiceOrderItemCancellationDto,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemCancellationService.resolveCancellation(id, itemId, requestId, dto, userId, req?.user);
   }
 
   @Permissions('service-order.transition')
