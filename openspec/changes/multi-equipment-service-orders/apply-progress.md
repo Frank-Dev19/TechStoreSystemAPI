@@ -76,6 +76,8 @@ Regresión al cierre del quinto corte: backend completo con 43 suites y 269 prue
 
 `npm run migration:show` no pudo validarse porque no hay MySQL local escuchando en `127.0.0.1:3306`. No se ejecutó `migration:run` ni se modificó ninguna base de datos.
 
+Primer intento real en MySQL de staging: las migraciones de fundamento agregado y decisiones comerciales se aplicaron y registraron; la migración de descuentos se detuvo antes de crear su tabla porque `pricing_config_id` era `INT` firmado y `pricing_configs.id` es `INT UNSIGNED`. El hotfix alinea la migración y la entidad como `UNSIGNED`, añade una regresión SQL focalizada y permite reanudar desde la tercera migración sin repetir las dos ya registradas.
+
 El lint completo no se marca como validado: el repositorio conserva deuda previa de formato CRLF/Prettier. El lint focalizado de los nuevos DTO, entidades, migraciones y servicios comerciales sí termina sin errores.
 
 ## Límite deliberado del corte

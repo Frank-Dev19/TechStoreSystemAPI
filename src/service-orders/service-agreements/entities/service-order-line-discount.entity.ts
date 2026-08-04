@@ -27,7 +27,12 @@ export class ServiceOrderLineDiscount {
   @JoinColumn({ name: 'commercial_line_id' })
   commercialLine: ServiceOrderItemCommercialLine;
 
-  @Column({ name: 'pricing_config_id', type: 'int', nullable: true })
+  @Column({
+    name: 'pricing_config_id',
+    type: 'int',
+    unsigned: true,
+    nullable: true,
+  })
   pricingConfigId: number | null;
 
   @ManyToOne(() => PricingConfig, { nullable: true, onDelete: 'SET NULL' })

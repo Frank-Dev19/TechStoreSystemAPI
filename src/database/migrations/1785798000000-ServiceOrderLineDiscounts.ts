@@ -8,7 +8,7 @@ export class ServiceOrderLineDiscounts1785798000000 implements MigrationInterfac
       `CREATE TABLE \`service_order_line_discounts\` (
         \`id\` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
         \`commercial_line_id\` bigint UNSIGNED NOT NULL,
-        \`pricing_config_id\` int NULL,
+        \`pricing_config_id\` int UNSIGNED NULL,
         \`rule_name\` varchar(160) NOT NULL,
         \`type\` enum ('PERCENTAGE') NOT NULL DEFAULT 'PERCENTAGE',
         \`percentage\` decimal(8,4) NOT NULL,

@@ -16,6 +16,7 @@ describe('ServiceOrderLineDiscounts1785798000000', () => {
       'CREATE TABLE `service_order_line_discounts`',
     );
     expect(executed[0]).toContain('`percentage` decimal(8,4) NOT NULL');
+    expect(executed[0]).toContain('`pricing_config_id` int UNSIGNED NULL');
     expect(executed[0]).toContain('`max_allowed_pct` decimal(8,4) NOT NULL');
     expect(executed[0]).toContain('`was_limit_overridden` tinyint NOT NULL');
     expect(executed[0]).toContain('`applied_by_user_id` int NOT NULL');
