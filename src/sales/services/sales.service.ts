@@ -251,29 +251,22 @@ export class SalesService {
       })
     );
 
-    // Calcular totales CORRECTAMENTE
-    const baseSubtotal = simulationResults.reduce(
+    // Calcular totales con precios que ya incluyen IGV
+    const baseSubtotal = this.roundMoney(simulationResults.reduce(
       (sum, result) => sum + result.pricing.baseSubtotal, 0
-    );
-    const discountTotal = simulationResults.reduce(
-      (sum, result) => sum + result.pricing.totalDiscount, 0
-    );
-    const subtotal = baseSubtotal - discountTotal;
-
-    // ❌ ANTES: Se calculaba IGV adicional (precio ya incluye IGV)
-    // const taxRate = 0.18;
-    // const taxAmount = subtotal * taxRate;
-    // const total = subtotal + taxAmount;
-
-    // ✅ AHORA: El precio YA incluye IGV, no se calcula adicional
-    const taxRate = 0; // Sin cálculo de IGV adicional
-    const taxAmount = 0; // Sin cálculo de IGV adicional
-    const total = subtotal; // El total es el precio con IGV incluido
-
-    // Verificar consistencia
-    const finalSubtotal = simulationResults.reduce(
+    ));
+    const finalSubtotal = this.roundMoney(simulationResults.reduce(
       (sum, result) => sum + result.pricing.finalSubtotal, 0
+    ));
+    const discountTotal = this.roundMoney(
+      baseSubtotal - finalSubtotal
     );
+    const grossSubtotal = finalSubtotal;
+    const taxBreakdown = await this.breakdownIncludedTax(grossSubtotal);
+    const subtotal = taxBreakdown.subtotal;
+    const taxRate = taxBreakdown.taxRate;
+    const taxAmount = taxBreakdown.taxAmount;
+    const total = taxBreakdown.total;
 
     // Validaciones
     const validationMessages: ValidationMessage[] = [];
@@ -518,10 +511,20 @@ export class SalesService {
     // Validar cliente
     const customer = await this.clientRepo.findOne({
       where: { id: createSaleDto.customerId },
+      relations: ['documentType'],
     });
 
     if (!customer) {
       throw new BadRequestException('Cliente no encontrado');
+    }
+
+    // Validar comprobante tributario antes de asignar serie y correlativo.
+    if (![DocumentType.BOLETA, DocumentType.FACTURA].includes(createSaleDto.documentType)) {
+      throw new BadRequestException('Las ventas directas solo pueden emitirse como BOLETA o FACTURA.');
+    }
+
+    if (createSaleDto.documentType === DocumentType.FACTURA && !this.isRucCustomer(customer)) {
+      throw new BadRequestException('Una factura requiere un cliente con RUC.');
     }
 
     // Obtener serie y número si no se especifican
@@ -569,11 +572,12 @@ export class SalesService {
       // Calcular precio con el motor de porcentajes
       const priceCalc = await this.pricingEngine.calculatePrice(item.productId);
       const discountPct = item.discountPct ?? 0;
-      const finalUnitPrice = Number((priceCalc.salePrice * (1 - discountPct / 100)).toFixed(6));
+      const baseUnitPrice = this.roundMoney(priceCalc.salePriceWithIgv);
+      const finalUnitPrice = this.roundMoney(baseUnitPrice * (1 - discountPct / 100));
 
       enhancedItems.push({
         ...item,
-        baseUnitPrice: priceCalc.salePrice,
+        baseUnitPrice,
         finalUnitPrice,
       });
     }
@@ -597,7 +601,7 @@ export class SalesService {
       (sum, p) => sum + p.amount, 0
     );
 
-    if (Math.abs(totalPayments - simulation.summary.total) > 0.01) {
+    if (this.toCents(totalPayments) !== this.toCents(simulation.summary.total)) {
       throw new BadRequestException(
         `El total de pagos (${totalPayments}) no coincide con el total de la venta (${simulation.summary.total})`
       );
@@ -2034,5 +2038,19 @@ export class SalesService {
       yearlyTaxDue,
       breakdown,
     };
+  }
+
+  private toCents(value: number): number {
+    return Math.round((Number(value) + Number.EPSILON) * 100);
+  }
+
+  private roundMoney(value: number): number {
+    return this.toCents(value) / 100;
+  }
+
+  private isRucCustomer(customer: Client): boolean {
+    const sunatCode = customer.documentType?.sunatCode;
+    const documentNumber = String(customer.documentNumber || '').trim();
+    return sunatCode === '6' && /^\d{11}$/.test(documentNumber);
   }
 }

@@ -12,6 +12,10 @@ export class ApisPeruBillingClient {
     return this.postJson<ApisPeruDocumentResponse>('/invoice/send', payload);
   }
 
+  async generateInvoicePdf(payload: ApisPeruInvoicePayload): Promise<Buffer> {
+    return this.postBinary('/invoice/pdf', payload, 'application/pdf');
+  }
+
   private async postJson<T>(path: string, body: unknown): Promise<T> {
     const token = this.getToken();
     const baseUrl = this.getBaseUrl();
@@ -51,6 +55,33 @@ export class ApisPeruBillingClient {
       throw new InternalServerErrorException('No se encontro APIS_PERU_TOKEN en el archivo .env.');
     }
     return token.trim();
+  }
+
+  private async postBinary(path: string, body: unknown, accept: string): Promise<Buffer> {
+    const token = this.getToken();
+    const baseUrl = this.getBaseUrl();
+
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: accept,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new BadRequestException({
+        message: 'APIsPeru rechazo la generacion del archivo.',
+        status: response.status,
+        response: this.parseResponse(text),
+      });
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
 
   private parseResponse(text: string): unknown {

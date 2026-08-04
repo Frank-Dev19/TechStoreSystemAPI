@@ -67,6 +67,51 @@ export class ElectronicBillingService {
     return document;
   }
 
+  async getInvoiceXmlFile(saleId: number): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const document = await this.findBySale(saleId);
+    if (!document.xml) {
+      throw new NotFoundException('El comprobante electronico no tiene XML registrado.');
+    }
+
+    return {
+      buffer: Buffer.from(document.xml, 'utf8'),
+      filename: `${this.buildDocumentFileName(document)}.xml`,
+      contentType: 'application/xml; charset=utf-8',
+    };
+  }
+
+  async getInvoiceCdrFile(saleId: number): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const document = await this.findBySale(saleId);
+    if (!document.cdrZip) {
+      throw new NotFoundException('El comprobante electronico no tiene CDR registrado.');
+    }
+
+    return {
+      buffer: Buffer.from(document.cdrZip, 'base64'),
+      filename: `R-${this.buildDocumentFileName(document)}.zip`,
+      contentType: 'application/zip',
+    };
+  }
+
+  async getInvoicePdfFile(saleId: number): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    const document = await this.findBySale(saleId);
+    if (document.status !== ElectronicDocumentStatus.ACCEPTED) {
+      throw new BadRequestException('Primero debe emitir y aceptar el comprobante electronico ante SUNAT.');
+    }
+
+    const payload = this.isInvoicePayload(document.payloadJson)
+      ? document.payloadJson
+      : await this.buildInvoicePayload(saleId);
+
+    const buffer = await this.apisPeruClient.generateInvoicePdf(payload);
+
+    return {
+      buffer,
+      filename: `${this.buildDocumentFileName(document)}.pdf`,
+      contentType: 'application/pdf',
+    };
+  }
+
   private async findSaleForBilling(saleId: number): Promise<Sale> {
     const sale = await this.saleRepo
       .createQueryBuilder('sale')
@@ -208,5 +253,22 @@ export class ElectronicBillingService {
     if (error instanceof HttpException) return error.getResponse();
     if (error instanceof Error) return { message: error.message, name: error.name };
     return { message: 'Error desconocido', error };
+  }
+
+  private buildDocumentFileName(document: ElectronicDocument): string {
+    const payload = this.isInvoicePayload(document.payloadJson) ? document.payloadJson : null;
+    const ruc = payload?.company?.ruc || document.companyId;
+    return `${ruc}-${document.sunatDocumentTypeCode}-${document.series}-${document.number}`;
+  }
+
+  private isInvoicePayload(value: unknown): value is ApisPeruInvoicePayload {
+    return !!value
+      && typeof value === 'object'
+      && 'tipoDoc' in value
+      && 'serie' in value
+      && 'correlativo' in value
+      && 'company' in value
+      && 'client' in value
+      && 'details' in value;
   }
 }

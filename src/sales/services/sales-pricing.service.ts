@@ -79,13 +79,13 @@ export class SalesPricingService {
             );
         }
 
-        const baseUnitPrice = calc.salePriceWithIgv;
-        const finalUnitPrice = Number((baseUnitPrice * (1 - discountPct / 100)).toFixed(6));
-        const unitDiscount = Number((baseUnitPrice - finalUnitPrice).toFixed(6));
+        const baseUnitPrice = this.roundMoney(calc.salePriceWithIgv);
+        const finalUnitPrice = this.roundMoney(baseUnitPrice * (1 - discountPct / 100));
+        const unitDiscount = this.roundMoney(baseUnitPrice - finalUnitPrice);
 
-        const baseSubtotal = Number((baseUnitPrice * params.quantity).toFixed(2));
-        const finalSubtotal = Number((finalUnitPrice * params.quantity).toFixed(2));
-        const totalDiscount = Number((unitDiscount * params.quantity).toFixed(2));
+        const baseSubtotal = this.roundMoney(baseUnitPrice * params.quantity);
+        const finalSubtotal = this.roundMoney(finalUnitPrice * params.quantity);
+        const totalDiscount = this.roundMoney(baseSubtotal - finalSubtotal);
 
         const igvRate = calc.igvRate;
         const igvAmount = splitIncludedTax(finalSubtotal, igvRate).taxAmount;
@@ -124,5 +124,9 @@ export class SalesPricingService {
             discounts,
             availableCombos: [],
         };
+    }
+
+    private roundMoney(value: number): number {
+        return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
     }
 }
