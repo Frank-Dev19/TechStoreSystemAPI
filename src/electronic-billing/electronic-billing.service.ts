@@ -9,6 +9,8 @@ import { ElectronicDocument } from './entities/electronic-document.entity';
 import { ElectronicDocumentStatus } from './enums/electronic-document-status.enum';
 import { mapSaleToApisPeruInvoicePayload } from './mappers/sale-to-apisperu-invoice.mapper';
 import { ApisPeruBillingClient } from './services/apisperu-billing.client';
+import { MailerService } from '../mailer/mailer.service';
+import { SendElectronicDocumentEmailDto } from './dto/send-electronic-document-email.dto';
 
 @Injectable()
 export class ElectronicBillingService {
@@ -19,6 +21,7 @@ export class ElectronicBillingService {
     private readonly electronicDocumentRepo: Repository<ElectronicDocument>,
     private readonly businessProfileService: BusinessProfileService,
     private readonly apisPeruClient: ApisPeruBillingClient,
+    private readonly mailerService: MailerService,
   ) {}
 
   async buildInvoicePayload(saleId: number): Promise<ApisPeruInvoicePayload> {
@@ -112,6 +115,64 @@ export class ElectronicBillingService {
     };
   }
 
+  async emailInvoice(
+    saleId: number,
+    dto: SendElectronicDocumentEmailDto = {},
+  ): Promise<{ ok: true; saleId: number; to: string; message: string }> {
+    const sale = await this.findSaleForBilling(saleId);
+    const document = await this.findBySale(saleId);
+
+    if (document.status !== ElectronicDocumentStatus.ACCEPTED) {
+      throw new BadRequestException('Primero debe emitir y aceptar el comprobante electronico ante SUNAT.');
+    }
+
+    const to = this.resolveRecipientEmail(dto.to, sale);
+    if (!to) {
+      throw new BadRequestException('El cliente no tiene correo registrado. Agregue un correo al cliente o envie uno en la solicitud.');
+    }
+
+    const pdf = await this.getInvoicePdfFile(saleId);
+    const xml = await this.getInvoiceXmlFile(saleId);
+    const attachments = [
+      { filename: pdf.filename, content: pdf.buffer, contentType: pdf.contentType },
+      { filename: xml.filename, content: xml.buffer, contentType: xml.contentType },
+    ];
+
+    if (document.cdrZip) {
+      const cdr = await this.getInvoiceCdrFile(saleId);
+      attachments.push({ filename: cdr.filename, content: cdr.buffer, contentType: cdr.contentType });
+    }
+
+    const documentLabel = `${document.series}-${document.number}`;
+    const customerName = sale.billingSnapshotName || sale.customer?.name || 'cliente';
+    const total = this.formatMoney(sale.total);
+    const customMessage = dto.message?.trim();
+
+    await this.mailerService.sendMail({
+      to,
+      subject: `Comprobante electronico ${documentLabel}`,
+      html: `
+        <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:620px;margin:auto;color:#0f172a">
+          <h2 style="margin-bottom:8px">Comprobante electronico ${documentLabel}</h2>
+          <p>Hola ${customerName}, adjuntamos el comprobante electronico emitido por Macrochips.</p>
+          <p><strong>Documento:</strong> ${documentLabel}</p>
+          <p><strong>Total:</strong> S/ ${total}</p>
+          ${customMessage ? `<p>${customMessage}</p>` : ''}
+          <p>Se adjunta el PDF y XML del comprobante${document.cdrZip ? ', junto con el CDR de SUNAT' : ''}.</p>
+        </div>
+      `,
+      text: `Comprobante electronico ${documentLabel}. Total: S/ ${total}.`,
+      attachments,
+    });
+
+    return {
+      ok: true,
+      saleId,
+      to,
+      message: 'Comprobante electronico enviado por correo.',
+    };
+  }
+
   private async findSaleForBilling(saleId: number): Promise<Sale> {
     const sale = await this.saleRepo
       .createQueryBuilder('sale')
@@ -133,6 +194,16 @@ export class ElectronicBillingService {
     }
 
     return sale;
+  }
+
+  private resolveRecipientEmail(to: string | undefined, sale: Sale): string | null {
+    const candidate = to || sale.billingSnapshotEmail || sale.customer?.email;
+    const email = candidate?.trim();
+    return email || null;
+  }
+
+  private formatMoney(value: unknown): string {
+    return Number(value || 0).toFixed(2);
   }
 
   private async createPendingDocument(

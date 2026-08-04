@@ -1,9 +1,10 @@
-import { Controller, Get, Param, ParseIntPipe, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard';
 import { RolesGuard } from '../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { ElectronicBillingService } from './electronic-billing.service';
+import { SendElectronicDocumentEmailDto } from './dto/send-electronic-document-email.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @Controller('electronic-billing')
@@ -18,6 +19,14 @@ export class ElectronicBillingController {
   @Post('sales/:saleId/send-invoice')
   sendInvoice(@Param('saleId', ParseIntPipe) saleId: number) {
     return this.service.sendInvoice(saleId);
+  }
+
+  @Post('sales/:saleId/email')
+  emailInvoice(
+    @Param('saleId', ParseIntPipe) saleId: number,
+    @Body() dto: SendElectronicDocumentEmailDto,
+  ) {
+    return this.service.emailInvoice(saleId, dto);
   }
 
   @Get('sales/:saleId/document')
