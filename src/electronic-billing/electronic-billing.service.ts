@@ -120,7 +120,6 @@ export class ElectronicBillingService {
       .leftJoinAndSelect('sale.items', 'items')
       .leftJoinAndSelect('items.product', 'product')
       .leftJoinAndSelect('product.baseUnit', 'productBaseUnit')
-      .leftJoinAndSelect('items.service', 'service')
       .leftJoinAndSelect('sale.payments', 'payments')
       .where('sale.id = :saleId', { saleId })
       .getOne();

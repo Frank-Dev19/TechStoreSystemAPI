@@ -279,11 +279,11 @@ export class SalesService {
       }
     }
 
-    // Verificar consistencia de cálculos
-    if (Math.abs(subtotal - finalSubtotal) > 0.01) {
+    // Verificar consistencia de cálculos con montos finales que ya incluyen IGV.
+    if (Math.abs(total - finalSubtotal) > 0.01) {
       validationMessages.push({
         type: 'WARNING',
-        message: 'Inconsistencia en cálculos de precios (subtotal ≠ finalSubtotal)',
+        message: 'Inconsistencia en cálculos de precios (total ≠ finalSubtotal)',
       });
     }
 
@@ -742,7 +742,8 @@ export class SalesService {
 
         // Calcular valores CORRECTOS para el item
         const discountPerUnit = simulationResult.totalDiscount / simulationResult.quantity;
-        const taxPerUnit = (simulationResult.finalSubtotal * simulation.summary.taxRate) / simulationResult.quantity;
+        const itemTaxBreakdown = await this.breakdownIncludedTax(simulationResult.finalSubtotal);
+        const taxPerUnit = itemTaxBreakdown.taxAmount / simulationResult.quantity;
 
         const saleItem = this.saleItemRepo.create({
           saleId: savedSale.id,
