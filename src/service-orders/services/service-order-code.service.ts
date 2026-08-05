@@ -25,9 +25,9 @@ export class ServiceOrderCodeService {
 
     const businessDate = this.getLimaBusinessDate(this.nowFactory());
     await manager.query(
-      `INSERT INTO service_order_daily_sequences (business_date, last_value)
+      `INSERT INTO service_order_daily_sequences (business_date, \`last_value\`)
        VALUES (?, LAST_INSERT_ID(1))
-       ON DUPLICATE KEY UPDATE last_value = LAST_INSERT_ID(last_value + 1)`,
+       ON DUPLICATE KEY UPDATE \`last_value\` = LAST_INSERT_ID(\`last_value\` + 1)`,
       [businessDate],
     );
     const rows = (await manager.query('SELECT LAST_INSERT_ID() AS sequenceNumber')) as Array<{
