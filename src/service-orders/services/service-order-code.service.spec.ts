@@ -26,7 +26,9 @@ describe('ServiceOrderCodeService', () => {
     });
     expect(manager.query).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining('LAST_INSERT_ID'),
+      expect.stringContaining(
+        'ON DUPLICATE KEY UPDATE `last_value` = LAST_INSERT_ID(`last_value` + 1)',
+      ),
       ['2026-08-02'],
     );
   });
