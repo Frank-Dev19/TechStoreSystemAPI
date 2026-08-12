@@ -31,6 +31,17 @@ describe('createTypeOrmOptions', () => {
     expect(options.migrationsRun).toBe(false);
   });
 
+  it('loads timestamped migrations without including Jest spec files', () => {
+    const options = createTypeOrmOptions({
+      DB_HOST: 'localhost',
+      DB_NAME: 'techstore',
+    });
+
+    expect(options.migrations).toEqual([
+      expect.stringContaining('!(*.spec).{ts,js}'),
+    ]);
+  });
+
   it('rejects synchronization in production', () => {
     expect(() =>
       createTypeOrmOptions({

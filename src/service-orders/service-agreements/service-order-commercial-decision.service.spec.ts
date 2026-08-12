@@ -11,6 +11,7 @@ import {
   ServiceOrderCancellationResolution,
   ServiceOrderCancellationStatus,
   ServiceOrderOperativeStatus,
+  ServiceOrderEconomicStatus,
   ServiceOrderTechnicalStatus,
 } from '../enums';
 import { ServiceOrderAggregateProjectionService } from '../services/service-order-aggregate-projection.service';
@@ -48,6 +49,7 @@ describe('ServiceOrderCommercialDecisionService', () => {
   let agreementItemRepo: ReturnType<typeof createRepo>;
   let agreementRepo: ReturnType<typeof createRepo>;
   let itemRepo: ReturnType<typeof createRepo>;
+  let orderRepo: ReturnType<typeof createRepo>;
   let cancellationRepo: ReturnType<typeof createRepo>;
   let saleLinkRepo: ReturnType<typeof createRepo>;
   let eventRepo: ReturnType<typeof createRepo>;
@@ -59,6 +61,7 @@ describe('ServiceOrderCommercialDecisionService', () => {
     agreementItemRepo = createRepo();
     agreementRepo = createRepo();
     itemRepo = createRepo();
+    orderRepo = createRepo();
     cancellationRepo = createRepo();
     saleLinkRepo = createRepo();
     eventRepo = createRepo();
@@ -72,6 +75,7 @@ describe('ServiceOrderCommercialDecisionService', () => {
         if (entity === ServiceOrderAgreementItem) return agreementItemRepo;
         if (entity === ServiceOrderAgreement) return agreementRepo;
         if (entity === ServiceOrderItem) return itemRepo;
+        if (entity === ServiceOrder) return orderRepo;
         if (entity === ServiceOrderItemCancellationRequest)
           return cancellationRepo;
         if (entity === ServiceOrderSaleLink) return saleLinkRepo;
@@ -145,6 +149,13 @@ describe('ServiceOrderCommercialDecisionService', () => {
     );
     expect(fixture.siblingItem.technicalStatus).toBe(
       ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+    );
+    expect(orderRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: fixture.order.id,
+        economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+        montoComprometidoVigente: 175.5,
+      }),
     );
     expect(projection.recalculateLocked).toHaveBeenCalledWith(
       manager,
@@ -311,6 +322,8 @@ describe('ServiceOrderCommercialDecisionService', () => {
     const order = {
       id: 70,
       assignedToTechnicianId: 9,
+      economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
+      montoComprometidoVigente: 0,
     } as ServiceOrder;
     const item = {
       id: 701,
@@ -352,6 +365,7 @@ describe('ServiceOrderCommercialDecisionService', () => {
       serviceOrderId: order.id,
       sequenceNumber: 3,
       status: ServiceOrderAgreementStatus.DRAFT,
+      totalAmount: 175.5,
       items: [],
     } as unknown as ServiceOrderAgreement;
     const links = [

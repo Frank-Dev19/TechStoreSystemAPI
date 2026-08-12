@@ -18,7 +18,7 @@ export function createTypeOrmOptions(
   const common: TypeOrmModuleOptions = {
     type: 'mysql',
     entities: [path.join(__dirname, '..', '**', '*.entity.{ts,js}')],
-    migrations: [path.join(__dirname, 'migrations', '*.{ts,js}')],
+    migrations: [path.join(__dirname, 'migrations', '!(*.spec).{ts,js}')],
     migrationsTableName: 'typeorm_migrations',
     synchronize: !isProduction,
     migrationsRun: false,

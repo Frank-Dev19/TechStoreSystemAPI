@@ -11,11 +11,13 @@ import { ServiceOrderItemCommercialVersion } from '../entities/service-order-ite
 import { ServiceOrderItemCancellationRequest } from '../entities/service-order-item-cancellation-request.entity';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
+import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderSaleLink } from '../entities/service-order-sale-link.entity';
 import {
   ServiceOrderCommercialStatus,
   ServiceOrderCancellationResolution,
   ServiceOrderCancellationStatus,
+  ServiceOrderEconomicStatus,
   ServiceOrderOperativeStatus,
   ServiceOrderTechnicalStatus,
 } from '../enums';
@@ -240,6 +242,13 @@ export class ServiceOrderCommercialDecisionService {
         agreement.agreedAt = now;
         agreement.agreedByUserId = recorderId;
         await agreementRepository.save(agreement);
+
+        order.montoComprometidoVigente = Number(agreement.totalAmount ?? 0);
+        order.economicStatus =
+          order.montoComprometidoVigente > 0
+            ? ServiceOrderEconomicStatus.PENDIENTE
+            : ServiceOrderEconomicStatus.NO_APLICA;
+        await manager.getRepository(ServiceOrder).save(order);
       } else {
         await itemRepository.save(item);
       }
