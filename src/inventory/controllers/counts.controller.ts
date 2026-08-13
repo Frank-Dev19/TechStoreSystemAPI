@@ -36,9 +36,11 @@ export class CountsController {
     @Post(':id/entries/bulk')
     addBulk(
         @Param('id') id: number,
-        @Body() b: { entries: { product_id: number; lot_id?: number | null; qty_counted: number; user?: string }[] },
+        @Body() b: { user?: string; entries: { product_id: number; lot_id?: number | null; qty_counted: number; user?: string }[] },
     ) {
-        return this.svc.addEntries(+id, b.entries, 'Usuario Front');
+        const entries = b?.entries ?? [];
+        const user = b?.user || entries.find((entry) => !!entry.user)?.user || 'Usuario Front';
+        return this.svc.addEntries(+id, entries, user);
     }
 
 
@@ -57,13 +59,13 @@ export class CountsController {
     }
 
     @Put(':id/review')
-    review(@Param('id') id: number) {
-        return this.svc.review(+id, 'Usuario Front');
+    review(@Param('id') id: number, @Body() b: { user?: string }) {
+        return this.svc.review(+id, b?.user || 'Usuario Front');
     }
 
     @Put(':id/post')
-    post(@Param('id') id: number) {
-        return this.svc.post(+id, 'Usuario Front');
+    post(@Param('id') id: number, @Body() b: { user?: string }) {
+        return this.svc.post(+id, b?.user || 'Usuario Front');
     }
 
     @Put(':id/cancel')

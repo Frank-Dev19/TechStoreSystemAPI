@@ -607,11 +607,32 @@ export class BootstrapService implements OnModuleInit {
       DocumentTypeKind.PERSON,
     );
     await this.ensureDocumentType(
+      'Carnet de Extranjeria',
+      12,
+      'Carnet de Extranjeria',
+      '4',
+      DocumentTypeKind.PERSON,
+    );
+    await this.ensureDocumentType(
       'RUC',
       11,
       'Registro Único de Contribuyentes',
       '6',
       DocumentTypeKind.COMPANY,
+    );
+    await this.ensureDocumentType(
+      'Pasaporte',
+      12,
+      'Pasaporte',
+      '7',
+      DocumentTypeKind.PERSON,
+    );
+    await this.ensureDocumentType(
+      'Cedula Diplomatica',
+      15,
+      'Cedula Diplomatica de Identidad',
+      'A',
+      DocumentTypeKind.PERSON,
     );
   }
 
