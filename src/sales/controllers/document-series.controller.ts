@@ -69,7 +69,7 @@ export class DocumentSeriesController {
         if (!companyId || !documentType) {
             throw new Error('companyId y documentType son requeridos');
         }
-        return this.documentSeriesService.getNextNumber(Number(companyId), documentType);
+        return this.documentSeriesService.previewNextNumber(Number(companyId), documentType);
     }
 
     @Get('next-number-formatted')

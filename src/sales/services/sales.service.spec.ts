@@ -86,6 +86,7 @@ describe('SalesService', () => {
     documentSeriesService = {
       getNextNumber: jest.fn(),
       getActiveByType: jest.fn(),
+      reserveNextNumber: jest.fn(),
     };
     pricingEngine = { calculatePrice: jest.fn() };
     taxConfigService = { getIGVRate: jest.fn().mockResolvedValue(18) };
@@ -120,7 +121,7 @@ describe('SalesService', () => {
 
   it('rechaza ventas manuales con líneas de servicio', async () => {
     clientRepo.findOne.mockResolvedValue({ id: 99 } as Client);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'B001', number: '000001' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 1, series: 'B001', number: '000001' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 1 });
 
     await expect(
@@ -264,7 +265,7 @@ describe('SalesService', () => {
     serviceOrderRepo.findOne.mockResolvedValue(order);
     agreementRepo.find.mockResolvedValue([agreement]);
     dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'B001', number: '000321' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 9, series: 'B001', number: '000321' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
     salesInventory.registerSaleMovement = jest.fn().mockResolvedValue(undefined);
     jest.spyOn(service, 'findOne').mockResolvedValue({ id: 501, total: 120 } as any);
@@ -352,7 +353,7 @@ describe('SalesService', () => {
     };
 
     dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'B001', number: '000322' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 9, series: 'B001', number: '000322' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
     serviceOrderRepo.findOne.mockResolvedValue({
       id: 7,
@@ -443,18 +444,21 @@ describe('SalesService', () => {
       rollbackTransaction: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
-        findOne: jest.fn().mockResolvedValue({
-          id: 3,
-          companyId: 1,
-          status: 'OPEN',
-          currentBalance: 0,
-          expectedBalance: 0,
-          totalCash: 0,
-          totalCard: 0,
-          totalTransfer: 0,
-          totalYape: 0,
-          totalPlin: 0,
-        }),
+        findOne: jest.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: 3,
+            companyId: 1,
+            status: 'OPEN',
+            currentBalance: 0,
+            expectedBalance: 0,
+            totalCash: 0,
+            totalCard: 0,
+            totalTransfer: 0,
+            totalYape: 0,
+            totalPlin: 0,
+          }),
         save: jest.fn().mockImplementation(async (entity) => {
           if ((entity as any).saleType) return { ...entity, id: 700 };
           return entity;
@@ -467,7 +471,7 @@ describe('SalesService', () => {
     clientRepo.findOne.mockResolvedValue(taxpayer);
     serviceOrderSaleLinkRepo.findOne.mockResolvedValue(null);
     dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'F001', number: '000111' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 9, series: 'F001', number: '000111' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
     salesInventory.registerSaleMovement = jest.fn().mockResolvedValue(undefined);
     jest.spyOn(service, 'findOne').mockResolvedValue({ id: 700, total: 200 } as any);
@@ -485,6 +489,11 @@ describe('SalesService', () => {
     );
 
     expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    expect(documentSeriesService.reserveNextNumber).toHaveBeenCalledWith(
+      queryRunner.manager,
+      1,
+      DocumentType.FACTURA,
+    );
     expect(queryRunner.manager.save).toHaveBeenCalledWith(
       expect.objectContaining({
         customerId: 99,
@@ -553,7 +562,7 @@ describe('SalesService', () => {
         serviceItems: [{ serviceCodeSnapshot: 'TECHNICAL_SERVICE', serviceNameSnapshot: 'Servicio técnico', unitPrice: 120 }],
       } as any,
     ]);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'B001', number: '000400' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 9, series: 'B001', number: '000400' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
     serviceOrderRepo.findOne.mockResolvedValue({
       id: 7,
@@ -653,7 +662,7 @@ describe('SalesService', () => {
     clientRepo.findOne.mockResolvedValue(taxpayer);
     serviceOrderSaleLinkRepo.findOne.mockResolvedValue(null);
     dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
-    documentSeriesService.getNextNumber.mockResolvedValue({ series: 'B001', number: '000401' });
+    documentSeriesService.reserveNextNumber.mockResolvedValue({ documentSeriesId: 9, series: 'B001', number: '000401' });
     documentSeriesService.getActiveByType.mockResolvedValue({ id: 9 });
     salesInventory.registerSaleMovement = jest.fn().mockResolvedValue(undefined);
     jest.spyOn(service, 'findOne').mockResolvedValue({ id: 701, total: 200 } as any);

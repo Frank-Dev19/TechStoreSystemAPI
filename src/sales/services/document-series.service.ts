@@ -6,7 +6,7 @@ import {
     OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { DocumentSeries } from '../entities/document-series.entity';
 import { CreateDocumentSeriesDto } from '../dto/create-document-series.dto';
 import { UpdateDocumentSeriesDto } from '../dto/update-document-series.dto';
@@ -19,7 +19,6 @@ export class DocumentSeriesService implements OnModuleInit {
     constructor(
         @InjectRepository(DocumentSeries)
         private readonly documentSeriesRepo: Repository<DocumentSeries>,
-        private readonly dataSource: DataSource,
     ) {}
 
     onModuleInit() {
@@ -146,36 +145,43 @@ async delete(id: number): Promise<void> {
         };
     }
 
-    async getNextNumber(companyId: number, documentType: DocumentType): Promise<{ series: string; number: string }> {
-        return this.dataSource.transaction(async (manager) => {
-            const activeSeries = await manager.findOne(DocumentSeries, {
-                where: {
-                    companyId,
-                    documentType,
-                    isActive: true,
-                },
-                lock: { mode: 'pessimistic_write' },
-            });
-
-            if (!activeSeries) {
-                throw new BadRequestException(
-                    `No hay una serie activa para ${documentType}. Configure una serie primero.`
-                );
-            }
-
-            // Incrementar el contador
-            const nextNumber = activeSeries.currentNumber;
-            await manager.increment(DocumentSeries, { id: activeSeries.id }, 'currentNumber', 1);
-
-            return {
-                series: activeSeries.code,
-                number: this.formatNumber(nextNumber), // Formato con 8 dígitos: 00000001
-            };
+    async reserveNextNumber(
+        manager: EntityManager,
+        companyId: number,
+        documentType: DocumentType,
+    ): Promise<{ documentSeriesId: number; series: string; number: string }> {
+        const activeSeries = await manager.findOne(DocumentSeries, {
+            where: {
+                companyId,
+                documentType,
+                isActive: true,
+            },
+            lock: { mode: 'pessimistic_write' },
         });
+
+        if (!activeSeries) {
+            throw new BadRequestException(
+                `No hay una serie activa para ${documentType}. Configure una serie primero.`
+            );
+        }
+
+        const nextNumber = activeSeries.currentNumber;
+        await manager.increment(DocumentSeries, { id: activeSeries.id }, 'currentNumber', 1);
+
+        return {
+            documentSeriesId: activeSeries.id,
+            series: activeSeries.code,
+            number: this.formatNumber(nextNumber),
+        };
+    }
+
+    // Compatibilidad con consumidores antiguos: consultar el siguiente número nunca debe consumirlo.
+    async getNextNumber(companyId: number, documentType: DocumentType): Promise<{ series: string; number: string }> {
+        return this.previewNextNumber(companyId, documentType);
     }
 
     async getNextNumberForCompany(companyId: number, documentType: DocumentType): Promise<string> {
-        const { series, number } = await this.getNextNumber(companyId, documentType);
+        const { series, number } = await this.previewNextNumber(companyId, documentType);
         return `${series}-${number}`;
     }
 

@@ -527,27 +527,6 @@ export class SalesService {
       throw new BadRequestException('Una factura requiere un cliente con RUC.');
     }
 
-    // Obtener serie y número si no se especifican
-    let finalSeries = createSaleDto.series;
-    let finalNumber = createSaleDto.number;
-    let documentSeriesId: number | null = null;
-
-    if (!finalSeries || !finalNumber) {
-      const nextNumber = await this.documentSeriesService.getNextNumber(
-        createSaleDto.companyId,
-        createSaleDto.documentType
-      );
-      finalSeries = nextNumber.series;
-      finalNumber = nextNumber.number;
-
-      // Obtener el ID de la serie para la relación
-      const documentSeries = await this.documentSeriesService.getActiveByType(
-        createSaleDto.companyId,
-        createSaleDto.documentType
-      );
-      documentSeriesId = documentSeries?.id || null;
-    }
-
     // Calcular precios usando el nuevo motor de porcentajes
     const enhancedItems: any[] = [];
 
@@ -626,6 +605,16 @@ export class SalesService {
           'No hay caja abierta. Debe abrir una caja antes de crear ventas.'
         );
       }
+
+      const {
+        documentSeriesId,
+        series: finalSeries,
+        number: finalNumber,
+      } = await this.documentSeriesService.reserveNextNumber(
+        queryRunner.manager,
+        createSaleDto.companyId,
+        createSaleDto.documentType,
+      );
 
       // Crear venta con valores CORRECTOS
       const sale = this.saleRepo.create({
@@ -977,18 +966,6 @@ export class SalesService {
       })),
     ];
 
-    let finalSeries = dto.series;
-    let finalNumber = dto.number;
-    let documentSeriesId: number | null = null;
-
-    if (!finalSeries || !finalNumber) {
-      const nextNumber = await this.documentSeriesService.getNextNumber(dto.companyId, dto.documentType);
-      finalSeries = nextNumber.series;
-      finalNumber = nextNumber.number;
-      const documentSeries = await this.documentSeriesService.getActiveByType(dto.companyId, dto.documentType);
-      documentSeriesId = documentSeries?.id || null;
-    }
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1011,6 +988,16 @@ export class SalesService {
       if (!cashRegister) {
         throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
       }
+
+      const {
+        documentSeriesId,
+        series: finalSeries,
+        number: finalNumber,
+      } = await this.documentSeriesService.reserveNextNumber(
+        queryRunner.manager,
+        dto.companyId,
+        dto.documentType,
+      );
 
       const sale = await queryRunner.manager.save(
         this.saleRepo.create({
@@ -1284,27 +1271,42 @@ export class SalesService {
     }
     this.validateTaxpayerAgainstDocumentType(taxpayer, dto.documentType);
 
-    let finalSeries: string | undefined;
-    let finalNumber: string | undefined;
-    let documentSeriesId: number | null = null;
-
-    const nextNumber = await this.documentSeriesService.getNextNumber(dto.companyId, dto.documentType);
-    finalSeries = nextNumber.series;
-    finalNumber = nextNumber.number;
-    const documentSeries = await this.documentSeriesService.getActiveByType(dto.companyId, dto.documentType);
-    documentSeriesId = documentSeries?.id || null;
-
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
+      for (const draft of orderDrafts) {
+        const existingLink = await queryRunner.manager.findOne(ServiceOrderSaleLink, {
+          where: {
+            serviceOrderId: Number(draft.serviceOrder.id),
+            agreementId: Number(draft.agreement.id),
+            deletedAt: IsNull(),
+          } as any,
+        });
+        if (existingLink) {
+          throw new BadRequestException(
+            `La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado al acuerdo vigente`,
+          );
+        }
+      }
+
       const cashRegister = await queryRunner.manager.findOne(CashRegister, {
         where: { companyId: dto.companyId, status: 'OPEN' },
       });
       if (!cashRegister) {
         throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
       }
+
+      const {
+        documentSeriesId,
+        series: finalSeries,
+        number: finalNumber,
+      } = await this.documentSeriesService.reserveNextNumber(
+        queryRunner.manager,
+        dto.companyId,
+        dto.documentType,
+      );
 
       const sale = await queryRunner.manager.save(
         this.saleRepo.create({
