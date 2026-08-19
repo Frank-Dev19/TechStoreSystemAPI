@@ -18,7 +18,6 @@ import { CashFlowTransactionDto } from '../dto/cash-flow-transaction.dto';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
-import { Roles } from 'src/rbac/decorators/roles.decorator';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
@@ -27,7 +26,7 @@ import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 export class CashFlowController {
     constructor(private readonly cashFlowService: CashFlowService) { }
 
-    // @Permissions('cashflow.read')
+    @Permissions('cashflow.read')
     @Get('register')
     getCashRegister(
         @Query('companyId') companyId: string,
@@ -40,6 +39,7 @@ export class CashFlowController {
     }
 
     // Admin: list all registers
+    @Permissions('cashflow.read')
     @Get('registers')
     getRegisters(
         @Query('companyId') companyId: string,
@@ -53,12 +53,13 @@ export class CashFlowController {
     }
 
     // Admin: get currently open register
+    @Permissions('cashflow.read')
     @Get('register/open-current')
     getOpenRegister(@Query('companyId') companyId: string) {
         return this.cashFlowService.getOpenRegister(parseInt(companyId));
     }
 
-    // @Permissions('cashflow.manage')
+    @Permissions('cashflow.manage')
     @Post('register/open')
     openCashRegister(
         @Body() openDto: OpenCashRegisterDto,
@@ -75,7 +76,7 @@ export class CashFlowController {
         );
     }
 
-    // @Permissions('cashflow.manage')
+    @Permissions('cashflow.manage')
     @Post('register/close')
     closeCashRegister(
         @Body() closeDto: CloseCashRegisterDto,
@@ -92,7 +93,7 @@ export class CashFlowController {
         );
     }
 
-    // @Permissions('cashflow.read')
+    @Permissions('cashflow.read')
     @Get('transactions')
     getTransactions(
         @Query('companyId') companyId: string,
@@ -115,7 +116,7 @@ export class CashFlowController {
         });
     }
 
-    // @Permissions('cashflow.manage')
+    @Permissions('cashflow.manage')
     @Post('transactions')
     async createTransaction(
         @Body() transactionDto: CashFlowTransactionDto,
@@ -150,7 +151,7 @@ export class CashFlowController {
         });
     }
 
-    // @Permissions('cashflow.reports')
+    @Permissions('cashflow.reports')
     @Get('reports/daily')
     getDailyReport(
         @Query('companyId') companyId: string,
@@ -162,7 +163,7 @@ export class CashFlowController {
         );
     }
 
-    // @Permissions('cashflow.read')
+    @Permissions('cashflow.read')
     @Get('metrics')
     getCashFlowMetrics(
         @Query('companyId') companyId: string,

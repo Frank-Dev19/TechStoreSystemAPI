@@ -18,6 +18,7 @@ import { JwtPayload } from './utils/jwt-payload.type';
 import { RequestContext } from 'src/common/request-context';
 
 import { AuditService } from 'src/audit/audit.service';
+import { getEffectivePermissionCodes } from 'src/rbac/utils/effective-permissions.util';
 
 @Injectable()
 export class AuthService {
@@ -53,6 +54,7 @@ export class AuthService {
                 name: r.name,
                 permissions: (r.permissions ?? []).map((p: any) => p.code),
             })),
+            effectivePermissions: getEffectivePermissionCodes(u),
             createdAt: u.createdAt,
             updatedAt: u.updatedAt,
         };

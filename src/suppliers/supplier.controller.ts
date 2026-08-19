@@ -2,15 +2,12 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
-import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
-import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { CreateSupplierDto } from './create-supplier.dto';
 import { SupplierService } from './supplier.service';
 import { UpdateSupplierDto } from './update-supplier.dto';
 
-@UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@UseGuards(JwtAccessGuard, PermissionsGuard)
 @Controller('suppliers')
 export class SupplierController {
   constructor(private readonly supplierService: SupplierService) {}

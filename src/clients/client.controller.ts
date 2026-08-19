@@ -2,17 +2,14 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
-import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
-import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { ClientService } from './client.service';
 import { CreateClientDto } from './create-client.dto';
 import { CommitClientImportDto } from './dto/commit-client-import.dto';
 import { ValidateClientImportDto } from './dto/validate-client-import.dto';
 import { UpdateClientDto } from './update-client.dto';
 
-@UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@UseGuards(JwtAccessGuard, PermissionsGuard)
 @Controller('clients')
 export class ClientController {
   constructor(private readonly clientService: ClientService) {}

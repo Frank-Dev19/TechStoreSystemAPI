@@ -16,13 +16,16 @@ import { CreateDocumentSeriesDto } from '../dto/create-document-series.dto';
 import { UpdateDocumentSeriesDto } from '../dto/update-document-series.dto';
 import { DocumentType } from '../enums/document-type.enum';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard'
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 
 @Controller('document-series')
-@UseGuards(JwtAccessGuard)
+@UseGuards(JwtAccessGuard, PermissionsGuard)
 export class DocumentSeriesController {
     constructor(private readonly documentSeriesService: DocumentSeriesService) { }
 
     @Post()
+    @Permissions('document-series.manage')
     create(@Body() createDto: CreateDocumentSeriesDto, @Request() req: any) {
         // Agregar información del usuario si no viene en el DTO
         if (!createDto.createdBy) {
@@ -32,6 +35,7 @@ export class DocumentSeriesController {
     }
 
     @Get()
+    @Permissions('document-series.read')
     findAll(@Query('companyId') companyId: number) {
         if (!companyId) {
             throw new Error('companyId es requerido');
@@ -40,6 +44,7 @@ export class DocumentSeriesController {
     }
 
     @Get('active')
+    @Permissions('document-series.read')
     findActive(
         @Query('companyId') companyId: number,
         @Query('documentType') documentType?: DocumentType,
@@ -51,6 +56,7 @@ export class DocumentSeriesController {
     }
 
     @Get('preview-next-number')
+    @Permissions('document-series.read')
     async previewNextNumber(
         @Query('companyId') companyId: number,
         @Query('documentType') documentType: DocumentType,
@@ -62,6 +68,7 @@ export class DocumentSeriesController {
     }
 
     @Get('next-number')
+    @Permissions('document-series.read')
     async getNextNumber(
         @Query('companyId') companyId: number,
         @Query('documentType') documentType: DocumentType,
@@ -73,6 +80,7 @@ export class DocumentSeriesController {
     }
 
     @Get('next-number-formatted')
+    @Permissions('document-series.read')
     async getNextNumberFormatted(
         @Query('companyId') companyId: number,
         @Query('documentType') documentType: DocumentType,
@@ -85,11 +93,13 @@ export class DocumentSeriesController {
     }
 
     @Get(':id')
+    @Permissions('document-series.read')
     findOne(@Param('id') id: string) {
         return this.documentSeriesService.findOne(+id);
     }
 
     @Patch(':id')
+    @Permissions('document-series.manage')
     update(
         @Param('id') id: string,
         @Body() updateDto: UpdateDocumentSeriesDto,
@@ -103,6 +113,7 @@ export class DocumentSeriesController {
     }
 
     @Delete(':id')
+    @Permissions('document-series.manage')
     remove(@Param('id') id: string) {
         return this.documentSeriesService.delete(+id);
     }

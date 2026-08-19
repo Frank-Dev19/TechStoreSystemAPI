@@ -5,6 +5,7 @@ import { RolesGuard } from '../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { ElectronicBillingService } from './electronic-billing.service';
 import { SendElectronicDocumentEmailDto } from './dto/send-electronic-document-email.dto';
+import { Permissions } from '../rbac/decorators/permissions.decorator';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @Controller('electronic-billing')
@@ -12,16 +13,19 @@ export class ElectronicBillingController {
   constructor(private readonly service: ElectronicBillingService) {}
 
   @Get('sales/:saleId/invoice-payload')
+  @Permissions('electronic-billing.read')
   buildInvoicePayload(@Param('saleId', ParseIntPipe) saleId: number) {
     return this.service.buildInvoicePayload(saleId);
   }
 
   @Post('sales/:saleId/send-invoice')
+  @Permissions('electronic-billing.send')
   sendInvoice(@Param('saleId', ParseIntPipe) saleId: number) {
     return this.service.sendInvoice(saleId);
   }
 
   @Post('sales/:saleId/email')
+  @Permissions('electronic-billing.email')
   emailInvoice(
     @Param('saleId', ParseIntPipe) saleId: number,
     @Body() dto: SendElectronicDocumentEmailDto,
@@ -30,11 +34,13 @@ export class ElectronicBillingController {
   }
 
   @Get('sales/:saleId/document')
+  @Permissions('electronic-billing.read')
   findBySale(@Param('saleId', ParseIntPipe) saleId: number) {
     return this.service.findBySale(saleId);
   }
 
   @Get('sales/:saleId/xml')
+  @Permissions('electronic-billing.download')
   async downloadXml(
     @Param('saleId', ParseIntPipe) saleId: number,
     @Res() response: Response,
@@ -44,6 +50,7 @@ export class ElectronicBillingController {
   }
 
   @Get('sales/:saleId/cdr')
+  @Permissions('electronic-billing.download')
   async downloadCdr(
     @Param('saleId', ParseIntPipe) saleId: number,
     @Res() response: Response,
@@ -53,6 +60,7 @@ export class ElectronicBillingController {
   }
 
   @Get('sales/:saleId/pdf')
+  @Permissions('electronic-billing.download')
   async downloadPdf(
     @Param('saleId', ParseIntPipe) saleId: number,
     @Res() response: Response,

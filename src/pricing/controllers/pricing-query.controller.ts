@@ -1,8 +1,11 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { PricingEngineService } from '../services/pricing-engine.service';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 
-@UseGuards(JwtAccessGuard)
+@UseGuards(JwtAccessGuard, PermissionsGuard)
+@Permissions('pricing.read')
 @Controller('pricing/query')
 export class PricingQueryController {
     constructor(private readonly engine: PricingEngineService) {}

@@ -2,8 +2,11 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { StockService } from '../services/stock.service';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { FilterStockDto } from '../dto/filter-stock.dto';
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
 
-@UseGuards(JwtAccessGuard)
+@UseGuards(JwtAccessGuard, PermissionsGuard)
+@Permissions('inventory-stock.read')
 @Controller('inventory/stock')
 export class StockController {
     constructor(private readonly svc: StockService) { }

@@ -1,7 +1,10 @@
 import { Controller, Get, Post, Body, Query, Param, BadRequestException, UseGuards } from '@nestjs/common';
 import { SerialsService } from '../services/serials.service';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
-@UseGuards(JwtAccessGuard)
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
+@UseGuards(JwtAccessGuard, PermissionsGuard)
+@Permissions('inventory-serials.read')
 @Controller('serials')
 export class SerialsController {
     constructor(private readonly svc: SerialsService) { }
@@ -28,6 +31,7 @@ export class SerialsController {
 
     // ✅ NUEVO: resolver seriales (existe / product / lot / lot_code)
     @Post('resolve')
+    @Permissions('inventory-serials.manage')
     async resolveSerials(@Body() body: { serial_codes?: string[]; serialCodes?: string[] }) {
         const raw = body?.serial_codes ?? body?.serialCodes ?? [];
         if (!Array.isArray(raw)) throw new BadRequestException('serial_codes debe ser un arreglo');

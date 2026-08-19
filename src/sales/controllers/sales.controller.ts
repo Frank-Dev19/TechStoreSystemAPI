@@ -31,13 +31,13 @@ import { Permissions } from 'src/rbac/decorators/permissions.decorator';
 export class SalesController {
     constructor(private readonly salesService: SalesService) { }
 
-    // @Permissions('sales.read')
+    @Permissions('sales.read')
     @Get()
     findAll(@Query() query: FilterSalesDto) {
         return this.salesService.findAll(query);
     }
 
-    // @Permissions('sales.read')
+    @Permissions('sales.read')
     @Get('metrics')
     getMetrics(
         @Query('companyId') companyId: string,
@@ -57,7 +57,7 @@ export class SalesController {
         );
     }
 
-    // @Permissions('sales.read')
+    @Permissions('sales.read')
     @Get('reports/income-tax')
     getIncomeTaxReport(
         @Query('companyId') companyId: string,
@@ -69,7 +69,7 @@ export class SalesController {
         );
     }
 
-    // @Permissions('sales.read')
+    @Permissions('sales.read')
     @Get('by-product')
     getSalesByProduct(
         @Query('companyId') companyId: string,
@@ -86,24 +86,25 @@ export class SalesController {
     }
 
     @Get('eligible-service-orders')
+    @Permissions('sales.read')
     findEligibleServiceOrders(@Query() query: any) {
         return this.salesService.findEligibleServiceOrders(query);
     }
 
-    // @Permissions('sales.read')
+    @Permissions('sales.read')
     @Get(':id')
     findOne(@Param('id') id: string) {
         return this.salesService.findOne(+id);
     }
 
-    // @Permissions('sales.simulate')
+    @Permissions('sales.simulate')
     @Post('simulate')
     simulate(@Body() simulateDto: SimulateSaleDto, @Req() req: any) {
         const userPermissions = req.user?.permissions || [];
         return this.salesService.simulate(simulateDto, userPermissions);
     }
 
-    // @Permissions('sales.create')
+    @Permissions('sales.create')
     @Post()
     create(@Body() createSaleDto: CreateSaleDto, @Req() req: any) {
         const user = req.user?.name || 'System';
@@ -111,18 +112,20 @@ export class SalesController {
     }
 
     @Post('from-service-order')
+    @Permissions('sales.create')
     createFromServiceOrder(@Body() createSaleFromServiceOrderDto: CreateSaleFromServiceOrderDto, @Req() req: any) {
         const user = req.user?.name || 'System';
         return this.salesService.createFromServiceOrder(createSaleFromServiceOrderDto, user);
     }
 
     @Post('from-service-agreements')
+    @Permissions('sales.create')
     createFromServiceAgreements(@Body() dto: CreateSaleFromServiceAgreementsDto, @Req() req: any) {
         const user = req.user?.name || 'System';
         return this.salesService.createFromServiceAgreements(dto, user);
     }
 
-    // @Permissions('sales.update')
+    @Permissions('sales.update')
     @Patch(':id')
     update(
         @Param('id') id: string,
@@ -133,7 +136,7 @@ export class SalesController {
         return this.salesService.update(+id, updateSaleDto, user);
     }
 
-    // @Permissions('sales.cancel')
+    @Permissions('sales.cancel')
     @Patch(':id/cancel')
     cancel(
         @Param('id') id: string,

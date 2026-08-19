@@ -576,6 +576,46 @@ export class BootstrapService implements OnModuleInit {
     ];
 
     // 3) Sincronizar catalogo (modulos y permisos) SIEMPRE
+    MODULES.push(
+      { moduleKey: 'app', label: 'Acceso al sistema', sortOrder: 1, icon: 'fas fa-home' },
+      { moduleKey: 'profile', label: 'Perfil propio', sortOrder: 2, icon: 'fas fa-user' },
+      { moduleKey: 'navigation', label: 'Navegacion', sortOrder: 3, icon: 'fas fa-bars' },
+      { moduleKey: 'sales', label: 'Ventas', sortOrder: 50, icon: 'fas fa-cash-register' },
+      { moduleKey: 'cashflow', label: 'Caja', sortOrder: 51, icon: 'fas fa-wallet' },
+      { moduleKey: 'document-series', label: 'Series de comprobantes', sortOrder: 52, icon: 'fas fa-hashtag' },
+      { moduleKey: 'electronic-billing', label: 'Facturacion electronica', sortOrder: 53, icon: 'fas fa-file-invoice' },
+      { moduleKey: 'inventory-kardex', label: 'Kardex', sortOrder: 60, icon: 'fas fa-book' },
+      { moduleKey: 'inventory-products', label: 'Productos de inventario', sortOrder: 61, icon: 'fas fa-box' },
+      { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
+      { moduleKey: 'inventory-serials', label: 'Seriales', sortOrder: 63, icon: 'fas fa-barcode' },
+      { moduleKey: 'inventory-manage', label: 'Gestion de inventario', sortOrder: 64, icon: 'fas fa-warehouse' },
+      { moduleKey: 'pricing', label: 'Precios', sortOrder: 70, icon: 'fas fa-tags' },
+    );
+    const add = (moduleKey: string, actionKey: string, description: string, sortOrder = 10) =>
+      PERMS.push({ moduleKey, actionKey, description, sortOrder });
+    add('app', 'home', 'Acceder al inicio');
+    add('profile', 'manage-own', 'Ver y editar el perfil propio');
+    add('navigation', 'admin', 'Acceder a administracion');
+    add('navigation', 'clients', 'Acceder a clientes');
+    add('navigation', 'document-types', 'Acceder a tipos de documento');
+    add('navigation', 'suppliers', 'Acceder a proveedores');
+    add('navigation', 'sales', 'Acceder a ventas');
+    add('navigation', 'inventory-kardex', 'Acceder unicamente al Kardex');
+    add('navigation', 'inventory-manage', 'Acceder a la gestion completa de inventario');
+    add('navigation', 'reception', 'Acceder al panel de recepcion');
+    add('navigation', 'technician', 'Acceder al panel tecnico');
+    add('navigation', 'inbox', 'Acceder a mensajeria');
+    for (const action of ['read', 'simulate', 'create', 'update', 'cancel']) add('sales', action, `${action} ventas`);
+    for (const action of ['read', 'manage', 'reports']) add('cashflow', action, `${action} caja`);
+    for (const action of ['read', 'manage']) add('document-series', action, `${action} series`);
+    for (const action of ['read', 'send', 'download', 'email']) add('electronic-billing', action, `${action} comprobantes electronicos`);
+    add('inventory-kardex', 'read', 'Consultar Kardex');
+    for (const action of ['read', 'manage']) add('inventory-products', action, `${action} productos`);
+    add('inventory-stock', 'read', 'Consultar stock');
+    for (const action of ['read', 'manage']) add('inventory-serials', action, `${action} seriales`);
+    for (const action of ['read', 'manage']) add('inventory-manage', action, `${action} inventario`);
+    for (const action of ['read', 'manage']) add('pricing', action, `${action} precios`);
+
     const allCodes = await this.syncCatalog(MODULES, PERMS);
 
     // 3.1) Eliminar permisos legacy bulk-* que ya no forman parte del modelo RBAC.
@@ -883,24 +923,9 @@ export class BootstrapService implements OnModuleInit {
       adminRole = this.rolesRepo.create({ name: 'admin', permissions: [] });
     }
 
-    const currentCodes = new Set(
-      (adminRole.permissions ?? []).map((p) => p.code),
-    );
-    const toFetch = allCodes.filter((c) => !currentCodes.has(c));
-    if (toFetch.length) {
-      const newPerms = await this.permsRepo.find({
-        where: { code: In(toFetch) },
-      });
-      adminRole.permissions = [...(adminRole.permissions ?? []), ...newPerms];
-      await this.rolesRepo.save(adminRole);
-      this.log.log(`~ admin recibio ${newPerms.length} permisos nuevos.`);
-    } else {
-      // si el rol aun no existia, guardarlo
-      if (!adminRole.id) {
-        await this.rolesRepo.save(adminRole);
-        this.log.log('Rol "admin" creado sin permisos nuevos que anadir.');
-      }
-    }
+    adminRole.permissions = await this.permsRepo.find({ where: { code: In(allCodes) } });
+    await this.rolesRepo.save(adminRole);
+    this.log.log(`~ rol admin sincronizado con ${adminRole.permissions.length} permisos.`);
   }
 
   private async ensureOperationalRolesAndGrants() {
@@ -908,6 +933,22 @@ export class BootstrapService implements OnModuleInit {
       {
         name: 'recepcionist',
         permissionCodes: [
+          'app.home', 'profile.manage-own', 'navigation.clients',
+          'navigation.document-types', 'navigation.suppliers', 'navigation.sales',
+          'navigation.inventory-manage', 'navigation.reception', 'navigation.inbox',
+          'document-type.create', 'document-type.read', 'document-type.update',
+          'suppliers.create', 'suppliers.read', 'suppliers.update',
+          'sales.read', 'sales.simulate', 'sales.create', 'sales.update', 'sales.cancel',
+          'cashflow.read', 'cashflow.manage', 'cashflow.reports',
+          'document-series.read', 'document-series.manage',
+          'electronic-billing.read', 'electronic-billing.send',
+          'electronic-billing.download', 'electronic-billing.email',
+          'inventory-kardex.read',
+          'inventory-products.read', 'inventory-products.manage',
+          'inventory-stock.read',
+          'inventory-serials.read', 'inventory-serials.manage',
+          'inventory-manage.read', 'inventory-manage.manage',
+          'pricing.read',
           'service-order.create',
           'service-order.read',
           'service-order.update',
@@ -942,6 +983,9 @@ export class BootstrapService implements OnModuleInit {
       {
         name: 'technician',
         permissionCodes: [
+          'app.home', 'profile.manage-own', 'navigation.inventory-kardex',
+          'navigation.technician', 'navigation.inbox', 'inventory-kardex.read',
+          'inventory-products.read',
           'service-order.read',
           'service-order.update',
           'service-order.transition',
@@ -993,20 +1037,17 @@ export class BootstrapService implements OnModuleInit {
         role = this.rolesRepo.create({ name: seed.name, permissions: [] });
       }
 
-      const grantedCodes = new Set(
-        (role.permissions ?? []).map((permission) => permission.code),
-      );
-      const missingCodes = seed.permissionCodes.filter(
-        (code) => !grantedCodes.has(code),
-      );
-
-      if (missingCodes.length) {
-        const permissions = await this.permsRepo.find({
-          where: { code: In(missingCodes) },
-        });
-        role.permissions = [...(role.permissions ?? []), ...permissions];
-      }
-
+      const seededPermissions = await this.permsRepo.find({
+        where: { code: In(seed.permissionCodes) },
+      });
+      role.permissions = seed.name === 'supervisor'
+        ? [
+            ...(role.permissions ?? []),
+            ...seededPermissions.filter(
+              (permission) => !(role.permissions ?? []).some((current) => current.code === permission.code),
+            ),
+          ]
+        : seededPermissions;
       await this.rolesRepo.save(role);
     }
   }
@@ -1072,14 +1113,6 @@ export class BootstrapService implements OnModuleInit {
         roleName: 'technician',
         documentNumber: '00000002',
         phone: '999999992',
-      },
-      {
-        email: 'supervisor@test.com',
-        name: 'Supervisor',
-        password: 'Supervisor123',
-        roleName: 'supervisor',
-        documentNumber: '00000003',
-        phone: '999999993',
       },
     ];
 

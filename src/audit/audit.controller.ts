@@ -11,19 +11,17 @@ import {
 import { Observable, interval, map, filter, switchMap, from } from 'rxjs';
 import { AuditService } from './audit.service';
 import { SearchAuditDto } from './dto/search-audit.dto';
-//import { AuditRoles } from './decorators/roles.decorator';
-import { AuditRolesGuard } from './guards/audit-roles.guard';
 import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
-import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
+import { RolesGuard } from 'src/rbac/guards/roles.guard';
 
-// @RolesDec('admin')
+@UseGuards(JwtAccessGuard, RolesGuard)
+@RolesDec('admin')
 @Controller('audit')
-// @UseGuards(AuditRolesGuard)
 export class AuditController {
     constructor(private readonly audit: AuditService) { }
 
     @Get('search')
-    // @Permissions('audit.read')
     async search(@Query() dto: SearchAuditDto) {
         // Enviar YYYY-MM-DD para que el servicio construya correctamente el rango
         dto.from = dto.from ?? new Date().toISOString().split('T')[0];
@@ -32,7 +30,6 @@ export class AuditController {
     }
 
     @Get(':id')
-    // @Permissions('audit.read')
     async findById(@Param('id', ParseIntPipe) id: number) {
         const item = await this.audit.findById(id);
         return item ?? {};
@@ -40,7 +37,6 @@ export class AuditController {
 
     // Live tail (SSE) básico
     @Sse('stream')
-    // @Permissions('audit.stream')
     stream(@Query() dto: SearchAuditDto): Observable<MessageEvent> {
         // Usar date-only (YYYY-MM-DD)
         const now = new Date();

@@ -3,12 +3,16 @@ import { MovementsService } from '../services/movements.service';
 import { MovementDto } from '../dto/movement.dto';
 import { Req } from '@nestjs/common';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
-@UseGuards(JwtAccessGuard)
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
+@UseGuards(JwtAccessGuard, PermissionsGuard)
+@Permissions('inventory-manage.read')
 @Controller('inventory/movements')
 export class MovementsController {
     constructor(private readonly svc: MovementsService) { }
 
     @Post()
+    @Permissions('inventory-manage.manage')
     create(@Body() dto: MovementDto, @Req() req: any) {
         const user =
             req.user?.name || dto.user_created || req.headers['x-user-name'] || 'Usuario Front';
@@ -17,6 +21,7 @@ export class MovementsController {
 
     // También puedes usar este endpoint como "kardex" con filtros simples.
     @Get()
+    @Permissions('inventory-kardex.read')
     async list(@Query() q: any) {
         const result = await this.svc.listKardex({
             product_id: q.product_id ? +q.product_id : undefined,

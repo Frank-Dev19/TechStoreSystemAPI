@@ -11,17 +11,14 @@ import {
 } from '@nestjs/common';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
 import { Permissions } from 'src/rbac/decorators/permissions.decorator';
-import { Roles as RolesDec } from 'src/rbac/decorators/roles.decorator';
 import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
-import { RolesGuard } from 'src/rbac/guards/roles.guard';
 import { BulkIdsDto } from 'src/common/dtos/bulk-ids.dto';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto';
 import { UpdateDocumentTypeDto } from './dto/update-document-type.dto';
 import { DocumentTypesService } from './document-types.service';
 import type { FindAllQuery } from './document-types.service';
 
-@UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin')
+@UseGuards(JwtAccessGuard, PermissionsGuard)
 @Controller('document-types')
 export class DocumentTypesController {
   constructor(private readonly documentTypesService: DocumentTypesService) {}

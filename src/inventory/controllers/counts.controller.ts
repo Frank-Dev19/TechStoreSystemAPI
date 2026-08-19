@@ -2,7 +2,10 @@ import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/comm
 import { CountsService } from '../services/counts.service';
 import { CreateCountDto } from '../dto/create-count.dto';
 import { JwtAccessGuard } from 'src/auth/guards/jwt-access.guard';
-@UseGuards(JwtAccessGuard)
+import { Permissions } from 'src/rbac/decorators/permissions.decorator';
+import { PermissionsGuard } from 'src/rbac/guards/permissions.guard';
+@UseGuards(JwtAccessGuard, PermissionsGuard)
+@Permissions('inventory-manage.read')
 @Controller('inventory/counts')
 export class CountsController {
     constructor(private readonly svc: CountsService) { }
@@ -12,6 +15,7 @@ export class CountsController {
 
 
     @Post()
+    @Permissions('inventory-manage.manage')
     create(@Body() dto: CreateCountDto) {
         const user = dto.createdBy || 'Usuario Front';
         return this.svc.create(dto, user);
@@ -23,17 +27,20 @@ export class CountsController {
     }
 
     @Put(':id/freeze')
+    @Permissions('inventory-manage.manage')
     freeze(@Param('id') id: number) {
         return this.svc.freeze(+id);
     }
 
 
     @Put(':id/start')
+    @Permissions('inventory-manage.manage')
     start(@Param('id') id: number) { return this.svc.startCounting(+id); }
 
 
     // counts.controller.ts
     @Post(':id/entries/bulk')
+    @Permissions('inventory-manage.manage')
     addBulk(
         @Param('id') id: number,
         @Body() b: { user?: string; entries: { product_id: number; lot_id?: number | null; qty_counted: number; user?: string }[] },
@@ -46,6 +53,7 @@ export class CountsController {
 
     // ...
     @Post(':id/entries')
+    @Permissions('inventory-manage.manage')
     addEntry(@Param('id') id: number, @Body() b: any) {
         // Acepta snake o camel desde el front
         const serial_codes: string[] = b.serial_codes ?? b.serialCodes ?? [];
@@ -59,16 +67,19 @@ export class CountsController {
     }
 
     @Put(':id/review')
+    @Permissions('inventory-manage.manage')
     review(@Param('id') id: number, @Body() b: { user?: string }) {
         return this.svc.review(+id, b?.user || 'Usuario Front');
     }
 
     @Put(':id/post')
+    @Permissions('inventory-manage.manage')
     post(@Param('id') id: number, @Body() b: { user?: string }) {
         return this.svc.post(+id, b?.user || 'Usuario Front');
     }
 
     @Put(':id/cancel')
+    @Permissions('inventory-manage.manage')
     cancel(@Param('id') id: number) {
         return this.svc.cancel(+id);
     }
