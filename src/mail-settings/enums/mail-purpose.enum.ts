@@ -1,0 +1,5 @@
+export enum MailPurpose {
+  ELECTRONIC_BILLING = 'ELECTRONIC_BILLING',
+  PASSWORD_RESET = 'PASSWORD_RESET',
+}
+

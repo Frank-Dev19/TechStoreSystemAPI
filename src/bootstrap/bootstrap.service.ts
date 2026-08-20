@@ -584,6 +584,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'cashflow', label: 'Caja', sortOrder: 51, icon: 'fas fa-wallet' },
       { moduleKey: 'document-series', label: 'Series de comprobantes', sortOrder: 52, icon: 'fas fa-hashtag' },
       { moduleKey: 'electronic-billing', label: 'Facturacion electronica', sortOrder: 53, icon: 'fas fa-file-invoice' },
+      { moduleKey: 'mail-settings', label: 'Configuracion de correo', sortOrder: 54, icon: 'fas fa-envelope' },
       { moduleKey: 'inventory-kardex', label: 'Kardex', sortOrder: 60, icon: 'fas fa-book' },
       { moduleKey: 'inventory-products', label: 'Productos de inventario', sortOrder: 61, icon: 'fas fa-box' },
       { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
@@ -596,6 +597,7 @@ export class BootstrapService implements OnModuleInit {
     add('app', 'home', 'Acceder al inicio');
     add('profile', 'manage-own', 'Ver y editar el perfil propio');
     add('navigation', 'admin', 'Acceder a administracion');
+    add('navigation', 'mail-settings', 'Acceder a configuracion de correo');
     add('navigation', 'clients', 'Acceder a clientes');
     add('navigation', 'document-types', 'Acceder a tipos de documento');
     add('navigation', 'suppliers', 'Acceder a proveedores');
@@ -609,6 +611,9 @@ export class BootstrapService implements OnModuleInit {
     for (const action of ['read', 'manage', 'reports']) add('cashflow', action, `${action} caja`);
     for (const action of ['read', 'manage']) add('document-series', action, `${action} series`);
     for (const action of ['read', 'send', 'download', 'email']) add('electronic-billing', action, `${action} comprobantes electronicos`);
+    add('mail-settings', 'read', 'Ver configuracion de correo', 10);
+    add('mail-settings', 'update', 'Actualizar configuracion de correo', 20);
+    add('mail-settings', 'test', 'Probar configuracion de correo', 30);
     add('inventory-kardex', 'read', 'Consultar Kardex');
     for (const action of ['read', 'manage']) add('inventory-products', action, `${action} productos`);
     add('inventory-stock', 'read', 'Consultar stock');

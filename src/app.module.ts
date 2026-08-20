@@ -30,6 +30,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { SupplierModule } from './suppliers/supplier.module';
 import { BusinessProfileModule } from './business-profile/business-profile.module';
 import { ElectronicBillingModule } from './electronic-billing/electronic-billing.module';
+import { MailSettingsModule } from './mail-settings/mail-settings.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -50,6 +51,7 @@ import { ElectronicBillingModule } from './electronic-billing/electronic-billing
     BootstrapModule,
     UserPermissionsModule,
     MailerModule,
+    MailSettingsModule,
     DocumentTypesModule,
     ClientModule,
     SupplierModule,

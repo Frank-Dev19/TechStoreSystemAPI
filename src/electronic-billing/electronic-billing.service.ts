@@ -11,6 +11,7 @@ import { mapSaleToApisPeruInvoicePayload } from './mappers/sale-to-apisperu-invo
 import { ApisPeruBillingClient } from './services/apisperu-billing.client';
 import { MailerService } from '../mailer/mailer.service';
 import { SendElectronicDocumentEmailDto } from './dto/send-electronic-document-email.dto';
+import { MailPurpose } from '../mail-settings/enums/mail-purpose.enum';
 
 @Injectable()
 export class ElectronicBillingService {
@@ -147,22 +148,34 @@ export class ElectronicBillingService {
     const customerName = sale.billingSnapshotName || sale.customer?.name || 'cliente';
     const total = this.formatMoney(sale.total);
     const customMessage = dto.message?.trim();
+    const message = await this.mailerService.prepareMessage(
+      MailPurpose.ELECTRONIC_BILLING,
+      {
+        subject: 'Comprobante electrónico {documento}',
+        intro: 'Adjuntamos su comprobante electrónico emitido por Macrochips.',
+        footer: 'Gracias por confiar en Macrochips.',
+      },
+      { documento: documentLabel },
+    );
 
     await this.mailerService.sendMail({
       to,
-      subject: `Comprobante electronico ${documentLabel}`,
+      subject: message.subject,
       html: `
         <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:620px;margin:auto;color:#0f172a">
-          <h2 style="margin-bottom:8px">Comprobante electronico ${documentLabel}</h2>
-          <p>Hola ${customerName}, adjuntamos el comprobante electronico emitido por Macrochips.</p>
-          <p><strong>Documento:</strong> ${documentLabel}</p>
+          <h2 style="margin-bottom:8px">${message.subjectHtml}</h2>
+          <p>Hola ${this.mailerService.escapeHtml(customerName)},</p>
+          <p>${message.introHtml}</p>
+          <p><strong>Documento:</strong> ${this.mailerService.escapeHtml(documentLabel)}</p>
           <p><strong>Total:</strong> S/ ${total}</p>
-          ${customMessage ? `<p>${customMessage}</p>` : ''}
+          ${customMessage ? `<p>${this.mailerService.escapeHtml(customMessage)}</p>` : ''}
           <p>Se adjunta el PDF y XML del comprobante${document.cdrZip ? ', junto con el CDR de SUNAT' : ''}.</p>
+          <p>${message.footerHtml}</p>
         </div>
       `,
       text: `Comprobante electronico ${documentLabel}. Total: S/ ${total}.`,
       attachments,
+      purpose: MailPurpose.ELECTRONIC_BILLING,
     });
 
     return {
