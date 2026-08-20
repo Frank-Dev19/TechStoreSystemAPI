@@ -18,12 +18,17 @@ export function applyServiceOrderSaleEligibilityFilters<T extends ObjectLiteral>
     .andWhere(`${alias}.economicStatus = :eligibleEconomicStatus`, {
       eligibleEconomicStatus: ServiceOrderEconomicStatus.PENDIENTE,
     })
-    .andWhere(`${alias}.operativeStatus = :eligibleOperativeStatus`, {
-      eligibleOperativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
-    })
-    .andWhere(`${alias}.technicalStatus = :eligibleTechnicalStatus`, {
-      eligibleTechnicalStatus: ServiceOrderTechnicalStatus.RESUELTA,
-    });
+    .andWhere(
+      `(
+        (${alias}.operativeStatus = :readyOperativeStatus AND ${alias}.technicalStatus = :resolvedTechnicalStatus)
+        OR ${alias}.operativeStatus = :cancelledOperativeStatus
+      )`,
+      {
+        readyOperativeStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+        resolvedTechnicalStatus: ServiceOrderTechnicalStatus.RESUELTA,
+        cancelledOperativeStatus: ServiceOrderOperativeStatus.CANCELADA,
+      },
+    );
 }
 
 export function assertServiceOrderEligibleForSale(
@@ -33,6 +38,10 @@ export function assertServiceOrderEligibleForSale(
 
   if (serviceOrder.economicStatus !== ServiceOrderEconomicStatus.PENDIENTE) {
     throw new BadRequestException(`${orderLabel} no está pendiente de pago`);
+  }
+
+  if (serviceOrder.operativeStatus === ServiceOrderOperativeStatus.CANCELADA) {
+    return;
   }
 
   if (serviceOrder.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA) {

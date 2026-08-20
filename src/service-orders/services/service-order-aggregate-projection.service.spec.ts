@@ -10,6 +10,37 @@ import { ServiceOrderAggregateProjectionService } from './service-order-aggregat
 describe('ServiceOrderAggregateProjectionService', () => {
   const service = new ServiceOrderAggregateProjectionService();
 
+  it('rehidrata el técnico asignado en la respuesta sin modificar su asignación', async () => {
+    const order = createProjectionOrder(9);
+    order.assignedToTechnicianId = 7;
+    const hydratedOrder = {
+      ...order,
+      assignedTechnician: { id: 7, name: 'Carlos Rojas' },
+    } as ServiceOrder;
+    const items = [
+      createItem(91, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA),
+    ];
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValueOnce(order).mockResolvedValueOnce(hydratedOrder),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === ServiceOrder ? orderRepository : { find: jest.fn().mockResolvedValue(items) },
+      ),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.assignedToTechnicianId).toBe(7);
+    expect(result.assignedTechnician).toEqual(expect.objectContaining({ id: 7, name: 'Carlos Rojas' }));
+    expect(result.assignedToTechnicianName).toBe('Carlos Rojas');
+    expect(orderRepository.findOne).toHaveBeenLastCalledWith({
+      where: { id: order.id },
+      relations: ['assignedTechnician'],
+    });
+  });
+
   it('proyecta estado parcial cuando un equipo está resuelto y otro sigue en ejecución', async () => {
     const order = {
       id: 10,
@@ -149,7 +180,7 @@ describe('ServiceOrderAggregateProjectionService', () => {
     expect(completed.itemProgress).toEqual(expect.objectContaining({ delivered: 2, active: 2, isPartial: false }));
   });
 
-  it('ignora equipos cancelados al calcular la fecha final de entrega', async () => {
+  it('mantiene pendiente la devolución física de equipos cancelados al calcular la fecha final de entrega', async () => {
     const order = createProjectionOrder(14);
     const delivered = createItem(141, ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderOperativeStatus.ENTREGADA);
     delivered.deliveredAt = new Date('2026-08-03T16:00:00.000Z');
@@ -168,7 +199,15 @@ describe('ServiceOrderAggregateProjectionService', () => {
     const result = await service.recalculateLocked(manager, order.id);
 
     expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
-    expect(result.deliveredAt).toEqual(delivered.deliveredAt);
+    expect(result.deliveredAt).toBeNull();
+    expect(result.itemProgress).toEqual(expect.objectContaining({ total: 2, delivered: 1, cancelled: 1 }));
+
+    cancelled.deliveredAt = new Date('2026-08-03T17:00:00.000Z');
+    const returned = await service.recalculateLocked(manager, order.id);
+
+    expect(returned.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
+    expect(returned.deliveredAt).toEqual(cancelled.deliveredAt);
+    expect(returned.itemProgress).toEqual(expect.objectContaining({ total: 2, delivered: 2, cancelled: 1 }));
   });
 });
 

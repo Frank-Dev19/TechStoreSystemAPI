@@ -80,8 +80,7 @@ export class ServiceOrderAggregateService {
       montoReconciliado: 0,
       receivedAt: now,
       notes: dto.notes ?? null,
-      // Proyección de compatibilidad hasta que los lectores legacy consuman items[].
-      priority: firstItem.priority ?? ServiceOrderPriority.LOW,
+      // Proyección de compatibilidad para datos de equipo hasta que los lectores legacy consuman items[].
       equipmentType: firstItem.equipmentType,
       equipmentTypeOther: this.resolveEquipmentTypeOther(firstItem),
       brand: firstItem.brand ?? null,

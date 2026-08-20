@@ -12,7 +12,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
-import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
+import { EquipmentType, RequestOrigin, ServiceType } from '../enums';
 
 export class CreateServiceOrderDto {
   @IsEnum(RequestOrigin)
@@ -29,10 +29,6 @@ export class CreateServiceOrderDto {
   @IsPositive()
   @IsOptional()
   clientContactId?: number;
-
-  @IsEnum(ServiceOrderPriority)
-  @IsOptional()
-  priority?: ServiceOrderPriority;
 
   @IsNumber()
   @IsPositive()

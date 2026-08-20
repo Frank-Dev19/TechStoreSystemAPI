@@ -14,7 +14,7 @@ import {
   ValidateNested,
   Matches,
 } from 'class-validator';
-import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
+import { EquipmentType, RequestOrigin, ServiceType } from '../enums';
 import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from 'src/common/utils/phone.util';
 
 export class CreateServiceOrderBatchSharedContextDto {
@@ -35,10 +35,6 @@ export class CreateServiceOrderBatchSharedContextDto {
   @IsPositive()
   @IsOptional()
   clientContactId?: number;
-
-  @IsEnum(ServiceOrderPriority)
-  @IsOptional()
-  priority?: ServiceOrderPriority;
 
   @IsNumber()
   @IsPositive()

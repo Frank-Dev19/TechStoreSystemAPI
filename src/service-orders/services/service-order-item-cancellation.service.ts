@@ -9,6 +9,7 @@ import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { SaleStatus } from '../../sales/enums/sale-status.enum';
 import { RequestServiceOrderItemCancellationDto } from '../dto/request-service-order-item-cancellation.dto';
+import { RequestServiceOrderItemsCancellationDto } from '../dto/request-service-order-items-cancellation.dto';
 import { ResolveServiceOrderItemCancellationDto } from '../dto/resolve-service-order-item-cancellation.dto';
 import { ServiceOrderEvent } from '../entities/service-order-event.entity';
 import { ServiceOrderItemCancellationRequest } from '../entities/service-order-item-cancellation-request.entity';
@@ -21,6 +22,7 @@ import {
   ServiceOrderCancellationResolution,
   ServiceOrderCancellationStatus,
   ServiceOrderCommercialStatus,
+  ServiceOrderEconomicStatus,
   ServiceOrderOperativeStatus,
   ServiceOrderTechnicalStatus,
 } from '../enums';
@@ -34,12 +36,167 @@ import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/s
 
 type CancellationViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
+const DIAGNOSIS_CANCELLATION_FEE = 20;
+
 @Injectable()
 export class ServiceOrderItemCancellationService {
   constructor(
     private readonly manager: EntityManager,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
   ) {}
+
+  async requestCancellations(
+    serviceOrderId: number,
+    dto: RequestServiceOrderItemsCancellationDto,
+    actorId?: number,
+    viewer?: CancellationViewer,
+  ) {
+    const requesterId = this.requireActor(actorId);
+    return this.manager.transaction(async (manager) => {
+      const order = await manager.getRepository(ServiceOrder).findOne({
+        where: { id: serviceOrderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) {
+        throw new NotFoundException(
+          `ServiceOrder with id ${serviceOrderId} not found`,
+        );
+      }
+      this.ensureViewerCanManageOrder(order, viewer);
+
+      const itemIds = [...new Set(dto.itemIds.map(Number))];
+      const itemRepository = manager.getRepository(ServiceOrderItem);
+      const items = await itemRepository.find({
+        where: { id: In(itemIds), serviceOrderId },
+        order: { position: 'ASC' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (items.length !== itemIds.length) {
+        throw new BadRequestException(
+          'Uno o más equipos no pertenecen a la orden indicada',
+        );
+      }
+      items.forEach((item) => this.assertItemCanReceiveRequest(item));
+
+      const requestRepository = manager.getRepository(
+        ServiceOrderItemCancellationRequest,
+      );
+      const activeRequests = await requestRepository.find({
+        where: {
+          serviceOrderItemId: In(itemIds),
+          status: In([
+            ServiceOrderCancellationStatus.PENDING,
+            ServiceOrderCancellationStatus.AWAITING_CLIENT_ACCEPTANCE,
+          ]),
+        },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (activeRequests.length) {
+        throw new BadRequestException(
+          'Al menos uno de los equipos ya tiene una solicitud de cancelación pendiente',
+        );
+      }
+
+      const chargedItems = items.filter((item) =>
+        this.hasDiagnosisStarted(item),
+      );
+      if (chargedItems.length && dto.customerChargeAcknowledged !== true) {
+        throw new BadRequestException(
+          'Debes confirmar que el cliente fue informado del cargo de S/ 20 por cada equipo cuyo diagnóstico ya inició',
+        );
+      }
+      await this.assertNoConfirmedSale(manager, order.id);
+
+      const now = new Date();
+      const reason = dto.reason.trim();
+      const commercialVersions = new Map<
+        number,
+        ServiceOrderItemCommercialVersion
+      >();
+      for (const item of chargedItems) {
+        commercialVersions.set(
+          Number(item.id),
+          await this.createImmediateCancellationCharge(
+            manager,
+            item,
+            requesterId,
+            reason,
+            now,
+          ),
+        );
+      }
+
+      const requests: ServiceOrderItemCancellationRequest[] = [];
+      for (const item of items) {
+        const commercialVersion = commercialVersions.get(Number(item.id));
+        const request = await requestRepository.save(
+          requestRepository.create({
+            serviceOrderItemId: item.id,
+            status: ServiceOrderCancellationStatus.APPROVED,
+            resolution: commercialVersion
+              ? ServiceOrderCancellationResolution.APPROVED_WITH_CHARGE
+              : ServiceOrderCancellationResolution.APPROVED_WITHOUT_CHARGE,
+            channel: dto.channel,
+            reason,
+            requestedByUserId: requesterId,
+            requestedAt: now,
+            previousOperativeStatus: item.operativeStatus,
+            previousTechnicalStatus: item.technicalStatus,
+            resolvedByUserId: requesterId,
+            resolvedAt: now,
+            resolutionReason: reason,
+            chargeAmount: commercialVersion
+              ? DIAGNOSIS_CANCELLATION_FEE
+              : null,
+            commercialVersionId: commercialVersion?.id ?? null,
+          }),
+        );
+        const previousStatus = item.operativeStatus;
+        this.applyCancellation(item, reason, now);
+        await itemRepository.save(item);
+        await this.recordEvent(
+          manager,
+          order.id,
+          item,
+          'item.cancellation.approved',
+          previousStatus,
+          item.operativeStatus,
+          requesterId,
+          reason,
+          request.id,
+          request.status,
+        );
+        requests.push(request);
+      }
+
+      let agreement: ServiceOrderAgreement | null = null;
+      if (commercialVersions.size) {
+        agreement = await this.createConfirmedCancellationAgreement(
+          manager,
+          order,
+          items.filter((item) => commercialVersions.has(Number(item.id))),
+          commercialVersions,
+          requesterId,
+          reason,
+          now,
+        );
+      }
+
+      const projectedOrder = await this.projectionService.recalculateLocked(
+        manager,
+        order.id,
+      );
+      return {
+        requests,
+        order: projectedOrder,
+        agreement,
+        chargedItemsCount: chargedItems.length,
+        chargeTotal: Number(
+          (chargedItems.length * DIAGNOSIS_CANCELLATION_FEE).toFixed(2),
+        ),
+      };
+    });
+  }
 
   async requestCancellation(
     serviceOrderId: number,
@@ -48,88 +205,20 @@ export class ServiceOrderItemCancellationService {
     actorId?: number,
     viewer?: CancellationViewer,
   ) {
-    const requesterId = this.requireActor(actorId);
-    return this.manager.transaction(async (manager) => {
-      const { order, item } = await this.loadLockedContext(
-        manager,
-        serviceOrderId,
-        itemId,
-        viewer,
-      );
-      this.assertItemCanReceiveRequest(item);
-
-      const requestRepository = manager.getRepository(
-        ServiceOrderItemCancellationRequest,
-      );
-      const activeRequest = await requestRepository.findOne({
-        where: {
-          serviceOrderItemId: item.id,
-          status: In([
-            ServiceOrderCancellationStatus.PENDING,
-            ServiceOrderCancellationStatus.AWAITING_CLIENT_ACCEPTANCE,
-          ]),
-        },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (activeRequest) {
-        throw new BadRequestException(
-          'El equipo ya tiene una solicitud de cancelación pendiente',
-        );
-      }
-
-      const now = new Date();
-      const isLateCancellation = this.hasExecutionStarted(item);
-      if (!isLateCancellation)
-        await this.assertNoConfirmedSale(manager, order.id);
-
-      const request = await requestRepository.save(
-        requestRepository.create({
-          serviceOrderItemId: item.id,
-          status: isLateCancellation
-            ? ServiceOrderCancellationStatus.PENDING
-            : ServiceOrderCancellationStatus.APPROVED,
-          resolution: isLateCancellation
-            ? null
-            : ServiceOrderCancellationResolution.APPROVED_WITHOUT_CHARGE,
-          channel: dto.channel,
-          reason: dto.reason.trim(),
-          requestedByUserId: requesterId,
-          requestedAt: now,
-          previousOperativeStatus: item.operativeStatus,
-          previousTechnicalStatus: item.technicalStatus,
-          resolvedByUserId: isLateCancellation ? null : requesterId,
-          resolvedAt: isLateCancellation ? null : now,
-          resolutionReason: isLateCancellation ? null : dto.reason.trim(),
-          chargeAmount: null,
-          commercialVersionId: null,
-        }),
-      );
-
-      if (isLateCancellation) {
-        item.operativeStatus =
-          ServiceOrderOperativeStatus.CANCELACION_SOLICITADA;
-      } else {
-        this.applyCancellation(item, dto.reason, now);
-      }
-      await manager.getRepository(ServiceOrderItem).save(item);
-      await this.recordEvent(
-        manager,
-        order.id,
-        item,
-        'item.cancellation.requested',
-        request.previousOperativeStatus,
-        item.operativeStatus,
-        requesterId,
-        dto.reason,
-        request.id,
-        request.status,
-      );
-      const projectedOrder = await this.projectionService.recalculateLocked(
-        manager,
-        order.id,
-      );
-      return { request, order: projectedOrder };
-    });
+    return this.requestCancellations(
+      serviceOrderId,
+      {
+        itemIds: [itemId],
+        channel: dto.channel,
+        reason: dto.reason,
+        customerChargeAcknowledged: dto.customerChargeAcknowledged,
+      },
+      actorId,
+      viewer,
+    ).then((result) => ({
+      request: result.requests[0],
+      order: result.order,
+    }));
   }
 
   async resolveCancellation(
@@ -276,17 +365,163 @@ export class ServiceOrderItemCancellationService {
     }
   }
 
-  private hasExecutionStarted(item: ServiceOrderItem): boolean {
-    return (
-      item.serviceStartedAt instanceof Date ||
-      [
-        ServiceOrderTechnicalStatus.EN_EJECUCION,
-        ServiceOrderTechnicalStatus.BLOQUEADA,
-        ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO,
-        ServiceOrderTechnicalStatus.RESUELTA,
-        ServiceOrderTechnicalStatus.SIN_SOLUCION,
-      ].includes(item.technicalStatus)
+  private hasDiagnosisStarted(item: ServiceOrderItem): boolean {
+    return ![
+      ServiceOrderTechnicalStatus.PENDIENTE_ASIGNACION,
+      ServiceOrderTechnicalStatus.ASIGNADA,
+    ].includes(item.technicalStatus);
+  }
+
+  private async createImmediateCancellationCharge(
+    manager: EntityManager,
+    item: ServiceOrderItem,
+    actorId: number,
+    reason: string,
+    now: Date,
+  ): Promise<ServiceOrderItemCommercialVersion> {
+    const versionRepository = manager.getRepository(
+      ServiceOrderItemCommercialVersion,
     );
+    const baseVersion = await versionRepository.findOne({
+      where: { serviceOrderItemId: item.id },
+      order: { versionNumber: 'DESC', createdAt: 'DESC' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (
+      baseVersion &&
+      baseVersion.status !== ServiceOrderItemCommercialVersionStatus.REPLACED
+    ) {
+      baseVersion.status = ServiceOrderItemCommercialVersionStatus.REPLACED;
+      await versionRepository.save(baseVersion);
+    }
+    const version = await versionRepository.save(
+      versionRepository.create({
+        serviceOrderItemId: item.id,
+        derivedFromVersionId: baseVersion?.id ?? null,
+        versionNumber: Number(baseVersion?.versionNumber ?? 0) + 1,
+        status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+        totalAmount: DIAGNOSIS_CANCELLATION_FEE,
+        notes: `Cargo por cancelación después de iniciar diagnóstico: ${reason}`,
+        createdByUserId: actorId,
+        acceptedAt: now,
+        acceptedByUserId: actorId,
+      }),
+    );
+    const lineRepository = manager.getRepository(
+      ServiceOrderItemCommercialLine,
+    );
+    version.lines = [
+      await lineRepository.save(
+        lineRepository.create({
+          commercialVersionId: version.id,
+          type: ServiceOrderCommercialLineType.SERVICE,
+          productId: null,
+          serviceId: null,
+          catalogCodeSnapshot: 'SERVICIO_TECNICO_DIAGNOSTICO',
+          catalogNameSnapshot: 'Servicio técnico de diagnóstico',
+          catalogDescriptionSnapshot: `Cargo por cancelación del equipo ${item.code} después de iniciar el diagnóstico`,
+          quantity: 1,
+          unitPrice: DIAGNOSIS_CANCELLATION_FEE,
+          grossAmount: DIAGNOSIS_CANCELLATION_FEE,
+          discountAmount: 0,
+          netAmount: DIAGNOSIS_CANCELLATION_FEE,
+          requiresPurchase: false,
+          notes: reason,
+        }),
+      ),
+    ];
+    return version;
+  }
+
+  private async createConfirmedCancellationAgreement(
+    manager: EntityManager,
+    order: ServiceOrder,
+    chargedItems: ServiceOrderItem[],
+    versions: Map<number, ServiceOrderItemCommercialVersion>,
+    actorId: number,
+    reason: string,
+    now: Date,
+  ): Promise<ServiceOrderAgreement> {
+    const agreementRepository = manager.getRepository(ServiceOrderAgreement);
+    const versionRepository = manager.getRepository(
+      ServiceOrderItemCommercialVersion,
+    );
+    const currentAgreement = await agreementRepository.findOne({
+      where: { serviceOrderId: order.id },
+      order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (
+      currentAgreement &&
+      ![
+        ServiceOrderAgreementStatus.SUPERSEDED,
+        ServiceOrderAgreementStatus.VOIDED,
+      ].includes(currentAgreement.status)
+    ) {
+      currentAgreement.status = ServiceOrderAgreementStatus.SUPERSEDED;
+      await agreementRepository.save(currentAgreement);
+    }
+    const agreementSelections = chargedItems.map((item) => ({
+      item,
+      version: versions.get(Number(item.id))!,
+    }));
+    const remainingItems = await manager.getRepository(ServiceOrderItem).find({
+      where: { serviceOrderId: order.id },
+      order: { position: 'ASC' },
+    });
+    for (const item of remainingItems.filter(
+      (candidate) =>
+        candidate.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA,
+    )) {
+      const acceptedVersion = await versionRepository.findOne({
+        where: {
+          serviceOrderItemId: item.id,
+          status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+        },
+        order: { versionNumber: 'DESC', createdAt: 'DESC' },
+      });
+      if (acceptedVersion) {
+        agreementSelections.push({ item, version: acceptedVersion });
+      }
+    }
+    const totalAmount = Number(
+      agreementSelections
+        .reduce(
+          (total, selection) => total + Number(selection.version.totalAmount),
+          0,
+        )
+        .toFixed(2),
+    );
+    const agreement = await agreementRepository.save(
+      agreementRepository.create({
+        serviceOrderId: order.id,
+        diagnosisId: null,
+        derivedFromAgreementId: currentAgreement?.id ?? null,
+        sequenceNumber: Number(currentAgreement?.sequenceNumber ?? 0) + 1,
+        status: ServiceOrderAgreementStatus.CONFIRMED,
+        source: ServiceOrderAgreementSource.TECHNICIAN_COORDINATION,
+        totalAmount,
+        notes: `Cargo consolidado por cancelación: ${reason}`,
+        agreedAt: now,
+        agreedByUserId: actorId,
+      }),
+    );
+    const linkRepository = manager.getRepository(ServiceOrderAgreementItem);
+    await linkRepository.save(
+      agreementSelections.map(({ item, version }) =>
+        linkRepository.create({
+          serviceOrderAgreementId: agreement.id,
+          serviceOrderItemId: item.id,
+          commercialVersionId: version.id,
+        }),
+      ),
+    );
+
+    order.montoComprometidoVigente = totalAmount;
+    order.montoReconciliado = 0;
+    order.economicStatus = ServiceOrderEconomicStatus.PENDIENTE;
+    await manager.getRepository(ServiceOrder).save(order);
+    return agreement;
   }
 
   private applyCancellation(

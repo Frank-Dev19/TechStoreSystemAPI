@@ -99,24 +99,26 @@ El acuerdo global queda `CONFIRMED` solo cuando todos los equipos no cancelados 
 
 Toda cancelación crea `service_order_item_cancellation_requests` para mantener trazabilidad.
 
-- Antes de `EN_EJECUCION`, recepción, técnico asignado o supervisor pueden crear y aprobar la cancelación en una sola operación.
-- Desde `EN_EJECUCION`, la solicitud queda pendiente y solo un supervisor o administrador puede resolverla.
-- El supervisor puede aprobar sin cobro, aprobar con cobro por trabajo realizado o rechazarla con motivo.
-- Un cobro nuevo genera una versión comercial de ajuste y exige una nueva decisión del cliente.
+- Recepción, técnico asignado o supervisor pueden seleccionar uno o varios equipos cancelables en una sola operación, con un canal y motivo comunes.
+- En `ASIGNADA`, la cancelación es inmediata y sin cobro.
+- Desde `EN_DIAGNOSTICO`, la cancelación también es inmediata, pero genera un cargo fijo confirmado de S/ 20 por cada equipo afectado.
+- Cuando exista al menos un cargo, el operador debe confirmar expresamente que informó al cliente antes de ejecutar la operación.
+- Los cargos de una selección múltiple se consolidan en un solo acuerdo confirmado y quedan pendientes de pago, con una línea y versión comercial separada por equipo.
+- La operación completa es atómica: cualquier equipo no cancelable, falta de constancia o error comercial revierte todas las cancelaciones seleccionadas.
 - Si existe una venta confirmada cuya cobertura se reduciría, la cancelación no puede finalizar silenciosamente. Primero debe revertirse el comprobante mediante el flujo transaccional existente y luego emitirse el reemplazo. Una venta agrupada se revierte como unidad; no se simulará una anulación parcial inexistente.
 
 ### 8. Economía global y entrega parcial
 
 El importe comprometido y reconciliado pertenece a la orden. La facturación puede conservar agrupación de muchas órdenes del mismo cliente, pero cada línea creada desde acuerdos deberá guardar los códigos de orden y equipo que representa.
 
-La entrega se solicita por equipo. Para entregar cualquier equipo se exige:
+La entrega física se solicita por equipo y no reemplaza el resultado del servicio. Un equipo cancelado conserva `CANCELADA` después de ser devuelto y `deliveredAt` registra la entrega. Para entregar un equipo activo se exige:
 
 - que el equipo esté listo;
 - que no tenga cancelación pendiente;
 - que el acuerdo global vigente esté confirmado;
 - que la orden tenga cobertura económica total o exoneración.
 
-Una vez cubierta la orden, los equipos pueden entregarse en momentos distintos. La cabecera mostrará entrega parcial hasta que todos los equipos activos estén entregados.
+Una cancelación sin cargo puede entregarse inmediatamente. Una cancelación con cargo de diagnóstico exige cobertura económica total o exoneración. Una vez habilitados, los equipos pueden entregarse en momentos distintos y el progreso físico considera también los cancelados pendientes de devolución.
 
 ### 9. Garantía por número de serie
 
@@ -170,6 +172,14 @@ sequenceDiagram
 ### 13. PDF único
 
 El PDF de recepción se genera desde la cabecera y lista todos los equipos, accesorios, fallas, prioridades y códigos hijos. No se generará un PDF por equipo durante la recepción.
+
+### Prioridad exclusivamente por equipo
+
+`service_order_items.priority` es la única fuente de verdad. La cabecera no conserva una copia, prioridad agregada ni prioridad derivada. Los listados de órdenes no filtran ni muestran prioridad; el dato se consulta dentro del detalle de cada equipo. Los SLA dependientes de prioridad se calculan por equipo.
+
+### Consulta de equipos en recepción
+
+El listado de recepción omite las columnas de prioridad y equipo. Una acción primaria `Ver equipos` abre un modal accesible con todos los ítems de la orden, sus datos técnicos, prioridad y estados. Las acciones globales permanecen en la fila de la orden y las acciones individuales parten del equipo seleccionado.
 
 ## Estrategia de migración
 

@@ -5,11 +5,11 @@ import {
   ServiceOrderTimeMetricsDto,
 } from '../dto/service-order-time-metrics.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrderSlaStageResolverService } from './service-order-sla-stage.resolver';
 import { ServiceOrderStageSlaPolicyService } from './service-order-stage-sla-policy.service';
 
 type MetricsBundle = {
-  sla: ServiceOrderSlaDto;
   timeMetrics: ServiceOrderTimeMetricsDto;
 };
 
@@ -21,23 +21,7 @@ export class ServiceOrderMetricsFactory {
   ) {}
 
   build(serviceOrder: ServiceOrder, now = new Date()): MetricsBundle {
-    const stage = this.stageResolver.resolve(serviceOrder.technicalStatus);
-    const elapsedStart = this.getStageStartAt(serviceOrder, stage);
-    const elapsedMinutes = elapsedStart ? this.diffInMinutes(elapsedStart, now) : 0;
-    const targetMinutes = this.slaPolicy.getTargetMinutes({
-      stage,
-      priority: serviceOrder.priority,
-      serviceType: serviceOrder.serviceType,
-    });
-
     return {
-      sla: {
-        stage,
-        targetMinutes,
-        elapsedMinutes,
-        remainingMinutes: targetMinutes === null ? null : Math.max(targetMinutes - elapsedMinutes, 0),
-        breached: targetMinutes === null ? false : elapsedMinutes > targetMinutes,
-      },
       timeMetrics: {
         timeToDiagnosis: this.buildMetric(
           serviceOrder.receivedAt,
@@ -71,6 +55,45 @@ export class ServiceOrderMetricsFactory {
         ),
       },
     };
+  }
+
+  buildItemSla(item: ServiceOrderItem, serviceOrder: ServiceOrder, now = new Date()): ServiceOrderSlaDto {
+    const stage = this.stageResolver.resolve(item.technicalStatus);
+    const elapsedStart = this.getItemStageStartAt(item, serviceOrder, stage);
+    const elapsedMinutes = elapsedStart ? this.diffInMinutes(elapsedStart, now) : 0;
+    const targetMinutes = this.slaPolicy.getTargetMinutes({
+      stage,
+      priority: item.priority,
+      serviceType: serviceOrder.serviceType,
+    });
+
+    return {
+      stage,
+      targetMinutes,
+      elapsedMinutes,
+      remainingMinutes: targetMinutes === null ? null : Math.max(targetMinutes - elapsedMinutes, 0),
+      breached: targetMinutes === null ? false : elapsedMinutes > targetMinutes,
+    };
+  }
+
+  private getItemStageStartAt(
+    item: ServiceOrderItem,
+    serviceOrder: ServiceOrder,
+    stage: ServiceOrderSlaStage,
+  ): Date | null {
+    switch (stage) {
+      case 'assignment':
+        return serviceOrder.receivedAt;
+      case 'diagnosis':
+        return item.reviewStartedAt ?? serviceOrder.receivedAt;
+      case 'service':
+        return item.serviceStartedAt ?? item.reviewStartedAt ?? serviceOrder.assignedAt ?? serviceOrder.receivedAt;
+      case 'pickup':
+        return item.readyForPickupAt ?? item.resolvedAt ?? item.serviceCompletedAt;
+      case 'terminal':
+      default:
+        return null;
+    }
   }
 
   private getStageStartAt(serviceOrder: ServiceOrder, stage: ServiceOrderSlaStage): Date | null {

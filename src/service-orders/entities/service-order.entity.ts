@@ -19,7 +19,6 @@ import {
   ServiceOrderCommercialStatus,
   ServiceOrderEconomicStatus,
   ServiceOrderOperativeStatus,
-  ServiceOrderPriority,
   ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
@@ -78,13 +77,6 @@ export class ServiceOrder {
     default: ServiceOrderEconomicStatus.NO_APLICA,
   })
   economicStatus: ServiceOrderEconomicStatus;
-
-  @Column({
-    type: 'enum',
-    enum: ServiceOrderPriority,
-    default: ServiceOrderPriority.MEDIUM,
-  })
-  priority: ServiceOrderPriority;
 
   @Column({
     name: 'request_origin',

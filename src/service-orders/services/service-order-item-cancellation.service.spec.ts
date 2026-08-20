@@ -42,7 +42,10 @@ describe('ServiceOrderItemCancellationService', () => {
   beforeEach(() => {
     order = { id: 20, assignedToTechnicianId: 7 } as ServiceOrder;
     item = createItem();
-    orderRepository = { findOne: jest.fn().mockResolvedValue(order) };
+    orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
     itemRepository = {
       findOne: jest.fn().mockResolvedValue(item),
       find: jest.fn().mockResolvedValue([item]),
@@ -50,6 +53,7 @@ describe('ServiceOrderItemCancellationService', () => {
     };
     requestRepository = {
       findOne: jest.fn().mockResolvedValue(null),
+      find: jest.fn().mockResolvedValue([]),
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => ({ id: 501, ...value })),
     };
@@ -146,7 +150,106 @@ describe('ServiceOrderItemCancellationService', () => {
     );
   });
 
-  it('deja pendiente la solicitud realizada después de iniciar la ejecución', async () => {
+  it('cancela varios equipos y cobra S/ 20 por cada diagnóstico iniciado', async () => {
+    const assignedItem = createItem();
+    const diagnosedItem = {
+      ...createItem(),
+      id: 202,
+      position: 2,
+      code: 'OS-03-08-2026-0001-02',
+      technicalStatus: ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,
+      operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
+    } as ServiceOrderItem;
+    itemRepository.find.mockResolvedValue([assignedItem, diagnosedItem]);
+    versionRepository.findOne.mockResolvedValue(null);
+
+    const result = await service.requestCancellations(
+      order.id,
+      {
+        itemIds: [assignedItem.id, diagnosedItem.id],
+        channel: ServiceOrderCancellationChannel.WHATSAPP,
+        reason: 'El cliente solicita cancelar ambos equipos.',
+        customerChargeAcknowledged: true,
+      },
+      7,
+      { sub: 7, roles: [{ name: 'technician' }] } as any,
+    );
+
+    expect(result.requests).toHaveLength(2);
+    expect(result.chargedItemsCount).toBe(1);
+    expect(result.chargeTotal).toBe(20);
+    expect(assignedItem.operativeStatus).toBe(
+      ServiceOrderOperativeStatus.CANCELADA,
+    );
+    expect(diagnosedItem.operativeStatus).toBe(
+      ServiceOrderOperativeStatus.CANCELADA,
+    );
+    expect(versionRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceOrderItemId: diagnosedItem.id,
+        status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+        totalAmount: 20,
+      }),
+    );
+    expect(lineRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        catalogNameSnapshot: 'Servicio técnico de diagnóstico',
+        netAmount: 20,
+      }),
+    );
+    expect(agreementRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'CONFIRMED',
+        totalAmount: 20,
+      }),
+    );
+  });
+
+  it('exige constancia del cargo y no persiste una cancelación diagnosticada', async () => {
+    item.technicalStatus = ServiceOrderTechnicalStatus.EN_DIAGNOSTICO;
+    item.operativeStatus = ServiceOrderOperativeStatus.EN_PROCESO;
+    itemRepository.find.mockResolvedValue([item]);
+
+    await expect(
+      service.requestCancellations(
+        order.id,
+        {
+          itemIds: [item.id],
+          channel: ServiceOrderCancellationChannel.IN_PERSON,
+          reason: 'El cliente solicita cancelar.',
+          customerChargeAcknowledged: false,
+        },
+        7,
+      ),
+    ).rejects.toThrow('cliente fue informado');
+
+    expect(requestRepository.save).not.toHaveBeenCalled();
+    expect(versionRepository.save).not.toHaveBeenCalled();
+    expect(itemRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza todo el lote cuando un equipo ya tiene cancelación pendiente', async () => {
+    const secondItem = { ...createItem(), id: 202, position: 2 } as ServiceOrderItem;
+    itemRepository.find.mockResolvedValue([item, secondItem]);
+    requestRepository.find.mockResolvedValue([createPendingRequest()]);
+
+    await expect(
+      service.requestCancellations(
+        order.id,
+        {
+          itemIds: [item.id, secondItem.id],
+          channel: ServiceOrderCancellationChannel.PHONE,
+          reason: 'Cancelar los equipos.',
+        },
+        7,
+      ),
+    ).rejects.toThrow('solicitud de cancelación pendiente');
+
+    expect(requestRepository.save).not.toHaveBeenCalled();
+    expect(itemRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('cancela inmediatamente con S/ 20 después de iniciar la ejecución', async () => {
     item.technicalStatus = ServiceOrderTechnicalStatus.EN_EJECUCION;
     item.operativeStatus = ServiceOrderOperativeStatus.EN_PROCESO;
     item.serviceStartedAt = new Date('2026-08-03T10:00:00.000Z');
@@ -157,17 +260,19 @@ describe('ServiceOrderItemCancellationService', () => {
       {
         channel: ServiceOrderCancellationChannel.PHONE,
         reason: 'Solicitó detener el trabajo.',
+        customerChargeAcknowledged: true,
       },
       7,
       { sub: 7, roles: [{ name: 'technician' }] } as any,
     );
 
-    expect(result.request.status).toBe(ServiceOrderCancellationStatus.PENDING);
-    expect(result.request.resolution).toBeNull();
-    expect(item.operativeStatus).toBe(
-      ServiceOrderOperativeStatus.CANCELACION_SOLICITADA,
+    expect(result.request.status).toBe(ServiceOrderCancellationStatus.APPROVED);
+    expect(result.request.resolution).toBe(
+      ServiceOrderCancellationResolution.APPROVED_WITH_CHARGE,
     );
-    expect(item.cancelledAt).toBeNull();
+    expect(result.request.chargeAmount).toBe(20);
+    expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);
+    expect(item.cancelledAt).toBeInstanceOf(Date);
   });
 
   it('rechaza una solicitud tardía y restaura el estado operativo previo', async () => {
@@ -303,7 +408,7 @@ describe('ServiceOrderItemCancellationService', () => {
   });
 
   it('rechaza una segunda solicitud mientras existe otra pendiente', async () => {
-    requestRepository.findOne.mockResolvedValue(createPendingRequest());
+    requestRepository.find.mockResolvedValue([createPendingRequest()]);
 
     await expect(
       service.requestCancellation(

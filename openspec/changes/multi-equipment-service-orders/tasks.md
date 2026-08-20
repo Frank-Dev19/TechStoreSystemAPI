@@ -11,6 +11,10 @@
 ## 2. Creación agregada y códigos
 
 - [x] 2.1 RED: especificar DTO de una cabecera con `items[]`, prioridad `LOW`, un solo tipo de servicio y rechazo de arrays vacíos.
+- [x] 2.1.1 RED: especificar que la cabecera no acepta ni expone prioridad y que cada ítem conserva la propia.
+- [x] 2.1.2 Eliminar `service_orders.priority`, sus consumidores legacy y el filtro de cabecera mediante una migración reversible.
+- [x] 2.1.3 Mover métricas y SLA sensibles a prioridad al ítem individual.
+- [x] 2.1.4 Retirar columnas y estadísticas de prioridad/equipo del listado de recepción y agregar el modal `Ver equipos`.
 - [x] 2.2 GREEN: reemplazar creación batch por creación agregada transaccional con secuencia `America/Lima`.
 - [x] 2.3 RED: cubrir rollback cuando falla cualquier item, evento, proyección o comercial inicial.
 - [ ] 2.4 GREEN: devolver cabecera e items con códigos padre/hijo y retirar el uso interno del contrato batch.
@@ -55,6 +59,12 @@
 - [x] 7.4 GREEN: implementar ajustes y bloqueo de reducción cuando existe venta confirmada sin revertir.
 - [x] 7.5 RED: cubrir entrega parcial solo con cobertura económica global total o exonerada.
 - [x] 7.6 GREEN: implementar entrega por item y proyección parcial/final de cabecera.
+- [x] 7.7 RED: cubrir cancelación múltiple atómica, constancia obligatoria y cargo fijo de S/ 20 desde diagnóstico.
+- [x] 7.8 GREEN: implementar cancelación inmediata por lote y acuerdo confirmado consolidado pendiente de pago.
+- [x] 7.9 REFACTOR: conservar resolución solo para solicitudes legacy y unificar la selección nueva en el modal compartido de los tres paneles.
+- [x] 7.10 RED/GREEN: separar cancelación de devolución física, conservar `CANCELADA` al entregar y bloquear únicamente cancelaciones con cargo pendiente.
+- [x] 7.11 RED/GREEN: entregar varios equipos atómicamente, conservar compatibilidad individual y enviar encuesta solo al completar toda la devolución física.
+- [x] 7.12 REFACTOR: rehidratar el técnico en respuestas proyectadas sin modificar asignación, sugerencias ni balances.
 
 ## 8. Ventas y economía
 

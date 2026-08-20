@@ -182,6 +182,13 @@ describe('ServiceOrderService', () => {
           timeToDelivery: { valueMinutes: null, isComputable: false, missingTimestamps: ['deliveredAt'] },
         },
       })),
+      buildItemSla: jest.fn(() => ({
+        stage: 'service',
+        targetMinutes: 180,
+        elapsedMinutes: 60,
+        remainingMinutes: 120,
+        breached: false,
+      })),
     } as unknown as jest.Mocked<ServiceOrderMetricsFactory>;
 
     tempDocumentsService = {
@@ -315,7 +322,6 @@ describe('ServiceOrderService', () => {
           requestOrigin: RequestOrigin.CLIENT,
           clientId: 30,
           clientContactId: 88,
-          priority: ServiceOrderPriority.HIGH,
           contactName: 'Carlos Avila',
         },
         orders: [
@@ -998,14 +1004,13 @@ describe('ServiceOrderService', () => {
     );
   });
 
-  it('enriquece findOne con sla y timeMetrics listos para UI', async () => {
+  it('enriquece findOne con métricas globales sin prioridad de cabecera', async () => {
     const order = createServiceOrder({ technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION });
     serviceOrderRepository.findOne.mockResolvedValue(order);
 
     const result = await service.findOne(order.id);
 
     expect(metricsFactory.build).toHaveBeenCalledWith(order);
-    expect(result.sla.stage).toBe('service');
     expect(result.timeMetrics.timeToService.valueMinutes).toBe(150);
   });
 
@@ -1283,7 +1288,6 @@ describe('ServiceOrderService', () => {
     const result = await service.findAll({ page: 1, limit: 10 });
 
     expect(metricsFactory.build).toHaveBeenCalledTimes(1);
-    expect(result.data[0].sla.targetMinutes).toBe(180);
     expect(result.data[0].timeMetrics.timeToDiagnosis.valueMinutes).toBe(120);
   });
 });

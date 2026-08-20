@@ -41,6 +41,8 @@ import { ServiceOrderItemCancellationService } from '../services/service-order-i
 import { ServiceOrderItemDeliveryService } from '../services/service-order-item-delivery.service';
 import { RequestServiceOrderItemCancellationDto } from '../dto/request-service-order-item-cancellation.dto';
 import { ResolveServiceOrderItemCancellationDto } from '../dto/resolve-service-order-item-cancellation.dto';
+import { RequestServiceOrderItemsCancellationDto } from '../dto/request-service-order-items-cancellation.dto';
+import { DeliverServiceOrderItemsDto } from '../dto/deliver-service-order-items.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -144,6 +146,17 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.item-deliver')
+  @Patch(':id/item-deliveries')
+  deliverItems(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeliverServiceOrderItemsDto,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemDeliveryService.deliverItems(id, dto.itemIds, userId, req?.user);
+  }
+
+  @Permissions('service-order.item-deliver')
   @Patch(':id/items/:itemId/deliver')
   deliverItem(
     @Param('id', ParseIntPipe) id: number,
@@ -176,6 +189,17 @@ export class ServiceOrderController {
     @Req() req?: any,
   ) {
     return this.itemWorkflowService.changeTechnicalStatus(id, itemId, status, userId, dto?.reason, req?.user);
+  }
+
+  @Permissions('service-order.item-cancel')
+  @Post(':id/item-cancellations')
+  requestItemsCancellation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RequestServiceOrderItemsCancellationDto,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
+    return this.itemCancellationService.requestCancellations(id, dto, userId, req?.user);
   }
 
   @Permissions('service-order.item-cancel')

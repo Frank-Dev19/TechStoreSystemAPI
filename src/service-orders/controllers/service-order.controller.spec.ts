@@ -60,10 +60,12 @@ describe('ServiceOrderController', () => {
       changeTechnicalStatus: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderItemWorkflowService>;
     itemCancellationService = {
+      requestCancellations: jest.fn(),
       requestCancellation: jest.fn(),
       resolveCancellation: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderItemCancellationService>;
     itemDeliveryService = {
+      deliverItems: jest.fn(),
       deliverItem: jest.fn(),
       deliverOnlyItem: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderItemDeliveryService>;
@@ -89,6 +91,20 @@ describe('ServiceOrderController', () => {
     expect(itemCancellationService.requestCancellation).toHaveBeenCalledWith(7, 71, dto, 44, { sub: 44 });
   });
 
+  it('delega una cancelación múltiple atómica con actor y viewer', async () => {
+    itemCancellationService.requestCancellations.mockResolvedValue({ requests: [] } as any);
+    const dto = {
+      itemIds: [71, 72],
+      channel: ServiceOrderCancellationChannel.WHATSAPP,
+      reason: 'Cliente desistió.',
+      customerChargeAcknowledged: true,
+    };
+
+    await controller.requestItemsCancellation(7, dto, 44, { user: { sub: 44 } });
+
+    expect(itemCancellationService.requestCancellations).toHaveBeenCalledWith(7, dto, 44, { sub: 44 });
+  });
+
   it('delega la resolución supervisada de una cancelación tardía', async () => {
     itemCancellationService.resolveCancellation.mockResolvedValue({ request: { id: 80 } } as any);
     const dto = {
@@ -107,6 +123,14 @@ describe('ServiceOrderController', () => {
     await controller.deliverItem(7, 71, 44, { user: { sub: 44 } });
 
     expect(itemDeliveryService.deliverItem).toHaveBeenCalledWith(7, 71, 44, { sub: 44 });
+  });
+
+  it('delega la entrega múltiple con actor y viewer', async () => {
+    itemDeliveryService.deliverItems.mockResolvedValue({ id: 7 } as any);
+
+    await controller.deliverItems(7, { itemIds: [71, 72] }, 44, { user: { sub: 44 } });
+
+    expect(itemDeliveryService.deliverItems).toHaveBeenCalledWith(7, [71, 72], 44, { sub: 44 });
   });
 
   it('rechaza create si falta el usuario autenticado', () => {

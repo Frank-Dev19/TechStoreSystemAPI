@@ -41,7 +41,24 @@ export class ServiceOrderItemDeliveryService {
   }
 
   async deliverItem(serviceOrderId: number, itemId: number, actorId?: number, viewer?: DeliveryViewer) {
-    let completedNow = false;
+    return this.deliverItems(serviceOrderId, [itemId], actorId, viewer);
+  }
+
+  async deliverItems(
+    serviceOrderId: number,
+    itemIds: number[],
+    actorId?: number,
+    viewer?: DeliveryViewer,
+  ) {
+    const normalizedItemIds = [...new Set((itemIds ?? []).map(Number))];
+    if (!normalizedItemIds.length || normalizedItemIds.some((id) => !Number.isInteger(id) || id <= 0)) {
+      throw new BadRequestException('Debes seleccionar al menos un equipo válido para entregar');
+    }
+    if (normalizedItemIds.length !== itemIds.length) {
+      throw new BadRequestException('La selección de equipos no debe contener duplicados');
+    }
+
+    let shouldNotifySurvey = false;
     const projectedOrder = await this.manager.transaction(async (manager) => {
       const order = await manager.getRepository(ServiceOrder).findOne({
         where: { id: serviceOrderId },
@@ -51,58 +68,97 @@ export class ServiceOrderItemDeliveryService {
       this.ensureViewerCanManageOrder(order, viewer);
 
       const itemRepository = manager.getRepository(ServiceOrderItem);
-      const item = await itemRepository.findOne({
-        where: { id: itemId, serviceOrderId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!item) {
-        throw new NotFoundException(`ServiceOrderItem with id ${itemId} not found in order ${serviceOrderId}`);
+      const items: ServiceOrderItem[] = [];
+      for (const itemId of normalizedItemIds.sort((left, right) => left - right)) {
+        const item = await itemRepository.findOne({
+          where: { id: itemId, serviceOrderId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!item) {
+          throw new NotFoundException(`ServiceOrderItem with id ${itemId} not found in order ${serviceOrderId}`);
+        }
+        items.push(item);
       }
 
-      if (item.operativeStatus === ServiceOrderOperativeStatus.ENTREGADA) {
-        return this.projectionService.recalculateLocked(manager, serviceOrderId);
-      }
-      if (item.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA) {
-        throw new BadRequestException('El equipo debe estar listo para entrega');
+      const pendingItems = items.filter(
+        (item) => !item.deliveredAt && item.operativeStatus !== ServiceOrderOperativeStatus.ENTREGADA,
+      );
+      let requiresEconomicCoverage = false;
+      let includesChargedCancellation = false;
+
+      for (const item of pendingItems) {
+        const isCancelled = item.operativeStatus === ServiceOrderOperativeStatus.CANCELADA;
+        if (item.operativeStatus !== ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA && !isCancelled) {
+          throw new BadRequestException(`El equipo ${item.code} debe estar listo para entrega`);
+        }
+
+        const activeCancellation = await manager.getRepository(ServiceOrderItemCancellationRequest).findOne({
+          where: {
+            serviceOrderItemId: item.id,
+            status: In([
+              ServiceOrderCancellationStatus.PENDING,
+              ServiceOrderCancellationStatus.AWAITING_CLIENT_ACCEPTANCE,
+            ]),
+          },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (activeCancellation) {
+          throw new BadRequestException(`El equipo ${item.code} tiene una cancelación pendiente`);
+        }
+
+        const approvedCancellation = isCancelled
+          ? await manager.getRepository(ServiceOrderItemCancellationRequest).findOne({
+              where: {
+                serviceOrderItemId: item.id,
+                status: ServiceOrderCancellationStatus.APPROVED,
+              },
+              order: { requestedAt: 'DESC' },
+              lock: { mode: 'pessimistic_read' },
+            })
+          : null;
+        const hasCancellationCharge = Number(approvedCancellation?.chargeAmount ?? 0) > 0;
+        requiresEconomicCoverage ||= !isCancelled || hasCancellationCharge;
+        includesChargedCancellation ||= isCancelled && hasCancellationCharge;
       }
 
-      const activeCancellation = await manager.getRepository(ServiceOrderItemCancellationRequest).findOne({
-        where: {
-          serviceOrderItemId: item.id,
-          status: In([
-            ServiceOrderCancellationStatus.PENDING,
-            ServiceOrderCancellationStatus.AWAITING_CLIENT_ACCEPTANCE,
-          ]),
-        },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (activeCancellation) {
-        throw new BadRequestException('El equipo tiene una cancelación pendiente');
-      }
-
-      const currentAgreement = await manager.getRepository(ServiceOrderAgreement).findOne({
-        where: { serviceOrderId },
-        order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
-        lock: { mode: 'pessimistic_read' },
-      });
-      if (currentAgreement?.status !== ServiceOrderAgreementStatus.CONFIRMED) {
-        throw new BadRequestException('La orden no tiene un acuerdo comercial vigente confirmado');
-      }
-      if (![ServiceOrderEconomicStatus.TOTAL, ServiceOrderEconomicStatus.EXONERADO].includes(order.economicStatus)) {
-        throw new BadRequestException('La orden requiere cobertura económica total o una exoneración antes de entregar equipos');
+      if (requiresEconomicCoverage) {
+        const currentAgreement = await manager.getRepository(ServiceOrderAgreement).findOne({
+          where: { serviceOrderId },
+          order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
+          lock: { mode: 'pessimistic_read' },
+        });
+        if (currentAgreement?.status !== ServiceOrderAgreementStatus.CONFIRMED) {
+          throw new BadRequestException('La orden no tiene un acuerdo comercial vigente confirmado');
+        }
+        if (![ServiceOrderEconomicStatus.TOTAL, ServiceOrderEconomicStatus.EXONERADO].includes(order.economicStatus)) {
+          throw new BadRequestException(
+            includesChargedCancellation
+              ? 'El cargo por diagnóstico debe estar pagado o exonerado antes de entregar el equipo'
+              : 'La orden requiere cobertura económica total o una exoneración antes de entregar equipos',
+          );
+        }
       }
 
       const now = new Date();
-      item.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;
-      item.deliveredAt = item.deliveredAt ?? now;
-      await itemRepository.save(item);
-      await this.recordEvent(manager, order.id, item, actorId);
+      for (const item of pendingItems) {
+        const previousStatus = item.operativeStatus;
+        if (item.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA) {
+          item.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;
+        }
+        item.deliveredAt = now;
+        await itemRepository.save(item);
+        await this.recordEvent(manager, order.id, item, previousStatus, actorId);
+      }
       const result = await this.projectionService.recalculateLocked(manager, serviceOrderId);
-      completedNow = result.operativeStatus === ServiceOrderOperativeStatus.ENTREGADA;
+      shouldNotifySurvey =
+        pendingItems.length > 0 &&
+        (result.items ?? []).length > 0 &&
+        (result.items ?? []).every((item) => Boolean(item.deliveredAt)) &&
+        (result.items ?? []).some((item) => item.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA);
       return result;
     });
 
-    if (completedNow) await this.messageMatrixService.notifySurveyRequest(projectedOrder);
+    if (shouldNotifySurvey) await this.messageMatrixService.notifySurveyRequest(projectedOrder);
     return projectedOrder;
   }
 
@@ -110,6 +166,7 @@ export class ServiceOrderItemDeliveryService {
     manager: EntityManager,
     serviceOrderId: number,
     item: ServiceOrderItem,
+    fromStatus: ServiceOrderOperativeStatus,
     actorId?: number,
   ): Promise<void> {
     const repository = manager.getRepository(ServiceOrderEvent);
@@ -119,8 +176,8 @@ export class ServiceOrderItemDeliveryService {
         eventType: 'item.delivered',
         axis: 'operative',
         capability: 'item-delivery',
-        fromStatus: ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
-        toStatus: ServiceOrderOperativeStatus.ENTREGADA,
+        fromStatus,
+        toStatus: item.operativeStatus,
         actorId: actorId ?? null,
         reason: null,
         payloadJson: {

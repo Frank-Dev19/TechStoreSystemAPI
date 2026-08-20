@@ -26,5 +26,15 @@ describe('assertServiceOrderEligibleForSale', () => {
       }),
     ).toThrow(new BadRequestException('La orden SO-002 no está lista para entrega al cliente'));
   });
-});
 
+  it('acepta una orden cancelada que conserva un cargo pendiente', () => {
+    expect(() =>
+      assertServiceOrderEligibleForSale({
+        code: 'SO-003',
+        economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+        operativeStatus: ServiceOrderOperativeStatus.CANCELADA,
+        technicalStatus: ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      }),
+    ).not.toThrow();
+  });
+});

@@ -88,6 +88,130 @@ describe('ServiceOrderItemDeliveryService', () => {
     service = new ServiceOrderItemDeliveryService(manager, projection, messageMatrix);
   });
 
+  it('entrega varios equipos en una sola transacción con la misma fecha', async () => {
+    const secondItem = { ...createReadyItem(), id: 202, code: 'SO-03-08-2026-0001-02' };
+    itemRepository.findOne.mockImplementation(({ where }: any) =>
+      Promise.resolve(Number(where.id) === 202 ? secondItem : item),
+    );
+    projection.recalculateLocked.mockImplementation(async () => ({
+      ...order,
+      operativeStatus: ServiceOrderOperativeStatus.ENTREGADA,
+      items: [item, secondItem],
+    } as ServiceOrder));
+
+    await service.deliverItems(order.id, [202, 201], 22);
+
+    expect(manager.transaction).toHaveBeenCalledTimes(1);
+    expect(itemRepository.save).toHaveBeenCalledTimes(2);
+    expect(item.deliveredAt).toBe(secondItem.deliveredAt);
+    expect(eventRepository.save).toHaveBeenCalledTimes(2);
+    expect(projection.recalculateLocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('entrega en un lote un equipo listo y cancelaciones sin cargo y con cargo pagado', async () => {
+    const cancelledWithoutCharge = {
+      ...createReadyItem(),
+      id: 202,
+      code: 'SO-03-08-2026-0001-02',
+      operativeStatus: ServiceOrderOperativeStatus.CANCELADA,
+    };
+    const cancelledWithCharge = {
+      ...createReadyItem(),
+      id: 203,
+      code: 'SO-03-08-2026-0001-03',
+      operativeStatus: ServiceOrderOperativeStatus.CANCELADA,
+    };
+    const itemsById = new Map([
+      [201, item],
+      [202, cancelledWithoutCharge],
+      [203, cancelledWithCharge],
+    ]);
+    itemRepository.findOne.mockImplementation(({ where }: any) => Promise.resolve(itemsById.get(Number(where.id))));
+    cancellationRepository.findOne.mockImplementation(({ where }: any) => {
+      if (where.status !== ServiceOrderCancellationStatus.APPROVED) return Promise.resolve(null);
+      return Promise.resolve({
+        status: ServiceOrderCancellationStatus.APPROVED,
+        chargeAmount: Number(where.serviceOrderItemId) === 203 ? 20 : null,
+      });
+    });
+    projection.recalculateLocked.mockImplementation(async () => ({
+      ...order,
+      operativeStatus: ServiceOrderOperativeStatus.ENTREGADA,
+      items: [item, cancelledWithoutCharge, cancelledWithCharge],
+    } as ServiceOrder));
+
+    await service.deliverItems(order.id, [201, 202, 203], 22);
+
+    expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
+    expect(cancelledWithoutCharge.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);
+    expect(cancelledWithCharge.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);
+    expect(itemRepository.save).toHaveBeenCalledTimes(3);
+  });
+
+  it('rechaza todo el lote antes de guardar si uno de los equipos no es entregable', async () => {
+    const blockedItem = {
+      ...createReadyItem(),
+      id: 202,
+      operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
+    };
+    itemRepository.findOne.mockImplementation(({ where }: any) =>
+      Promise.resolve(Number(where.id) === 202 ? blockedItem : item),
+    );
+
+    await expect(service.deliverItems(order.id, [201, 202], 22)).rejects.toThrow('listo para entrega');
+
+    expect(itemRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza IDs duplicados o equipos que no pertenecen a la orden sin persistir cambios', async () => {
+    await expect(service.deliverItems(order.id, [201, 201], 22)).rejects.toThrow('duplicados');
+
+    itemRepository.findOne.mockResolvedValueOnce(item).mockResolvedValueOnce(null);
+    await expect(service.deliverItems(order.id, [201, 999], 22)).rejects.toThrow('not found in order');
+
+    expect(itemRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('tolera equipos ya entregados en un reintento sin duplicar sus eventos', async () => {
+    const deliveredItem = {
+      ...createReadyItem(),
+      id: 202,
+      operativeStatus: ServiceOrderOperativeStatus.ENTREGADA,
+      deliveredAt: new Date('2026-08-03T15:00:00.000Z'),
+    };
+    itemRepository.findOne.mockImplementation(({ where }: any) =>
+      Promise.resolve(Number(where.id) === 202 ? deliveredItem : item),
+    );
+    projection.recalculateLocked.mockImplementation(async () => ({
+      ...order,
+      operativeStatus: ServiceOrderOperativeStatus.ENTREGADA,
+      items: [item, deliveredItem],
+    } as ServiceOrder));
+
+    await service.deliverItems(order.id, [201, 202], 22);
+
+    expect(itemRepository.save).toHaveBeenCalledTimes(1);
+    expect(eventRepository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('no envía encuesta cuando todos los equipos entregados fueron cancelados', async () => {
+    item.operativeStatus = ServiceOrderOperativeStatus.CANCELADA;
+    cancellationRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ status: ServiceOrderCancellationStatus.APPROVED, chargeAmount: null });
+    projection.recalculateLocked.mockImplementation(async () => ({
+      ...order,
+      operativeStatus: ServiceOrderOperativeStatus.CANCELADA,
+      items: [item],
+    } as ServiceOrder));
+
+    await service.deliverItems(order.id, [item.id], 22);
+
+    expect(messageMatrix.notifySurveyRequest).not.toHaveBeenCalled();
+  });
+
   it('entrega solo el equipo seleccionado y registra el evento dentro de la transacción', async () => {
     const result = await service.deliverItem(order.id, item.id, 22, {
       sub: 22,
@@ -145,6 +269,63 @@ describe('ServiceOrderItemDeliveryService', () => {
     expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.ENTREGADA);
   });
 
+  it('entrega una cancelación sin cargo y conserva su estado cancelado', async () => {
+    item.operativeStatus = ServiceOrderOperativeStatus.CANCELADA;
+    order.economicStatus = ServiceOrderEconomicStatus.NO_APLICA;
+    agreementRepository.findOne.mockResolvedValue(null);
+    cancellationRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 402,
+        status: ServiceOrderCancellationStatus.APPROVED,
+        chargeAmount: null,
+      });
+
+    await service.deliverItem(order.id, item.id, 22);
+
+    expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);
+    expect(item.deliveredAt).toBeInstanceOf(Date);
+    expect(eventRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromStatus: ServiceOrderOperativeStatus.CANCELADA,
+        toStatus: ServiceOrderOperativeStatus.CANCELADA,
+      }),
+    );
+  });
+
+  it('bloquea una cancelación con cargo hasta que la orden esté pagada o exonerada', async () => {
+    item.operativeStatus = ServiceOrderOperativeStatus.CANCELADA;
+    order.economicStatus = ServiceOrderEconomicStatus.PENDIENTE;
+    cancellationRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 403,
+        status: ServiceOrderCancellationStatus.APPROVED,
+        chargeAmount: 20,
+      });
+
+    await expect(service.deliverItem(order.id, item.id, 22)).rejects.toThrow(
+      'cargo por diagnóstico debe estar pagado o exonerado',
+    );
+    expect(itemRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('entrega una cancelación con cargo cuando la cobertura económica es total', async () => {
+    item.operativeStatus = ServiceOrderOperativeStatus.CANCELADA;
+    cancellationRepository.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 404,
+        status: ServiceOrderCancellationStatus.APPROVED,
+        chargeAmount: 20,
+      });
+
+    await service.deliverItem(order.id, item.id, 22);
+
+    expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);
+    expect(item.deliveredAt).toBeInstanceOf(Date);
+  });
+
   it('exige que la revisión comercial vigente esté confirmada', async () => {
     agreementRepository.findOne.mockResolvedValue({
       id: 302,
@@ -179,6 +360,18 @@ describe('ServiceOrderItemDeliveryService', () => {
     expect(eventRepository.save).not.toHaveBeenCalled();
     expect(messageMatrix.notifySurveyRequest).not.toHaveBeenCalled();
     expect(result).toEqual(expect.objectContaining({ id: order.id }));
+  });
+
+  it('es idempotente por fecha de entrega aunque el equipo conserve estado cancelado', async () => {
+    const deliveredAt = new Date('2026-08-03T15:30:00.000Z');
+    item.operativeStatus = ServiceOrderOperativeStatus.CANCELADA;
+    item.deliveredAt = deliveredAt;
+
+    await service.deliverItem(order.id, item.id, 22);
+
+    expect(item.deliveredAt).toBe(deliveredAt);
+    expect(itemRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
   });
 
   it('no envía encuesta mientras la cabecera siga en entrega parcial', async () => {

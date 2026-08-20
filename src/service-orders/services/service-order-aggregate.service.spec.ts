@@ -114,6 +114,7 @@ describe('ServiceOrderAggregateService', () => {
         assignedToTechnicianId: 7,
       }),
     );
+    expect(orderRepo.create.mock.calls[0][0]).not.toHaveProperty('priority');
     expect(itemRepo.save).toHaveBeenCalledWith([
       expect.objectContaining({
         serviceOrderId: 100,

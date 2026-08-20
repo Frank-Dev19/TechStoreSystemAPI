@@ -1,4 +1,4 @@
-import { IsEnum, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { ServiceOrderCancellationChannel } from '../enums';
 
 export class RequestServiceOrderItemCancellationDto {
@@ -9,4 +9,8 @@ export class RequestServiceOrderItemCancellationDto {
   @MinLength(3)
   @MaxLength(1000)
   reason: string;
+
+  @IsOptional()
+  @IsBoolean()
+  customerChargeAcknowledged?: boolean;
 }

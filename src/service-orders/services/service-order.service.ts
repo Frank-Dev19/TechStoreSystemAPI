@@ -27,7 +27,6 @@ import {
   ServiceOrderCommercialStatus,
   ServiceOrderEconomicStatus,
   ServiceOrderOperativeStatus,
-  ServiceOrderPriority,
   ServiceOrderTechnicalStatus,
   ServiceType,
 } from '../enums';
@@ -37,7 +36,6 @@ import {
   CreateServiceOrderBatchSharedContextDto,
 } from '../dto/create-service-order-batch.dto';
 import { CreateServiceOrderDto } from '../dto/create-service-order.dto';
-import { ServiceOrderSlaDto } from '../dto/service-order-sla.dto';
 import { ServiceOrderTimeMetricsDto } from '../dto/service-order-time-metrics.dto';
 import { UpdateServiceOrderDto } from '../dto/update-service-order.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
@@ -57,7 +55,6 @@ type FindAllServiceOrdersQuery = {
   technicalStatus?: string;
   commercialStatus?: string;
   economicStatus?: string;
-  priority?: string;
   clientId?: number | string;
   technicianId?: number | string;
   withDeleted?: string;
@@ -66,7 +63,6 @@ type FindAllServiceOrdersQuery = {
 };
 
 type ServiceOrderWithMetrics = ServiceOrder & {
-  sla: ServiceOrderSlaDto;
   timeMetrics: ServiceOrderTimeMetricsDto;
   itemsCount: number;
   itemCodes: string[];
@@ -166,7 +162,6 @@ export class ServiceOrderService {
         clientId: client?.id ?? null,
         clientContactId: clientContact?.id ?? null,
         createdBy: creatorId,
-        priority: dto.priority ?? ServiceOrderPriority.MEDIUM,
         operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
         technicalStatus,
         commercialStatus: ServiceOrderCommercialStatus.NO_REQUIERE,
@@ -235,8 +230,6 @@ export class ServiceOrderService {
       ServiceOrderEconomicStatus,
       'economicStatus',
     );
-    const priorities = this.parseEnumList<ServiceOrderPriority>(query.priority, ServiceOrderPriority, 'priority');
-
     const qb = this.serviceOrderRepository
       .createQueryBuilder('serviceOrder')
       .leftJoinAndSelect('serviceOrder.assignedTechnician', 'assignedTechnician')
@@ -262,9 +255,6 @@ export class ServiceOrderService {
     }
     if (economicStatuses?.length) {
       qb.andWhere('serviceOrder.economicStatus IN (:...economicStatuses)', { economicStatuses });
-    }
-    if (priorities?.length) {
-      qb.andWhere('items.priority IN (:...priorities)', { priorities });
     }
     if (query.clientId !== undefined) {
       const clientId = this.parsePositiveNumber(query.clientId, undefined, 'clientId');
@@ -395,7 +385,6 @@ export class ServiceOrderService {
     );
     serviceOrder.clientContactId = clientContact?.id ?? null;
 
-    if (dto.priority !== undefined) serviceOrder.priority = dto.priority;
     if (dto.equipmentType !== undefined) serviceOrder.equipmentType = dto.equipmentType;
     if (dto.equipmentTypeOther !== undefined) serviceOrder.equipmentTypeOther = dto.equipmentTypeOther ?? null;
     if (dto.brand !== undefined) serviceOrder.brand = dto.brand ?? null;
@@ -592,7 +581,6 @@ export class ServiceOrderService {
       requestOrigin: sharedContext.requestOrigin,
       clientId: sharedContext.clientId,
       clientContactId: sharedContext.clientContactId,
-      priority: sharedContext.priority,
       assignedToTechnicianId: sharedContext.assignedToTechnicianId,
       contactName: sharedContext.contactName,
       contactEmail: sharedContext.contactEmail,
@@ -842,13 +830,17 @@ export class ServiceOrderService {
   private enrichWithMetrics(serviceOrder: ServiceOrder): ServiceOrderWithMetrics {
     const metrics = this.metricsFactory.build(serviceOrder);
     const items = this.resolveOrderItems(serviceOrder);
+    const itemsWithSla = items.map((item) => {
+      item.sla = this.metricsFactory.buildItemSla(item, serviceOrder);
+      return item;
+    });
     return Object.assign(serviceOrder, {
-      sla: metrics.sla,
       timeMetrics: metrics.timeMetrics,
-      itemsCount: items.length,
-      itemCodes: items.map((item) => item.code),
+      items: itemsWithSla,
+      itemsCount: itemsWithSla.length,
+      itemCodes: itemsWithSla.map((item) => item.code),
       itemProgress: buildServiceOrderItemProgress(
-        items.map((item) => ({
+        itemsWithSla.map((item) => ({
           ...item,
           operativeStatus: item.operativeStatus ?? serviceOrder.operativeStatus,
           technicalStatus: item.technicalStatus ?? serviceOrder.technicalStatus,
@@ -863,21 +855,7 @@ export class ServiceOrderService {
         (left, right) => left.position - right.position || left.code.localeCompare(right.code),
       );
     }
-    return [
-      {
-        position: 1,
-        code: serviceOrder.code,
-        priority: serviceOrder.priority,
-        equipmentType: serviceOrder.equipmentType,
-        equipmentTypeOther: serviceOrder.equipmentTypeOther,
-        brand: serviceOrder.brand,
-        model: serviceOrder.model,
-        serialNumber: serviceOrder.serialNumber,
-        accessories: serviceOrder.accessories,
-        notes: serviceOrder.notes,
-        initialIssue: serviceOrder.initialIssue,
-      },
-    ];
+    return [];
   }
 
   private async dispatchIntakeSummaryForOrders(serviceOrders: ServiceOrderWithMetrics[]): Promise<void> {

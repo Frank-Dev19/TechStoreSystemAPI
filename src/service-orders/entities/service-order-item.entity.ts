@@ -21,10 +21,13 @@ import {
 import { ServiceOrder } from './service-order.entity';
 import { ServiceOrderItemCommercialVersion } from './service-order-item-commercial-version.entity';
 import { ServiceOrderItemCancellationRequest } from './service-order-item-cancellation-request.entity';
+import type { ServiceOrderSlaDto } from '../dto/service-order-sla.dto';
 
 @Entity('service_order_items')
 @Unique('UQ_service_order_item_position', ['serviceOrderId', 'position'])
 export class ServiceOrderItem {
+  sla?: ServiceOrderSlaDto;
+
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
 

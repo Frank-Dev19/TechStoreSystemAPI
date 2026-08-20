@@ -28,7 +28,9 @@ export function buildServiceOrderItemProgress(items: ServiceOrderItem[]): Servic
       item.operativeStatus,
     ),
   ).length;
-  const delivered = activeItems.filter((item) => item.operativeStatus === ServiceOrderOperativeStatus.ENTREGADA).length;
+  const delivered = items.filter(
+    (item) => item.deliveredAt instanceof Date || item.operativeStatus === ServiceOrderOperativeStatus.ENTREGADA,
+  ).length;
   const cancellationPending = activeItems.filter(
     (item) => item.operativeStatus === ServiceOrderOperativeStatus.CANCELACION_SOLICITADA,
   ).length;
@@ -42,7 +44,7 @@ export function buildServiceOrderItemProgress(items: ServiceOrderItem[]): Servic
     cancellationPending,
     isPartial:
       (resolved > 0 && resolved < activeItems.length) ||
-      (delivered > 0 && delivered < activeItems.length),
+      (delivered > 0 && delivered < items.length),
   };
 }
 
@@ -71,12 +73,23 @@ export class ServiceOrderAggregateProjectionService {
     order.technicalStatus = this.projectTechnicalStatus(activeItems);
     order.operativeStatus = this.projectOperativeStatus(activeItems);
     order.commercialStatus = this.projectCommercialStatus(activeItems);
-    this.projectLifecycleTimestamps(order, activeItems);
+    this.projectLifecycleTimestamps(order, activeItems, items);
+    const itemProgress = buildServiceOrderItemProgress(items);
     order.items = items;
-    order.itemProgress = buildServiceOrderItemProgress(items);
+    order.itemProgress = itemProgress;
 
     await orderRepository.save(order);
-    return order;
+    const hydratedOrder = await orderRepository.findOne({
+      where: { id: serviceOrderId },
+      relations: ['assignedTechnician'],
+    });
+    if (!hydratedOrder) {
+      throw new NotFoundException(`ServiceOrder with id ${serviceOrderId} not found after projection`);
+    }
+    hydratedOrder.assignedToTechnicianName = hydratedOrder.assignedTechnician?.name ?? null;
+    hydratedOrder.items = items;
+    hydratedOrder.itemProgress = itemProgress;
+    return hydratedOrder;
   }
 
   private projectTechnicalStatus(items: ServiceOrderItem[]): ServiceOrderTechnicalStatus {
@@ -154,15 +167,19 @@ export class ServiceOrderAggregateProjectionService {
     return precedence.find((status) => statuses.has(status)) ?? ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
   }
 
-  private projectLifecycleTimestamps(order: ServiceOrder, items: ServiceOrderItem[]): void {
-    order.reviewStartedAt = this.earliest(items.map((item) => item.reviewStartedAt));
-    order.serviceStartedAt = this.earliest(items.map((item) => item.serviceStartedAt));
-    const allTerminal = items.length > 0 && items.every((item) => this.isTerminalTechnical(item.technicalStatus));
-    order.serviceCompletedAt = allTerminal ? this.latest(items.map((item) => item.serviceCompletedAt)) : null;
-    order.readyForPickupAt = allTerminal ? this.latest(items.map((item) => item.readyForPickupAt)) : null;
-    order.resolvedAt = allTerminal ? this.latest(items.map((item) => item.resolvedAt)) : null;
-    const allDelivered = items.length > 0 && items.every((item) => item.deliveredAt instanceof Date);
-    order.deliveredAt = allDelivered ? this.latest(items.map((item) => item.deliveredAt)) : null;
+  private projectLifecycleTimestamps(
+    order: ServiceOrder,
+    activeItems: ServiceOrderItem[],
+    allItems: ServiceOrderItem[],
+  ): void {
+    order.reviewStartedAt = this.earliest(activeItems.map((item) => item.reviewStartedAt));
+    order.serviceStartedAt = this.earliest(activeItems.map((item) => item.serviceStartedAt));
+    const allTerminal = activeItems.length > 0 && activeItems.every((item) => this.isTerminalTechnical(item.technicalStatus));
+    order.serviceCompletedAt = allTerminal ? this.latest(activeItems.map((item) => item.serviceCompletedAt)) : null;
+    order.readyForPickupAt = allTerminal ? this.latest(activeItems.map((item) => item.readyForPickupAt)) : null;
+    order.resolvedAt = allTerminal ? this.latest(activeItems.map((item) => item.resolvedAt)) : null;
+    const allDelivered = allItems.length > 0 && allItems.every((item) => item.deliveredAt instanceof Date);
+    order.deliveredAt = allDelivered ? this.latest(allItems.map((item) => item.deliveredAt)) : null;
   }
 
   private isTerminalTechnical(status: ServiceOrderTechnicalStatus): boolean {

@@ -1,4 +1,5 @@
 import { ServiceOrder } from '../entities/service-order.entity';
+import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import {
   EquipmentType,
   RequestOrigin,
@@ -21,7 +22,6 @@ const createServiceOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder
     technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
     commercialStatus: ServiceOrderCommercialStatus.NO_REQUIERE,
     economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
-    priority: ServiceOrderPriority.MEDIUM,
     requestOrigin: RequestOrigin.INTERNAL,
     equipmentType: EquipmentType.LAPTOP,
     equipmentTypeOther: null,
@@ -90,13 +90,24 @@ describe('ServiceOrderMetricsFactory', () => {
 
   it('builds live SLA and derived metrics for a complete order', () => {
     const now = new Date('2026-01-01T13:00:00.000Z');
-    const result = service.build(createServiceOrder(), now);
+    const order = createServiceOrder();
+    const item = {
+      technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+      priority: ServiceOrderPriority.MEDIUM,
+      reviewStartedAt: order.reviewStartedAt,
+      serviceStartedAt: order.serviceStartedAt,
+      serviceCompletedAt: order.serviceCompletedAt,
+      readyForPickupAt: null,
+      resolvedAt: null,
+    } as ServiceOrderItem;
+    const result = service.build(order, now);
+    const sla = service.buildItemSla(item, order, now);
 
-    expect(result.sla.stage).toBe('service');
-    expect(result.sla.targetMinutes).toBe(180);
-    expect(result.sla.elapsedMinutes).toBe(60);
-    expect(result.sla.remainingMinutes).toBe(120);
-    expect(result.sla.breached).toBe(false);
+    expect(sla.stage).toBe('service');
+    expect(sla.targetMinutes).toBe(180);
+    expect(sla.elapsedMinutes).toBe(60);
+    expect(sla.remainingMinutes).toBe(120);
+    expect(sla.breached).toBe(false);
     expect(result.timeMetrics.timeToDiagnosis.valueMinutes).toBe(120);
     expect(result.timeMetrics.timeToServiceStart.valueMinutes).toBe(240);
     expect(result.timeMetrics.timeToService.valueMinutes).toBe(150);
@@ -115,7 +126,6 @@ describe('ServiceOrderMetricsFactory', () => {
       now,
     );
 
-    expect(result.sla.stage).toBe('assignment');
     expect(result.timeMetrics.timeToDiagnosis.valueMinutes).toBeNull();
     expect(result.timeMetrics.timeToDiagnosis.isComputable).toBe(false);
     expect(result.timeMetrics.timeToDiagnosis.missingTimestamps).toEqual(['reviewStartedAt']);
@@ -123,17 +133,19 @@ describe('ServiceOrderMetricsFactory', () => {
   });
 
   it('marks terminal orders without remaining time', () => {
-    const result = service.build(
-      createServiceOrder({
+    const order = createServiceOrder({
         technicalStatus: ServiceOrderTechnicalStatus.SIN_SOLUCION,
         resolvedAt: new Date('2026-01-01T15:00:00.000Z'),
         closedAt: new Date('2026-01-01T15:00:00.000Z'),
-      }),
-      new Date('2026-01-01T16:00:00.000Z'),
-    );
+      });
+    const sla = service.buildItemSla({
+      technicalStatus: ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      priority: ServiceOrderPriority.LOW,
+      resolvedAt: order.resolvedAt,
+    } as ServiceOrderItem, order, new Date('2026-01-01T16:00:00.000Z'));
 
-    expect(result.sla.stage).toBe('terminal');
-    expect(result.sla.targetMinutes).toBeNull();
-    expect(result.sla.remainingMinutes).toBeNull();
+    expect(sla.stage).toBe('terminal');
+    expect(sla.targetMinutes).toBeNull();
+    expect(sla.remainingMinutes).toBeNull();
   });
 });
