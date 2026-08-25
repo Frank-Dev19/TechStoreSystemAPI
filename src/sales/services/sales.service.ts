@@ -49,6 +49,8 @@ import { SaleType } from '../enums/sale-type.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { PaymentMethod } from '../enums/payment-method.enum';
 import { ClientKind } from 'src/clients/entities/client-kind.enum';
+import { ServiceOrderItem } from 'src/service-orders/entities/service-order-item.entity';
+import { ServiceOrderCommercialLineType } from 'src/service-orders/service-agreements/service-order-commercial-line-type.enum';
 
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
@@ -926,12 +928,19 @@ export class SalesService {
         serviceOrderId: Number(dto.serviceOrderId),
         status: ServiceOrderAgreementStatus.CONFIRMED,
       },
-      relations: ['productItems', 'serviceItems'],
+      relations: [
+        'productItems',
+        'serviceItems',
+        'items',
+        'items.serviceOrderItem',
+        'items.commercialVersion',
+        'items.commercialVersion.lines',
+      ],
       order: { agreedAt: 'DESC', createdAt: 'DESC' },
     });
     const agreement = confirmedAgreements[0];
     if (!agreement) {
-      throw new BadRequestException('La orden no tiene acuerdo confirmado para facturar');
+      throw new BadRequestException('La orden no tiene una cotización confirmada para facturar');
     }
 
     const totalAmount = Number(agreement.totalAmount ?? 0);
@@ -942,29 +951,11 @@ export class SalesService {
     );
     if (Math.abs(totalPayments - totalAmount) > 0.01) {
       throw new BadRequestException(
-        `El total de pagos (${totalPayments}) no coincide con el total del acuerdo (${totalAmount})`,
+        `El total de pagos (${totalPayments}) no coincide con el total de la cotización (${totalAmount})`,
       );
     }
 
-    const items: ServiceOrderSaleDraftLine[] = [
-      ...(agreement.productItems ?? []).map((item) => ({
-        itemType: SaleItemKindDto.PRODUCT as const,
-        productId: item.productId,
-        quantity: Number(item.quantity ?? 0),
-        baseUnitPrice: Number(item.unitPrice ?? 0),
-        finalUnitPrice: Number(item.unitPrice ?? 0),
-        description: item.productNameSnapshot,
-      })),
-      ...(agreement.serviceItems ?? []).map((item) => ({
-        itemType: SaleItemKindDto.SERVICE as const,
-        quantity: 1,
-        baseUnitPrice: Number(item.unitPrice ?? 0),
-        finalUnitPrice: Number(item.unitPrice ?? 0),
-        description: item.serviceNameSnapshot,
-        serviceCodeSnapshot: item.serviceCodeSnapshot,
-        serviceNameSnapshot: item.serviceNameSnapshot,
-      })),
-    ];
+    const items = this.buildDraftLinesFromAgreement(serviceOrder, agreement);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -979,7 +970,7 @@ export class SalesService {
         } as any,
       });
       if (existingLink) {
-        throw new BadRequestException('La orden ya tiene un comprobante autoligado para el acuerdo vigente');
+        throw new BadRequestException('La orden ya tiene un comprobante autoligado para la cotización vigente');
       }
 
       const cashRegister = await queryRunner.manager.findOne(CashRegister, {
@@ -1188,6 +1179,9 @@ export class SalesService {
     if (!uniqueServiceOrderIds.length) {
       throw new BadRequestException('Debe seleccionar al menos una orden para facturar');
     }
+    if (uniqueServiceOrderIds.length !== 1) {
+      throw new BadRequestException('Cada comprobante de servicio debe corresponder a una sola orden');
+    }
 
     const serviceOrders = await this.serviceOrderRepo.find({
       where: { id: In(uniqueServiceOrderIds) },
@@ -1211,7 +1205,14 @@ export class SalesService {
         serviceOrderId: In(uniqueServiceOrderIds),
         status: ServiceOrderAgreementStatus.CONFIRMED,
       },
-      relations: ['productItems', 'serviceItems'],
+      relations: [
+        'productItems',
+        'serviceItems',
+        'items',
+        'items.serviceOrderItem',
+        'items.commercialVersion',
+        'items.commercialVersion.lines',
+      ],
       order: { agreedAt: 'DESC', createdAt: 'DESC' },
     });
 
@@ -1226,7 +1227,7 @@ export class SalesService {
     const orderDrafts = serviceOrders.map((serviceOrder) => {
       const agreement = agreementByOrderId.get(Number(serviceOrder.id));
       if (!agreement) {
-        throw new BadRequestException(`La orden ${serviceOrder.code} no tiene acuerdo confirmado vigente`);
+        throw new BadRequestException(`La orden ${serviceOrder.code} no tiene una cotización confirmada vigente`);
       }
       return {
         serviceOrder,
@@ -1245,7 +1246,7 @@ export class SalesService {
         } as any,
       });
       if (existingLink) {
-        throw new BadRequestException(`La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado al acuerdo vigente`);
+        throw new BadRequestException(`La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado a la cotización vigente`);
       }
     }
 
@@ -1258,7 +1259,7 @@ export class SalesService {
     );
     if (Math.abs(totalPayments - groupedTotal) > 0.01) {
       throw new BadRequestException(
-        `El total de pagos (${totalPayments}) no coincide con el total de los acuerdos seleccionados (${groupedTotal})`,
+        `El total de pagos (${totalPayments}) no coincide con el total de las cotizaciones seleccionadas (${groupedTotal})`,
       );
     }
 
@@ -1286,7 +1287,7 @@ export class SalesService {
         });
         if (existingLink) {
           throw new BadRequestException(
-            `La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado al acuerdo vigente`,
+            `La orden ${draft.serviceOrder.code} ya tiene un comprobante ligado a la cotización vigente`,
           );
         }
       }
@@ -1454,7 +1455,7 @@ export class SalesService {
             subtype: paymentDto.method as any,
             amount: paymentAmount,
             balanceAfter: currentBalance,
-            description: `Venta agrupada por acuerdos ${orderDrafts.map((draft) => draft.serviceOrder.code).join(', ')}`,
+            description: `Venta agrupada por cotizaciones ${orderDrafts.map((draft) => draft.serviceOrder.code).join(', ')}`,
             reference: `${finalSeries}-${finalNumber}`,
             recordedBy: user,
             recordedAt: new Date(),
@@ -1585,6 +1586,70 @@ export class SalesService {
     serviceOrder: ServiceOrder,
     agreement: ServiceOrderAgreement,
   ): ServiceOrderSaleDraftLine[] {
+    if (agreement.items?.length) {
+      return [...agreement.items]
+        .sort((left, right) => {
+          const positionDifference =
+            Number(left.serviceOrderItem?.position ?? 0) -
+            Number(right.serviceOrderItem?.position ?? 0);
+          return (
+            positionDifference ||
+            String(left.serviceOrderItem?.code ?? '').localeCompare(
+              String(right.serviceOrderItem?.code ?? ''),
+            )
+          );
+        })
+        .flatMap((agreementItem) => {
+          const item = agreementItem.serviceOrderItem;
+          if (!item) return [];
+
+          return (agreementItem.commercialVersion?.lines ?? []).flatMap(
+            (line): ServiceOrderSaleDraftLine[] => {
+              const quantity = Number(line.quantity ?? 0);
+              if (!Number.isFinite(quantity) || quantity <= 0) return [];
+
+              const baseUnitPrice = Number(line.unitPrice ?? 0);
+              const netAmount = Number(line.netAmount ?? 0);
+              const finalUnitPrice = Number(
+                (netAmount / quantity).toFixed(2),
+              );
+
+              if (line.type === ServiceOrderCommercialLineType.PRODUCT) {
+                return [
+                  {
+                    itemType: SaleItemKindDto.PRODUCT,
+                    productId: line.productId,
+                    quantity,
+                    baseUnitPrice,
+                    finalUnitPrice,
+                    description: `${line.catalogNameSnapshot} - ${item.code}`,
+                  },
+                ];
+              }
+
+              if (
+                line.type === ServiceOrderCommercialLineType.SERVICE ||
+                line.type === ServiceOrderCommercialLineType.ADJUSTMENT
+              ) {
+                return [
+                  {
+                    itemType: SaleItemKindDto.SERVICE,
+                    quantity,
+                    baseUnitPrice,
+                    finalUnitPrice,
+                    description: `${line.catalogNameSnapshot} - ${item.code}`,
+                    serviceCodeSnapshot: line.catalogCodeSnapshot,
+                    serviceNameSnapshot: line.catalogNameSnapshot,
+                  },
+                ];
+              }
+
+              return [];
+            },
+          );
+        });
+    }
+
     const orderLabel = `Orden ${serviceOrder.code}`;
     return [
       ...(agreement.productItems ?? []).map((item) => ({

@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
 import { PricingConfigService } from '../../pricing/services/pricing-config.service';
+import { PricingEngineService } from '../../pricing/services/pricing-engine.service';
 import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-commercial-line.entity';
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
@@ -107,6 +108,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
   let discountRepo: ReturnType<typeof createRepo>;
   let projection: jest.Mocked<ServiceOrderAggregateProjectionService>;
   let pricingConfig: jest.Mocked<PricingConfigService>;
+  let pricingEngine: jest.Mocked<PricingEngineService>;
 
   beforeEach(() => {
     orderRepo = createRepo();
@@ -138,11 +140,43 @@ describe('ServiceOrderCommercialRevisionService', () => {
       resolveForProduct: jest.fn(),
       resolveGlobal: jest.fn(),
     } as unknown as jest.Mocked<PricingConfigService>;
+    pricingEngine = {
+      calculatePrice: jest.fn().mockResolvedValue({
+        cpp: 50,
+        recommendedPrice: 67.85,
+        minAllowedPrice: 61.07,
+        costSource: 'MOVEMENT_HISTORY',
+      }),
+    } as unknown as jest.Mocked<PricingEngineService>;
     service = new ServiceOrderCommercialRevisionService(
       manager,
       projection,
       pricingConfig,
+      pricingEngine,
     );
+  });
+
+  it('rechaza una linea de producto por debajo del 90% del precio recomendado', async () => {
+    pricingEngine.calculatePrice.mockResolvedValue({
+      cpp: 50,
+      recommendedPrice: 100,
+      minAllowedPrice: 90,
+      costSource: 'CURRENT_STOCK',
+    } as never);
+    const product = { id: 9, sku: 'SSD-500', name: 'SSD 500 GB' } as Product;
+
+    await expect(
+      (service as any).buildLine(
+        {
+          type: ServiceOrderCommercialLineType.PRODUCT,
+          productId: 9,
+          quantity: 1,
+          unitPrice: 89.99,
+        },
+        new Map([[9, product]]),
+        undefined,
+      ),
+    ).rejects.toThrow('no puede ser menor a S/ 90.00');
   });
 
   it('crea una revisión global reutilizando la versión aceptada del hermano sin cambios', async () => {
@@ -214,6 +248,12 @@ describe('ServiceOrderCommercialRevisionService', () => {
     );
 
     expect(versionRepo.save).toHaveBeenCalledTimes(1);
+    expect(lineRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: ServiceOrderCommercialLineType.SERVICE,
+        catalogNameSnapshot: 'Servicio técnico',
+      }),
+    );
     expect(versionRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         serviceOrderItemId: itemTwo.id,
@@ -403,18 +443,11 @@ describe('ServiceOrderCommercialRevisionService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('persiste el descuento permitido como snapshot y calcula el total neto de la línea', async () => {
+  it('persiste el descuento permitido de un servicio como snapshot y calcula su total neto', async () => {
     const order = createOrder();
     const item = createItem(order, 701, 1);
-    const product = {
-      id: 41,
-      sku: 'SSD-1TB',
-      name: 'SSD 1 TB',
-      description: null,
-    } as Product;
     orderRepo.findOne.mockResolvedValue(order);
     itemRepo.find.mockResolvedValue([item]);
-    productRepo.find.mockResolvedValue([product]);
     versionRepo.findOne.mockResolvedValue(null);
     versionRepo.createQueryBuilder.mockReturnValue(sequenceQueryBuilder('0'));
     versionRepo.save.mockImplementation(async (value) => ({
@@ -428,10 +461,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
       serviceOrderId: order.id,
       totalAmount: 190,
     });
-    pricingConfig.resolveForProduct.mockResolvedValue({
-      config: { id: 44, maxDiscountPct: 7 } as any,
-      scope: 'product',
-    });
+    pricingConfig.resolveGlobal.mockResolvedValue({ id: 44, maxDiscountPct: 7 } as any);
     projection.recalculateLocked.mockResolvedValue(order);
 
     await service.createRevision(
@@ -442,8 +472,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
             serviceOrderItemId: item.id,
             lines: [
               {
-                type: ServiceOrderCommercialLineType.PRODUCT,
-                productId: product.id,
+                type: ServiceOrderCommercialLineType.SERVICE,
                 quantity: 2,
                 unitPrice: 100,
                 discountPct: 5,
@@ -482,7 +511,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
     ]);
   });
 
-  it('rechaza un descuento superior al máximo sin permiso de override', async () => {
+  it('rechaza cualquier descuento aplicado a un producto', async () => {
     const order = createOrder();
     const item = createItem(order, 701, 1);
     const product = {
@@ -495,10 +524,6 @@ describe('ServiceOrderCommercialRevisionService', () => {
     itemRepo.find.mockResolvedValue([item]);
     productRepo.find.mockResolvedValue([product]);
     versionRepo.findOne.mockResolvedValue(null);
-    pricingConfig.resolveForProduct.mockResolvedValue({
-      config: { id: 44, maxDiscountPct: 7 } as any,
-      scope: 'product',
-    });
 
     await expect(
       service.createRevision(
@@ -513,7 +538,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
                   productId: product.id,
                   quantity: 1,
                   unitPrice: 100,
-                  discountPct: 12,
+                  discountPct: 5,
                 },
               ],
             },
@@ -529,7 +554,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
           ],
         } as any,
       ),
-    ).rejects.toThrow('autorización de supervisión');
+    ).rejects.toThrow('Los productos de una cotización no admiten descuentos');
 
     expect(versionRepo.save).not.toHaveBeenCalled();
     expect(discountRepo.save).not.toHaveBeenCalled();

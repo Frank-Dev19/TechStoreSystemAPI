@@ -172,6 +172,7 @@ describe('ServiceOrderWorkflowService', () => {
   it('reasigna toda la orden sin reiniciar la etapa técnica de sus equipos', async () => {
     const order = createServiceOrder({
       assignedToTechnicianId: 7,
+      assignedTechnician: { id: 7, name: 'Técnico anterior' } as any,
       technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
       operativeStatus: ServiceOrderOperativeStatus.EN_PROCESO,
       items: [
@@ -188,7 +189,6 @@ describe('ServiceOrderWorkflowService', () => {
     serviceOrderRepository.findOne
       .mockResolvedValueOnce(order)
       .mockImplementationOnce(async () => order);
-    serviceOrderRepository.save.mockImplementation(async (entity) => entity);
     const adjustBalance = jest.spyOn(service as any, 'adjustTechnicianBalance').mockResolvedValue(undefined);
 
     const result = await service.assignTechnician(order.id, { technicianId: 8 }, 99);
@@ -199,6 +199,11 @@ describe('ServiceOrderWorkflowService', () => {
       ServiceOrderTechnicalStatus.RESUELTA,
       ServiceOrderTechnicalStatus.EN_EJECUCION,
     ]);
+    expect(serviceOrderRepository.update).toHaveBeenCalledWith(order.id, {
+      assignedToTechnicianId: 8,
+      assignedAt: expect.any(Date),
+    });
+    expect(serviceOrderRepository.save).not.toHaveBeenCalled();
     expect(adjustBalance).toHaveBeenCalledWith(7, order.serviceType, 0, -1, undefined, expect.anything());
     expect(adjustBalance).toHaveBeenCalledWith(8, order.serviceType, 1, 1, expect.any(Date), expect.anything());
     expect(eventRepository.create).toHaveBeenCalledWith(

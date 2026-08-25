@@ -123,7 +123,29 @@ describe('ServiceOrderCommercialDecisionService', () => {
       }),
     );
     expect(agreementRepo.save).not.toHaveBeenCalled();
-    expect(result.agreement.status).toBe(ServiceOrderAgreementStatus.DRAFT);
+    expect(result.agreement?.status).toBe(ServiceOrderAgreementStatus.DRAFT);
+  });
+
+  it('registra una aceptación directa de WhatsApp sin atribuirla a un operador', async () => {
+    const fixture = arrangeCurrentAgreement(false);
+
+    await service.recordWhatsAppAcceptance(fixture.version.id);
+
+    expect(decisionRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commercialVersionId: fixture.version.id,
+        decision: ServiceOrderClientDecisionType.ACCEPTED,
+        channel: ServiceOrderClientDecisionChannel.WHATSAPP,
+        recordedByUserId: null,
+      }),
+    );
+    expect(versionRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: fixture.version.id,
+        status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+        acceptedByUserId: null,
+      }),
+    );
   });
 
   it('confirma el consolidado y autoriza todos los equipos cuando se acepta la última versión pendiente', async () => {

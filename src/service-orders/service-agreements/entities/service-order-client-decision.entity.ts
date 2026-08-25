@@ -41,12 +41,12 @@ export class ServiceOrderClientDecision {
   @Column({ type: 'text', nullable: true })
   observation: string | null;
 
-  @Column({ name: 'recorded_by_user_id', type: 'int' })
-  recordedByUserId: number;
+  @Column({ name: 'recorded_by_user_id', type: 'int', nullable: true })
+  recordedByUserId: number | null;
 
-  @ManyToOne(() => User, { nullable: false, onDelete: 'RESTRICT' })
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'recorded_by_user_id' })
-  recordedByUser: User;
+  recordedByUser: User | null;
 
   @Column({ name: 'recorded_at', type: 'datetime' })
   recordedAt: Date;

@@ -19,6 +19,8 @@ import { ServiceOrderClientDecision } from './entities/service-order-client-deci
 import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
 import { ServiceOrderLineDiscount } from './entities/service-order-line-discount.entity';
 import { PricingModule } from '../../pricing/pricing.module';
+import { ServiceOrderCommercialIssuanceService } from './service-order-commercial-issuance.service';
+import { ServiceOrderQuoteReminderService } from './service-order-quote-reminder.service';
 
 @Module({
   imports: [
@@ -45,11 +47,14 @@ import { PricingModule } from '../../pricing/pricing.module';
     ServiceOrderAgreementsService,
     ServiceOrderCommercialRevisionService,
     ServiceOrderCommercialDecisionService,
+    ServiceOrderCommercialIssuanceService,
+    ServiceOrderQuoteReminderService,
   ],
   exports: [
     ServiceOrderAgreementsService,
     ServiceOrderCommercialRevisionService,
     ServiceOrderCommercialDecisionService,
+    ServiceOrderCommercialIssuanceService,
   ],
 })
 export class ServiceOrderAgreementsModule {}

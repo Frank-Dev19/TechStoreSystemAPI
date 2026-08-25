@@ -201,7 +201,6 @@ describe('ServiceOrderAgreementsService', () => {
       notifyAgreementAvailable: jest.fn(),
       notifyRediagnosisAgreementAvailable: jest.fn(),
       notifyAgreementConfirmed: jest.fn(),
-      notifyCancellationWithDiagnosisFee: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
 
     service = new ServiceOrderAgreementsService(
@@ -1187,7 +1186,6 @@ describe('ServiceOrderAgreementsService', () => {
       agreement.serviceOrderId,
       'Cliente rechazó',
     );
-    expect(messageMatrixService.notifyCancellationWithDiagnosisFee).toHaveBeenCalledWith(agreement.serviceOrder);
   });
 
   it('filtra acuerdos por estado canónico en la consulta de listado', async () => {

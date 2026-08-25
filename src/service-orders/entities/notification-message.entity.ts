@@ -46,6 +46,15 @@ export class NotificationMessage {
   @Column({ name: 'metadata_json', type: 'longtext', nullable: true })
   metadataJson: string | null;
 
+  @Column({ name: 'attempt_count', type: 'int', unsigned: true, default: 0 })
+  attemptCount: number;
+
+  @Column({ name: 'next_attempt_at', type: 'datetime', nullable: true })
+  nextAttemptAt: Date | null;
+
+  @Column({ name: 'last_error', type: 'text', nullable: true })
+  lastError: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

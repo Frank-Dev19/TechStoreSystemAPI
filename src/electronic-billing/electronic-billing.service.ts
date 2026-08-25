@@ -1,4 +1,5 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Sale } from '../sales/entities/sale.entity';
@@ -12,9 +13,16 @@ import { ApisPeruBillingClient } from './services/apisperu-billing.client';
 import { MailerService } from '../mailer/mailer.service';
 import { SendElectronicDocumentEmailDto } from './dto/send-electronic-document-email.dto';
 import { MailPurpose } from '../mail-settings/enums/mail-purpose.enum';
+import { ServiceOrderSaleLink } from '../service-orders/entities/service-order-sale-link.entity';
+import { ServiceOrder } from '../service-orders/entities/service-order.entity';
+import { ServiceOrderMessageMatrixService } from '../service-orders/services/service-order-message-matrix.service';
+import { PrivateFileStorageService } from '../service-orders/storage/private-file-storage.service';
+import { ServiceOrderTempDocumentsService } from '../service-orders/documents/service-order-temp-documents.service';
 
 @Injectable()
 export class ElectronicBillingService {
+  private readonly logger = new Logger(ElectronicBillingService.name);
+
   constructor(
     @InjectRepository(Sale)
     private readonly saleRepo: Repository<Sale>,
@@ -23,6 +31,14 @@ export class ElectronicBillingService {
     private readonly businessProfileService: BusinessProfileService,
     private readonly apisPeruClient: ApisPeruBillingClient,
     private readonly mailerService: MailerService,
+    @InjectRepository(ServiceOrderSaleLink)
+    private readonly serviceOrderSaleLinkRepository: Repository<ServiceOrderSaleLink>,
+    @InjectRepository(ServiceOrder)
+    private readonly serviceOrderRepository: Repository<ServiceOrder>,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly privateStorage: PrivateFileStorageService,
+    private readonly tempDocumentsService: ServiceOrderTempDocumentsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async buildInvoicePayload(saleId: number): Promise<ApisPeruInvoicePayload> {
@@ -45,6 +61,14 @@ export class ElectronicBillingService {
     try {
       const response = await this.apisPeruClient.sendInvoice(payload);
       const savedDocument = await this.markDocumentWithResponse(document, response);
+
+      if (savedDocument.status === ElectronicDocumentStatus.ACCEPTED) {
+        await this.notifyAcceptedReceipt(sale, savedDocument).catch((error) => {
+          this.logger.error(
+            `El comprobante ${savedDocument.id} fue aceptado, pero no pudo notificarse por WhatsApp: ${(error as Error).message}`,
+          );
+        });
+      }
 
       return {
         saleId,
@@ -317,6 +341,37 @@ export class ElectronicBillingService {
     });
 
     return this.electronicDocumentRepo.save(document);
+  }
+
+  private async notifyAcceptedReceipt(sale: Sale, document: ElectronicDocument): Promise<void> {
+    const links = await this.serviceOrderSaleLinkRepository.find({ where: { saleId: sale.id } });
+    if (links.length !== 1) {
+      if (links.length > 1) {
+        this.logger.warn(`No se envió el comprobante ${document.id}: la venta histórica está ligada a ${links.length} órdenes`);
+      }
+      return;
+    }
+    const order = await this.serviceOrderRepository.findOne({ where: { id: Number(links[0].serviceOrderId) } });
+    if (!order) return;
+    const pdf = await this.getInvoicePdfFile(sale.id);
+    const stored = await this.privateStorage.store(
+      'service-orders', ['electronic-receipts', String(order.id)], pdf.filename, pdf.buffer,
+    );
+    const tempDocument = await this.tempDocumentsService.createRecord({
+      sourceType: 'ELECTRONIC_RECEIPT', mimeType: pdf.contentType, fileName: pdf.filename,
+      absolutePath: stored.absolutePath,
+      metadata: { serviceOrderId: order.id, saleId: sale.id, electronicDocumentId: document.id },
+    });
+    const baseUrl = (this.configService.get<string>('APP_PUBLIC_BASE_URL') || 'http://localhost:3000').replace(/\/+$/, '');
+    await this.messageMatrixService.dispatchPaymentReceiptTemplate({
+      serviceOrder: order,
+      electronicDocumentId: document.id,
+      documentNumber: `${document.series}-${document.number}`,
+      totalAmount: Number(sale.total),
+      documentUrl: `${baseUrl}/service-orders/temp-documents/${tempDocument.token}`,
+      documentFileName: pdf.filename,
+      tempDocumentToken: tempDocument.token,
+    });
   }
 
   private getErrorMessage(error: unknown): string {

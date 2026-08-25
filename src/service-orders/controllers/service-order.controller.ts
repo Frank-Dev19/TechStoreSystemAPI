@@ -43,6 +43,9 @@ import { RequestServiceOrderItemCancellationDto } from '../dto/request-service-o
 import { ResolveServiceOrderItemCancellationDto } from '../dto/resolve-service-order-item-cancellation.dto';
 import { RequestServiceOrderItemsCancellationDto } from '../dto/request-service-order-items-cancellation.dto';
 import { DeliverServiceOrderItemsDto } from '../dto/deliver-service-order-items.dto';
+import { SendPickupReminderDto } from '../dto/send-pickup-reminder.dto';
+import { ServiceOrderPickupReminderService } from '../services/service-order-pickup-reminder.service';
+import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -57,6 +60,8 @@ export class ServiceOrderController {
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly saleLinkService: ServiceOrderSaleLinkService,
     private readonly inboxService: ServiceOrderInboxService,
+    private readonly pickupReminderService: ServiceOrderPickupReminderService,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   @Permissions('service-order.create')
@@ -106,6 +111,20 @@ export class ServiceOrderController {
   @Delete('backoffice/billing-links/:id')
   unlinkSale(@Param('id', ParseIntPipe) id: number) {
     return this.saleLinkService.unlink(id);
+  }
+
+  @Permissions('service-order.read')
+  @RolesDec('admin', ...SUPERVISOR_ROLE_NAMES)
+  @Get('notifications/final-failures')
+  listFinalNotificationFailures() {
+    return this.messageMatrixService.listFinalFailures();
+  }
+
+  @Permissions('service-order.read')
+  @RolesDec('admin', ...SUPERVISOR_ROLE_NAMES)
+  @Post('notifications/:notificationId/retry')
+  retryFinalNotification(@Param('notificationId', ParseIntPipe) notificationId: number) {
+    return this.messageMatrixService.retryFinalFailure(notificationId);
   }
 
   @Permissions('service-order.read')
@@ -165,6 +184,15 @@ export class ServiceOrderController {
     @Req() req?: any,
   ) {
     return this.itemDeliveryService.deliverItem(id, itemId, userId, req?.user);
+  }
+
+  @Permissions('service-order.read')
+  @Post(':id/pickup-reminders')
+  sendPickupReminder(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendPickupReminderDto,
+  ) {
+    return this.pickupReminderService.sendManual(id, dto.itemIds);
   }
 
   @Permissions('service-order.assign')

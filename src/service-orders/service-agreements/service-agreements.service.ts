@@ -576,11 +576,6 @@ export class ServiceOrderAgreementsService {
       );
     }
     await this.syncCanonicalCommercialAfterVoid(agreement.serviceOrderId);
-    if (agreement.serviceOrder?.serviceType === ServiceType.DIAGNOSIS) {
-      await this.messageMatrixService.notifyCancellationWithDiagnosisFee(
-        await this.ensureServiceOrder(agreement.serviceOrderId),
-      );
-    }
     return this.findOne(id);
   }
 

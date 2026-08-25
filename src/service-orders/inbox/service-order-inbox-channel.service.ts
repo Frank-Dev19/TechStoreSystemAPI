@@ -34,6 +34,7 @@ type DispatchTemplateMessageInput = {
   documentFileName?: string | null;
   bodyParameters: string[];
   quickReplyPayloads?: string[];
+  urlButtonParameters?: string[];
   contextToken: string;
 };
 
@@ -56,6 +57,7 @@ export type NormalizedInboundMessage = {
   occurredAt?: string | null;
   replyToExternalMessageId?: string | null;
   attachments?: ServiceOrderInboxWebhookAttachmentDto[];
+  quickReplyPayload?: string | null;
 };
 
 export type NormalizedMetaWebhookPayload = {
@@ -151,7 +153,22 @@ export class ServiceOrderInboxChannelService {
           const from = String(message?.from ?? '').trim() || null;
           const senderName = from ? contactNames.get(from) || null : null;
           const normalizedAttachments = this.extractInboundAttachments(message);
-          const normalizedText = typeof message?.text?.body === 'string' ? message.text.body.trim() : null;
+          const quickReplyPayload =
+            String(
+              message?.button?.payload ??
+                message?.interactive?.button_reply?.id ??
+                '',
+            ).trim() || null;
+          const normalizedText =
+            (typeof message?.text?.body === 'string'
+              ? message.text.body.trim()
+              : null) ||
+            String(
+              message?.button?.text ??
+                message?.interactive?.button_reply?.title ??
+                '',
+            ).trim() ||
+            null;
           const contextToken =
             String(
               message?.context?.biz_opaque_callback_data ??
@@ -170,6 +187,7 @@ export class ServiceOrderInboxChannelService {
             occurredAt: this.normalizeMetaTimestamp(message?.timestamp),
             replyToExternalMessageId: String(message?.context?.id ?? '').trim() || null,
             attachments: normalizedAttachments,
+            quickReplyPayload,
           });
         });
 
@@ -289,6 +307,15 @@ export class ServiceOrderInboxChannelService {
             payload: quickReplyPayload,
           },
         ],
+      });
+    });
+
+    (payload.urlButtonParameters ?? []).forEach((urlParameter, index) => {
+      components.push({
+        type: 'button',
+        sub_type: 'url',
+        index: String(index),
+        parameters: [{ type: 'text', text: urlParameter }],
       });
     });
 

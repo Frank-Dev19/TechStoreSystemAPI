@@ -1,5 +1,6 @@
 import {
   ArrayMinSize,
+  ArrayMaxSize,
   IsArray,
   IsDateString,
   IsEnum,
@@ -17,6 +18,7 @@ import { SalePaymentDto } from './create-sale.dto';
 export class CreateSaleFromServiceAgreementsDto {
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(1, { message: 'Cada comprobante de servicio debe corresponder a una sola orden' })
   @Type(() => Number)
   @IsInt({ each: true })
   @IsPositive({ each: true })

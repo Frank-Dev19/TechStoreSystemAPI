@@ -22,6 +22,10 @@ import { ServiceOrderItemCancellationService } from './service-order-item-cancel
 import { ServiceOrderAgreement } from '../service-agreements/entities/service-agreement.entity';
 import { ServiceOrderAgreementItem } from '../service-agreements/entities/service-agreement-item.entity';
 import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/service-order-item-commercial-version-status.enum';
+import { ServiceOrderCancellationSummaryPdfService } from '../documents/service-order-cancellation-summary-pdf.service';
+import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
+import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('ServiceOrderItemCancellationService', () => {
   let service: ServiceOrderItemCancellationService;
@@ -38,9 +42,12 @@ describe('ServiceOrderItemCancellationService', () => {
   let agreementItemRepository: any;
   let manager: any;
   let projection: jest.Mocked<ServiceOrderAggregateProjectionService>;
+  let cancellationPdfService: jest.Mocked<ServiceOrderCancellationSummaryPdfService>;
+  let tempDocumentsService: jest.Mocked<ServiceOrderTempDocumentsService>;
+  let messageMatrixService: jest.Mocked<ServiceOrderMessageMatrixService>;
 
   beforeEach(() => {
-    order = { id: 20, assignedToTechnicianId: 7 } as ServiceOrder;
+    order = { id: 20, code: 'SO-001', assignedToTechnicianId: 7, clientSnapshotName: 'Cliente' } as ServiceOrder;
     item = createItem();
     orderRepository = {
       findOne: jest.fn().mockResolvedValue(order),
@@ -117,7 +124,24 @@ describe('ServiceOrderItemCancellationService', () => {
         .fn()
         .mockResolvedValue({ ...order, items: [item] }),
     } as unknown as jest.Mocked<ServiceOrderAggregateProjectionService>;
-    service = new ServiceOrderItemCancellationService(manager, projection);
+    cancellationPdfService = {
+      generate: jest.fn().mockResolvedValue({ fileName: 'cancelacion.pdf', absolutePath: 'storage/cancelacion.pdf', mimeType: 'application/pdf' }),
+    } as unknown as jest.Mocked<ServiceOrderCancellationSummaryPdfService>;
+    tempDocumentsService = {
+      createRecord: jest.fn().mockResolvedValue({ token: 'temp-token' }),
+    } as unknown as jest.Mocked<ServiceOrderTempDocumentsService>;
+    messageMatrixService = {
+      dispatchCancellationSummaryTemplate: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
+    const configService = { get: jest.fn().mockReturnValue('https://api.example.com') } as unknown as ConfigService;
+    service = new ServiceOrderItemCancellationService(
+      manager,
+      projection,
+      cancellationPdfService,
+      tempDocumentsService,
+      messageMatrixService,
+      configService,
+    );
   });
 
   it('crea y aprueba atómicamente una cancelación anterior a la ejecución', async () => {
@@ -140,6 +164,14 @@ describe('ServiceOrderItemCancellationService', () => {
         resolvedByUserId: 7,
         channel: ServiceOrderCancellationChannel.WHATSAPP,
         reason: 'El cliente desistió.',
+      }),
+    );
+    expect(messageMatrixService.dispatchCancellationSummaryTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceOrder: expect.objectContaining({ id: order.id }),
+        cancellationRequestIds: [501],
+        itemCount: 1,
+        documentUrl: 'https://api.example.com/service-orders/temp-documents/temp-token',
       }),
     );
     expect(item.operativeStatus).toBe(ServiceOrderOperativeStatus.CANCELADA);

@@ -178,9 +178,12 @@ export class ServiceOrderWorkflowService {
       }
 
       const assignedAt = new Date();
+      await manager.getRepository(ServiceOrder).update(serviceOrder.id, {
+        assignedToTechnicianId: dto.technicianId,
+        assignedAt,
+      });
       serviceOrder.assignedToTechnicianId = dto.technicianId;
       serviceOrder.assignedAt = assignedAt;
-      await manager.getRepository(ServiceOrder).save(serviceOrder);
 
       if (previousTechnicianId && !this.isTerminalTechnical(previousTechnicalStatus)) {
         await this.adjustTechnicianBalance(previousTechnicianId, serviceOrder.serviceType, 0, -1, undefined, manager);

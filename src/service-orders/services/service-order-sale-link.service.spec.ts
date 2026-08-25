@@ -7,7 +7,6 @@ import { ServiceOrderAgreementStatus } from '../service-agreements/service-agree
 import { ServiceOrderEconomicStatus } from '../enums';
 import { ServiceOrderOperativeStatus } from '../enums/service-order-operative-status.enum';
 import { ServiceOrderTechnicalStatus } from '../enums/service-order-technical-status.enum';
-import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderSaleLinkService } from './service-order-sale-link.service';
 
 type MockRepo<T = any> = {
@@ -32,23 +31,17 @@ describe('ServiceOrderSaleLinkService', () => {
   let saleRepository: MockRepo<Sale>;
   let serviceOrderRepository: MockRepo<ServiceOrder>;
   let agreementRepository: MockRepo<ServiceOrderAgreement>;
-  let messageMatrixService: jest.Mocked<ServiceOrderMessageMatrixService>;
 
   beforeEach(() => {
     linkRepository = createMockRepo<ServiceOrderSaleLink>();
     saleRepository = createMockRepo<Sale>();
     serviceOrderRepository = createMockRepo<ServiceOrder>();
     agreementRepository = createMockRepo<ServiceOrderAgreement>();
-    messageMatrixService = {
-      notifyInvoiceLinked: jest.fn(),
-    } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
-
     service = new ServiceOrderSaleLinkService(
       linkRepository as any,
       saleRepository as any,
       serviceOrderRepository as any,
       agreementRepository as any,
-      messageMatrixService,
     );
   });
 
@@ -145,7 +138,6 @@ describe('ServiceOrderSaleLinkService', () => {
         linkedBy: 'backoffice',
       }),
     );
-    expect(messageMatrixService.notifyInvoiceLinked).toHaveBeenCalledWith(order, sale);
     expect(result).toHaveLength(1);
   });
 

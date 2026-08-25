@@ -128,7 +128,7 @@ export class ServiceOrderItemDeliveryService {
           lock: { mode: 'pessimistic_read' },
         });
         if (currentAgreement?.status !== ServiceOrderAgreementStatus.CONFIRMED) {
-          throw new BadRequestException('La orden no tiene un acuerdo comercial vigente confirmado');
+          throw new BadRequestException('La orden no tiene una cotización vigente confirmada');
         }
         if (![ServiceOrderEconomicStatus.TOTAL, ServiceOrderEconomicStatus.EXONERADO].includes(order.economicStatus)) {
           throw new BadRequestException(

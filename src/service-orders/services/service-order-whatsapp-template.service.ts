@@ -6,6 +6,7 @@ export type WhatsAppTemplateDispatch = {
   languageCode: string;
   bodyParameters: string[];
   quickReplyPayloads: string[];
+  urlButtonParameters?: string[];
   documentUrl?: string | null;
   documentFileName?: string | null;
 };
@@ -25,11 +26,48 @@ type AgreementTemplateInput = BaseTemplateInput & {
   equipmentLabel: string;
   orderCode: string;
   totalAmount: string;
+  documentUrl?: string;
+  documentFileName?: string;
 };
 
 type SingleOrderTemplateInput = BaseTemplateInput & {
   orderCode: string;
   equipmentLabel: string;
+};
+
+type SurveyTemplateInput = SingleOrderTemplateInput & {
+  surveyToken: string;
+};
+
+type QuoteReminderTemplateInput = AgreementTemplateInput;
+
+type PaymentReceiptTemplateInput = BaseTemplateInput & {
+  orderCode: string;
+  documentNumber: string;
+  totalAmount: string;
+  documentUrl: string;
+  documentFileName: string;
+};
+
+type PickupReminderTemplateInput = BaseTemplateInput & {
+  orderCode: string;
+  equipmentSummary: string;
+  documentUrl: string;
+  documentFileName: string;
+};
+
+type CancellationSummaryTemplateInput = BaseTemplateInput & {
+  orderCode: string;
+  itemCount: string;
+  documentUrl: string;
+  documentFileName: string;
+};
+
+type FinalServiceTemplateInput = BaseTemplateInput & {
+  equipmentLabel: string;
+  itemCode: string;
+  documentUrl: string;
+  documentFileName: string;
 };
 
 type WarrantyStatusTemplateInput = BaseTemplateInput & {
@@ -66,20 +104,24 @@ export class ServiceOrderWhatsAppTemplateService {
   buildDiagnosisAgreementAvailableTemplate(input: AgreementTemplateInput): WhatsAppTemplateDispatch {
     return this.buildTemplate(
       this.configService.get<string>('WHATSAPP_TEMPLATE_DIAGNOSIS_AGREEMENT_NAME') ||
-        'diagnostico_y_acuerdo_disponible',
-      this.configService.get<string>('WHATSAPP_TEMPLATE_DIAGNOSIS_AGREEMENT_LANGUAGE') || 'es',
+        'diagnostico_cotizacion_equipo',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_DIAGNOSIS_AGREEMENT_LANGUAGE') || 'es_PE',
       [input.clientName, input.equipmentLabel, input.orderCode, input.totalAmount],
       input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
     );
   }
 
   buildRediagnosisAgreementTemplate(input: AgreementTemplateInput): WhatsAppTemplateDispatch {
     return this.buildTemplate(
       this.configService.get<string>('WHATSAPP_TEMPLATE_REDIAGNOSIS_AGREEMENT_NAME') ||
-        'rediagnostico_y_nuevo_acuerdo',
-      this.configService.get<string>('WHATSAPP_TEMPLATE_REDIAGNOSIS_AGREEMENT_LANGUAGE') || 'es',
+        'rediagnostico_recotizacion_equipo',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_REDIAGNOSIS_AGREEMENT_LANGUAGE') || 'es_PE',
       [input.clientName, input.equipmentLabel, input.orderCode, input.totalAmount],
       input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
     );
   }
 
@@ -111,13 +153,27 @@ export class ServiceOrderWhatsAppTemplateService {
     );
   }
 
-  buildCancellationWithFeeTemplate(input: SingleOrderTemplateInput): WhatsAppTemplateDispatch {
+  buildCancellationSummaryTemplate(input: CancellationSummaryTemplateInput): WhatsAppTemplateDispatch {
     return this.buildTemplate(
-      this.configService.get<string>('WHATSAPP_TEMPLATE_CANCEL_WITH_FEE_NAME') ||
-        'orden_cancelada_con_cobro_diagnostico',
-      this.configService.get<string>('WHATSAPP_TEMPLATE_CANCEL_WITH_FEE_LANGUAGE') || 'es',
-      [input.clientName, input.orderCode, input.equipmentLabel],
+      this.configService.get<string>('WHATSAPP_TEMPLATE_CANCELLATION_SUMMARY_NAME') ||
+        'resumen_cancelacion_equipos',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_CANCELLATION_SUMMARY_LANGUAGE') || 'es_PE',
+      [input.clientName, input.itemCount, input.orderCode],
       input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
+    );
+  }
+
+  buildFinalServiceTemplate(input: FinalServiceTemplateInput): WhatsAppTemplateDispatch {
+    return this.buildTemplate(
+      this.configService.get<string>('WHATSAPP_TEMPLATE_FINAL_SERVICE_NAME') ||
+        'estado_final_servicio',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_FINAL_SERVICE_LANGUAGE') || 'es_PE',
+      [input.clientName, input.equipmentLabel, input.itemCode],
+      input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
     );
   }
 
@@ -139,17 +195,60 @@ export class ServiceOrderWhatsAppTemplateService {
     );
   }
 
-  buildSurveyRequestTemplate(input: SingleOrderTemplateInput): WhatsAppTemplateDispatch | null {
+  hasSurveyRequestTemplate(): boolean {
+    return Boolean(this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_NAME')?.trim());
+  }
+
+  buildSurveyRequestTemplate(input: SurveyTemplateInput): WhatsAppTemplateDispatch | null {
     const templateName = this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_NAME')?.trim();
     if (!templateName) {
       return null;
     }
 
-    return this.buildTemplate(
+    return {
+      ...this.buildTemplate(
       templateName,
-      this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_LANGUAGE') || 'es',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_SURVEY_LANGUAGE') || 'es_PE',
       [input.clientName, input.orderCode, input.equipmentLabel],
       input.quickReplyPayloads,
+      ),
+      urlButtonParameters: [input.surveyToken],
+    };
+  }
+
+  buildQuoteReminderTemplate(input: QuoteReminderTemplateInput): WhatsAppTemplateDispatch {
+    return this.buildTemplate(
+      this.configService.get<string>('WHATSAPP_TEMPLATE_QUOTE_REMINDER_NAME') ||
+        'recordatorio_cotizacion_pendiente',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_QUOTE_REMINDER_LANGUAGE') || 'es_PE',
+      [input.clientName, input.equipmentLabel, input.orderCode, input.totalAmount],
+      input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
+    );
+  }
+
+  buildPaymentReceiptTemplate(input: PaymentReceiptTemplateInput): WhatsAppTemplateDispatch {
+    return this.buildTemplate(
+      this.configService.get<string>('WHATSAPP_TEMPLATE_PAYMENT_RECEIPT_NAME') ||
+        'comprobante_pago_orden_servicio',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_PAYMENT_RECEIPT_LANGUAGE') || 'es_PE',
+      [input.clientName, input.orderCode, input.documentNumber, input.totalAmount],
+      input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
+    );
+  }
+
+  buildPickupReminderTemplate(input: PickupReminderTemplateInput): WhatsAppTemplateDispatch {
+    return this.buildTemplate(
+      this.configService.get<string>('WHATSAPP_TEMPLATE_PICKUP_REMINDER_NAME') ||
+        'recordatorio_recojo_equipo',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_PICKUP_REMINDER_LANGUAGE') || 'es_PE',
+      [input.clientName, input.orderCode, input.equipmentSummary],
+      input.quickReplyPayloads,
+      input.documentUrl,
+      input.documentFileName,
     );
   }
 

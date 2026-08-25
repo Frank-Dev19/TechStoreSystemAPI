@@ -16,6 +16,8 @@ import { ServiceOrderTechnicalStatus } from 'src/service-orders/enums/service-or
 import { ClientKind } from 'src/clients/entities/client-kind.enum';
 import { Sale } from '../entities/sale.entity';
 import { SaleStatus } from '../enums/sale-status.enum';
+import { EquipmentType } from 'src/service-orders/enums/equipment-type.enum';
+import { ServiceOrderCommercialLineType } from 'src/service-orders/service-agreements/service-order-commercial-line-type.enum';
 
 type MockRepo = {
   findOne: jest.Mock;
@@ -117,6 +119,83 @@ describe('SalesService', () => {
       pricingEngine,
       taxConfigService,
     );
+  });
+
+  it('builds one invoice line per equipment from the confirmed commercial versions', () => {
+    const lines = (service as any).buildDraftLinesFromAgreement(
+      { code: 'SO-24-08-2026-0001' } as ServiceOrder,
+      {
+        items: [
+          {
+            serviceOrderItem: {
+              position: 2,
+              code: 'SO-24-08-2026-0001-02',
+              equipmentType: EquipmentType.LAPTOP,
+              brand: 'Asus',
+              model: 'TUF F15',
+            },
+            commercialVersion: {
+              lines: [
+                {
+                  type: ServiceOrderCommercialLineType.SERVICE,
+                  catalogCodeSnapshot: 'TECHNICAL_SERVICE',
+                  catalogNameSnapshot: 'Servicio técnico',
+                  quantity: 1,
+                  unitPrice: 80,
+                  netAmount: 80,
+                },
+              ],
+            },
+          },
+          {
+            serviceOrderItem: {
+              position: 1,
+              code: 'SO-24-08-2026-0001-01',
+              equipmentType: EquipmentType.LAPTOP,
+              brand: 'Lenovo',
+              model: 'ThinkPad E14',
+            },
+            commercialVersion: {
+              lines: [
+                {
+                  type: ServiceOrderCommercialLineType.SERVICE,
+                  catalogCodeSnapshot: 'TECHNICAL_SERVICE',
+                  catalogNameSnapshot: 'Servicio técnico',
+                  quantity: 1,
+                  unitPrice: 120,
+                  netAmount: 120,
+                },
+                {
+                  type: ServiceOrderCommercialLineType.PRODUCT,
+                  productId: 15,
+                  catalogCodeSnapshot: 'SSD-500',
+                  catalogNameSnapshot: 'Unidad SSD 500 GB',
+                  quantity: 1,
+                  unitPrice: 180,
+                  netAmount: 180,
+                },
+              ],
+            },
+          },
+        ],
+      } as any,
+    );
+
+    expect(lines).toEqual([
+      expect.objectContaining({
+        itemType: SaleItemKindDto.SERVICE,
+        description: 'Servicio técnico - SO-24-08-2026-0001-01',
+      }),
+      expect.objectContaining({
+        itemType: SaleItemKindDto.PRODUCT,
+        productId: 15,
+        description: 'Unidad SSD 500 GB - SO-24-08-2026-0001-01',
+      }),
+      expect.objectContaining({
+        itemType: SaleItemKindDto.SERVICE,
+        description: 'Servicio técnico - SO-24-08-2026-0001-02',
+      }),
+    ]);
   });
 
   it('rechaza ventas manuales con líneas de servicio', async () => {
@@ -383,7 +462,7 @@ describe('SalesService', () => {
         } as any,
         'tester',
       ),
-    ).rejects.toThrow('La orden ya tiene un comprobante autoligado para el acuerdo vigente');
+    ).rejects.toThrow('La orden ya tiene un comprobante autoligado para la cotización vigente');
 
     expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
   });
@@ -476,7 +555,7 @@ describe('SalesService', () => {
     salesInventory.registerSaleMovement = jest.fn().mockResolvedValue(undefined);
     jest.spyOn(service, 'findOne').mockResolvedValue({ id: 700, total: 200 } as any);
 
-    const result = await service.createFromServiceAgreements(
+    await expect(service.createFromServiceAgreements(
       {
         serviceOrderIds: [7, 8],
         companyId: 1,
@@ -486,34 +565,8 @@ describe('SalesService', () => {
         payments: [{ method: PaymentMethod.CASH, amount: 200 }],
       } as any,
       'tester',
-    );
-
-    expect(queryRunner.commitTransaction).toHaveBeenCalled();
-    expect(documentSeriesService.reserveNextNumber).toHaveBeenCalledWith(
-      queryRunner.manager,
-      1,
-      DocumentType.FACTURA,
-    );
-    expect(queryRunner.manager.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customerId: 99,
-        billingSnapshotName: 'Universidad Nacional de Trujillo',
-        billingSnapshotTradeName: 'UNT',
-        billingSnapshotDocumentNumber: '20172557628',
-        baseSubtotal: 169.49,
-        subtotal: 169.49,
-        taxRate: 0.18,
-        taxAmount: 30.51,
-        total: 200,
-      }),
-    );
-    expect(queryRunner.manager.save).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceOrderId: 7, agreementId: 44, linkedAmount: 120, saleId: 700 }),
-    );
-    expect(queryRunner.manager.save).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceOrderId: 8, agreementId: 45, linkedAmount: 80, saleId: 700 }),
-    );
-    expect(result).toEqual(expect.objectContaining({ id: 700, total: 200 }));
+    )).rejects.toThrow('Cada comprobante de servicio debe corresponder a una sola orden');
+    expect(queryRunner.startTransaction).not.toHaveBeenCalled();
   });
 
   it('rechaza venta agrupada cuando intenta facturar órdenes de clientes distintos', async () => {
@@ -548,7 +601,7 @@ describe('SalesService', () => {
         } as any,
         'tester',
       ),
-    ).rejects.toThrow('Solo se pueden agrupar órdenes del mismo cliente operativo');
+    ).rejects.toThrow('Cada comprobante de servicio debe corresponder a una sola orden');
   });
 
   it('rechaza facturar una orden pendiente si todavía no está lista para entrega', async () => {
@@ -679,6 +732,6 @@ describe('SalesService', () => {
         } as any,
         'tester',
       ),
-    ).rejects.toThrow('La orden SO-002 no está lista para entrega al cliente');
+    ).rejects.toThrow('Cada comprobante de servicio debe corresponder a una sola orden');
   });
 });

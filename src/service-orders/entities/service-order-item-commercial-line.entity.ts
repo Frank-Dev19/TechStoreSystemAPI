@@ -60,6 +60,18 @@ export class ServiceOrderItemCommercialLine {
   @Column({ name: 'unit_price', type: 'decimal', precision: 12, scale: 2 })
   unitPrice: number;
 
+  @Column({ name: 'recommended_price_snapshot', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  recommendedPriceSnapshot: number | null;
+
+  @Column({ name: 'minimum_price_snapshot', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  minimumPriceSnapshot: number | null;
+
+  @Column({ name: 'cost_snapshot', type: 'decimal', precision: 14, scale: 4, nullable: true })
+  costSnapshot: number | null;
+
+  @Column({ name: 'cost_source_snapshot', type: 'varchar', length: 32, nullable: true })
+  costSourceSnapshot: string | null;
+
   @Column({ name: 'gross_amount', type: 'decimal', precision: 12, scale: 2 })
   grossAmount: number;
 

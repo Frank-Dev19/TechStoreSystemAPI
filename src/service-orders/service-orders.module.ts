@@ -7,8 +7,15 @@ import { ServiceOrderController } from './controllers/service-order.controller';
 import { ServiceOrderDiagnosisController } from './diagnoses/service-order-diagnosis.controller';
 import { ServiceOrderDiagnosis } from './diagnoses/entities/service-order-diagnosis.entity';
 import { ServiceOrderIntakePdfService } from './documents/service-order-intake-pdf.service';
+import { ServiceOrderDiagnosisQuotePdfService } from './documents/service-order-diagnosis-quote-pdf.service';
+import { ServiceOrderCancellationSummaryPdfService } from './documents/service-order-cancellation-summary-pdf.service';
+import { ServiceOrderFinalReportPdfService } from './documents/service-order-final-report-pdf.service';
+import { ServiceOrderPickupReminderPdfService } from './documents/service-order-pickup-reminder-pdf.service';
 import { ServiceOrderTempDocumentsController } from './documents/service-order-temp-documents.controller';
 import { ServiceOrderTempDocument } from './documents/service-order-temp-document.entity';
+import { ServiceOrderSurvey } from './surveys/service-order-survey.entity';
+import { ServiceOrderSurveyController } from './surveys/service-order-survey.controller';
+import { ServiceOrderSurveyService } from './surveys/service-order-survey.service';
 import { ServiceOrderTempDocumentsService } from './documents/service-order-temp-documents.service';
 import { NotificationDeliveryAttempt } from './entities/notification-delivery-attempt.entity';
 import { NotificationMessage } from './entities/notification-message.entity';
@@ -47,6 +54,9 @@ import { ServiceOrderItemCancellationService } from './services/service-order-it
 import { ServiceOrderItemDeliveryService } from './services/service-order-item-delivery.service';
 import { ServiceOrderItemCommercialVersionService } from './services/service-order-item-commercial-version.service';
 import { ServiceOrderInitialCommercialService } from './services/service-order-initial-commercial.service';
+import { ServiceOrderFinalReportNotificationService } from './services/service-order-final-report-notification.service';
+import { ServiceOrderPickupReminderService } from './services/service-order-pickup-reminder.service';
+import { PricingModule } from '../pricing/pricing.module';
 import { ServiceOrderService } from './services/service-order.service';
 import { ServiceOrderSlaStageResolverService } from './services/service-order-sla-stage.resolver';
 import { ServiceOrderStageSlaPolicyService } from './services/service-order-stage-sla-policy.service';
@@ -56,6 +66,7 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
 
 @Module({
   imports: [
+    PricingModule,
     TypeOrmModule.forFeature([
       ServiceOrder,
       ServiceOrderItem,
@@ -81,6 +92,7 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
       ServiceOrderInboxThreadOrderLink,
       ServiceOrderInboxMessageOrderLink,
       ServiceOrderTempDocument,
+      ServiceOrderSurvey,
     ]),
   ],
   controllers: [
@@ -88,6 +100,7 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderDiagnosisController,
     ServiceOrderInboxController,
     ServiceOrderTempDocumentsController,
+    ServiceOrderSurveyController,
   ],
   providers: [
     ServiceOrderService,
@@ -99,6 +112,8 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderItemDeliveryService,
     ServiceOrderItemCommercialVersionService,
     ServiceOrderInitialCommercialService,
+    ServiceOrderFinalReportNotificationService,
+    ServiceOrderPickupReminderService,
     ServiceOrderWorkflowService,
     ServiceOrderSlaStageResolverService,
     ServiceOrderStageSlaPolicyService,
@@ -114,7 +129,12 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderInboxChannelService,
     ServiceOrderWhatsAppTemplateService,
     ServiceOrderTempDocumentsService,
+    ServiceOrderSurveyService,
     ServiceOrderIntakePdfService,
+    ServiceOrderDiagnosisQuotePdfService,
+    ServiceOrderCancellationSummaryPdfService,
+    ServiceOrderFinalReportPdfService,
+    ServiceOrderPickupReminderPdfService,
   ],
   exports: [
     ServiceOrderService,
@@ -131,7 +151,14 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderInboxService,
     ServiceOrderWhatsAppTemplateService,
     ServiceOrderTempDocumentsService,
+    ServiceOrderSurveyService,
     ServiceOrderIntakePdfService,
+    ServiceOrderDiagnosisQuotePdfService,
+    ServiceOrderCancellationSummaryPdfService,
+    ServiceOrderFinalReportPdfService,
+    ServiceOrderPickupReminderPdfService,
+    ServiceOrderPickupReminderService,
+    PrivateFileStorageService,
   ],
 })
 export class ServiceOrdersModule {}

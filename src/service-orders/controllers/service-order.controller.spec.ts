@@ -79,6 +79,8 @@ describe('ServiceOrderController', () => {
       workflowService,
       saleLinkService,
       inboxService,
+      { sendManual: jest.fn() } as any,
+      { listFinalFailures: jest.fn(), retryFinalFailure: jest.fn() } as any,
     );
   });
 

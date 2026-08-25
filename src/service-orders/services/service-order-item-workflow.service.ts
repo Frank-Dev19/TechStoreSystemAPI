@@ -12,6 +12,7 @@ import {
 } from '../enums';
 import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-transition-policy';
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
+import { ServiceOrderFinalReportNotificationService } from './service-order-final-report-notification.service';
 
 type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
@@ -21,6 +22,7 @@ export class ServiceOrderItemWorkflowService {
     private readonly manager: EntityManager,
     private readonly transitionPolicy: ServiceOrderTransitionPolicy,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
+    private readonly finalReportNotificationService: ServiceOrderFinalReportNotificationService,
   ) {}
 
   async changeTechnicalStatus(
@@ -49,6 +51,7 @@ export class ServiceOrderItemWorkflowService {
         throw new NotFoundException(`ServiceOrderItem with id ${itemId} not found in order ${serviceOrderId}`);
       }
 
+      this.assertItemOperativelyActionable(item);
       this.transitionPolicy.assertTransition('tecnico', item.technicalStatus, nextStatus);
       if (nextStatus === ServiceOrderTechnicalStatus.EN_EJECUCION) {
         await this.assertGlobalCommercialGate(manager, serviceOrderId);
@@ -63,7 +66,15 @@ export class ServiceOrderItemWorkflowService {
       return this.projectionService.recalculateLocked(manager, serviceOrderId);
     };
 
-    return transactionManager ? execute(transactionManager) : this.manager.transaction(execute);
+    if (transactionManager) {
+      return execute(transactionManager);
+    }
+
+    const result = await this.manager.transaction(execute);
+    if (nextStatus === ServiceOrderTechnicalStatus.RESUELTA) {
+      await this.finalReportNotificationService.notifyResolvedItem(serviceOrderId, itemId);
+    }
+    return result;
   }
 
   private async assertGlobalCommercialGate(manager: EntityManager, serviceOrderId: number): Promise<void> {
@@ -78,6 +89,19 @@ export class ServiceOrderItemWorkflowService {
     if (blockedItem) {
       throw new BadRequestException(
         `No se puede iniciar la ejecución mientras el equipo ${blockedItem.code} tenga una definición comercial pendiente`,
+      );
+    }
+  }
+
+  private assertItemOperativelyActionable(item: ServiceOrderItem): void {
+    if (
+      ![
+        ServiceOrderOperativeStatus.ABIERTA,
+        ServiceOrderOperativeStatus.EN_PROCESO,
+      ].includes(item.operativeStatus)
+    ) {
+      throw new BadRequestException(
+        `El equipo ${item.code} no admite transiciones técnicas en su estado operativo actual`,
       );
     }
   }

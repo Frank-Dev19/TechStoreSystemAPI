@@ -51,6 +51,9 @@ export class ServiceOrderItemCommercialVersion {
   @Column({ name: 'accepted_at', type: 'datetime', nullable: true })
   acceptedAt: Date | null;
 
+  @Column({ name: 'issued_at', type: 'datetime', nullable: true })
+  issuedAt: Date | null;
+
   @Column({ name: 'accepted_by_user_id', type: 'bigint', unsigned: true, nullable: true })
   acceptedByUserId: number | null;
 

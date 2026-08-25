@@ -6,6 +6,7 @@ import { TaxConfig } from './entities/tax-config.entity';
 import { Stock } from 'src/inventory/entities/stock.entity';
 import { Product } from 'src/inventory/entities/product.entity';
 import { Category } from 'src/inventory/entities/category.entity';
+import { Movement } from 'src/inventory/entities/movement.entity';
 
 import { PricingConfigService } from './services/pricing-config.service';
 import { TaxConfigService } from './services/tax-config.service';
@@ -23,6 +24,7 @@ import { PricingQueryController } from './controllers/pricing-query.controller';
             Stock,
             Product,
             Category,
+            Movement,
         ]),
     ],
     controllers: [

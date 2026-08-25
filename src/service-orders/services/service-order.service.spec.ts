@@ -1000,7 +1000,7 @@ describe('ServiceOrderService', () => {
     serviceOrderRepository.findOne.mockResolvedValue(order);
 
     await expect(service.markAsDelivered(order.id, 77)).rejects.toThrow(
-      'La orden no puede entregarse hasta cubrir totalmente su acuerdo vigente',
+      'La orden no puede entregarse hasta cubrir totalmente su cotización vigente',
     );
   });
 

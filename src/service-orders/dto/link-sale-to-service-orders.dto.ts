@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsInt, IsPositive } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsPositive } from 'class-validator';
 
 export class LinkSaleToServiceOrdersDto {
   @Type(() => Number)
@@ -9,6 +9,7 @@ export class LinkSaleToServiceOrdersDto {
 
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(1, { message: 'Cada comprobante de servicio debe corresponder a una sola orden' })
   @Type(() => Number)
   @IsInt({ each: true })
   serviceOrderIds: number[];

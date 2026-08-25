@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
+import { PricingEngineService } from '../../pricing/services/pricing-engine.service';
 import { CreateServiceOrderItemDto } from '../dto/create-service-order-aggregate.dto';
 import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-commercial-line.entity';
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
@@ -32,6 +33,7 @@ describe('ServiceOrderInitialCommercialService', () => {
   let agreementRepo: MockRepo;
   let agreementItemRepo: MockRepo;
   let productRepo: MockRepo;
+  let pricingEngine: jest.Mocked<PricingEngineService>;
 
   beforeEach(() => {
     versionRepo = createRepo();
@@ -49,7 +51,15 @@ describe('ServiceOrderInitialCommercialService', () => {
         throw new Error(`Repositorio inesperado: ${entity?.name}`);
       }),
     } as unknown as jest.Mocked<EntityManager>;
-    service = new ServiceOrderInitialCommercialService();
+    pricingEngine = {
+      calculatePrice: jest.fn().mockResolvedValue({
+        cpp: 18,
+        recommendedPrice: 25,
+        minAllowedPrice: 22.5,
+        costSource: 'MOVEMENT_HISTORY',
+      }),
+    } as unknown as jest.Mocked<PricingEngineService>;
+    service = new ServiceOrderInitialCommercialService(pricingEngine);
   });
 
   it('crea versiones aceptadas por equipo y un consolidado confirmado', async () => {

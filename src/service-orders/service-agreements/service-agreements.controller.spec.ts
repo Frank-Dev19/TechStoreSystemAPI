@@ -2,12 +2,14 @@ import { ServiceOrderAgreementsController } from './service-agreements.controlle
 import { ServiceOrderAgreementsService } from './service-agreements.service';
 import { ServiceOrderCommercialRevisionService } from './service-order-commercial-revision.service';
 import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
+import { ServiceOrderCommercialIssuanceService } from './service-order-commercial-issuance.service';
 
 describe('ServiceOrderAgreementsController', () => {
   let controller: ServiceOrderAgreementsController;
   let service: jest.Mocked<ServiceOrderAgreementsService>;
   let revisionService: jest.Mocked<ServiceOrderCommercialRevisionService>;
   let decisionService: jest.Mocked<ServiceOrderCommercialDecisionService>;
+  let issuanceService: jest.Mocked<ServiceOrderCommercialIssuanceService>;
 
   beforeEach(() => {
     service = {
@@ -32,8 +34,17 @@ describe('ServiceOrderAgreementsController', () => {
     decisionService = {
       recordDecision: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderCommercialDecisionService>;
+    issuanceService = {
+      preview: jest.fn(),
+      issue: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderCommercialIssuanceService>;
 
-    controller = new ServiceOrderAgreementsController(service, revisionService, decisionService);
+    controller = new ServiceOrderAgreementsController(
+      service,
+      revisionService,
+      decisionService,
+      issuanceService,
+    );
   });
 
   it('delegates list query as-is', async () => {

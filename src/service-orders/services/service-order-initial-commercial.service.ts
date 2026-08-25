@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { EntityManager, In } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
+import { PricingEngineService } from '../../pricing/services/pricing-engine.service';
 import {
   CreateServiceOrderInitialCommercialLineDto,
   CreateServiceOrderItemDto,
@@ -22,6 +23,8 @@ const TECHNICAL_SERVICE_NAME = 'Servicio técnico';
 
 @Injectable()
 export class ServiceOrderInitialCommercialService {
+  constructor(private readonly pricingEngineService: PricingEngineService) {}
+
   async createForDirectService(
     manager: EntityManager,
     order: ServiceOrder,
@@ -66,7 +69,9 @@ export class ServiceOrderInitialCommercialService {
       const item = savedItems[index];
       const input = itemInputs[index];
       const commercial = input.initialCommercial!;
-      const lines = commercial.lines.map((line) => this.buildLine(line, productMap));
+      const lines = await Promise.all(
+        commercial.lines.map((line) => this.buildLine(line, productMap)),
+      );
       const totalAmount = this.calculateTotal(lines);
       const version = await versionRepository.save(
         versionRepository.create({
@@ -116,16 +121,22 @@ export class ServiceOrderInitialCommercialService {
     return agreement;
   }
 
-  private buildLine(
+  private async buildLine(
     input: CreateServiceOrderInitialCommercialLineDto,
     productMap: Map<number, Product>,
-  ): Omit<ServiceOrderItemCommercialLine, 'id' | 'commercialVersionId' | 'commercialVersion' | 'product' | 'createdAt'> {
+  ): Promise<Omit<ServiceOrderItemCommercialLine, 'id' | 'commercialVersionId' | 'commercialVersion' | 'product' | 'createdAt'>> {
     const quantity = Number(input.quantity);
     const unitPrice = Number(input.unitPrice);
     const grossAmount = Number((quantity * unitPrice).toFixed(2));
     if (input.type === ServiceOrderCommercialLineType.PRODUCT) {
       const product = productMap.get(Number(input.productId));
       if (!product) throw new NotFoundException(`Product with id ${input.productId} not found`);
+      const pricing = await this.pricingEngineService.calculatePrice(product.id);
+      if (unitPrice < pricing.minAllowedPrice) {
+        throw new BadRequestException(
+          `El precio de ${product.name} no puede ser menor a S/ ${pricing.minAllowedPrice.toFixed(2)}`,
+        );
+      }
       return {
         type: input.type,
         productId: product.id,
@@ -135,6 +146,10 @@ export class ServiceOrderInitialCommercialService {
         catalogDescriptionSnapshot: product.description ?? null,
         quantity,
         unitPrice,
+        recommendedPriceSnapshot: pricing.recommendedPrice,
+        minimumPriceSnapshot: pricing.minAllowedPrice,
+        costSnapshot: pricing.cpp,
+        costSourceSnapshot: pricing.costSource,
         grossAmount,
         discountAmount: 0,
         netAmount: grossAmount,
@@ -154,6 +169,10 @@ export class ServiceOrderInitialCommercialService {
       catalogDescriptionSnapshot: TECHNICAL_SERVICE_NAME,
       quantity,
       unitPrice,
+      recommendedPriceSnapshot: null,
+      minimumPriceSnapshot: null,
+      costSnapshot: null,
+      costSourceSnapshot: null,
       grossAmount,
       discountAmount: 0,
       netAmount: grossAmount,

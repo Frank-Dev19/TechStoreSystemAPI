@@ -8,7 +8,6 @@ import { ServiceOrderAgreementStatus } from '../service-agreements/service-agree
 import { LinkSaleToServiceOrdersDto } from '../dto/link-sale-to-service-orders.dto';
 import { ServiceOrderSaleLink } from '../entities/service-order-sale-link.entity';
 import { ServiceOrderEconomicStatus } from '../enums';
-import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { assertServiceOrderEligibleForSale } from './service-order-sale-eligibility.util';
 
 type SearchSalesQuery = {
@@ -31,7 +30,6 @@ export class ServiceOrderSaleLinkService {
     private readonly serviceOrderRepository: Repository<ServiceOrder>,
     @InjectRepository(ServiceOrderAgreement)
     private readonly agreementRepository: Repository<ServiceOrderAgreement>,
-    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
   ) {}
 
   async searchSales(query: SearchSalesQuery) {
@@ -89,6 +87,10 @@ export class ServiceOrderSaleLinkService {
   }
 
   async linkSaleToServiceOrders(dto: LinkSaleToServiceOrdersDto, actor?: string) {
+    const uniqueOrderIds = [...new Set((dto.serviceOrderIds ?? []).map(Number))];
+    if (uniqueOrderIds.length !== 1) {
+      throw new BadRequestException('Cada comprobante de servicio debe corresponder a una sola orden');
+    }
     const sale = await this.saleRepository.findOne({
       where: { id: Number(dto.saleId) },
       relations: ['customer', 'payments', 'items', 'items.product', 'items.service'],
@@ -99,10 +101,10 @@ export class ServiceOrderSaleLinkService {
     }
 
     const serviceOrders = await this.serviceOrderRepository.find({
-      where: { id: In(dto.serviceOrderIds.map((id) => Number(id))) },
+      where: { id: In(uniqueOrderIds) },
     });
 
-    if (serviceOrders.length !== dto.serviceOrderIds.length) {
+    if (serviceOrders.length !== uniqueOrderIds.length) {
       throw new NotFoundException('Una o más órdenes no existen');
     }
 
@@ -132,7 +134,7 @@ export class ServiceOrderSaleLinkService {
 
       const agreement = activeAgreementByOrderId.get(Number(order.id));
       if (!agreement || Number(agreement.totalAmount || 0) <= 0) {
-        throw new BadRequestException(`La orden ${order.code} no tiene acuerdo facturable vigente`);
+        throw new BadRequestException(`La orden ${order.code} no tiene una cotización facturable vigente`);
       }
 
       const existingLink = await this.linkRepository.findOne({
@@ -144,7 +146,7 @@ export class ServiceOrderSaleLinkService {
       });
 
       if (existingLink) {
-        throw new BadRequestException(`La orden ${order.code} ya está ligada al acuerdo vigente`);
+        throw new BadRequestException(`La orden ${order.code} ya está ligada a la cotización vigente`);
       }
     }
 
@@ -169,7 +171,6 @@ export class ServiceOrderSaleLinkService {
       );
 
       await this.syncServiceOrderEconomicState(order.id);
-      await this.messageMatrixService.notifyInvoiceLinked(order, sale);
       createdLinks.push(link);
     }
 

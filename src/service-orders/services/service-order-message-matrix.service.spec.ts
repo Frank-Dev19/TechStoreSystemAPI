@@ -202,4 +202,119 @@ describe('ServiceOrderMessageMatrixService', () => {
       }),
     );
   });
+
+  it('envía un resumen de cancelación consolidado con documento e idempotencia por solicitudes', async () => {
+    const notificationRepository = createMockRepo();
+    notificationRepository.findOne.mockResolvedValue(null);
+    const attemptRepository = createMockRepo();
+    const inboxService = { getThreadForServiceOrder: jest.fn().mockResolvedValue({ clientPhone: '+51932998578', contextToken: 'ctx-201' }) } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = { dispatchTemplateMessage: jest.fn().mockResolvedValue({ status: 'SENT', externalMessageId: 'wamid.cancel' }) } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = { buildCancellationSummaryTemplate: jest.fn().mockReturnValue({ templateName: 'resumen_cancelacion_equipos', languageCode: 'es_PE', bodyParameters: ['Juan Pérez', '2', 'SO-001'], quickReplyPayloads: ['CONSULTA'], documentUrl: 'https://api.example.com/doc', documentFileName: 'cancelacion.pdf' }) } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+    const service = new ServiceOrderMessageMatrixService(notificationRepository as any, attemptRepository as any, inboxService, inboxChannelService, whatsappTemplateService);
+
+    await service.dispatchCancellationSummaryTemplate({
+      serviceOrder: createServiceOrder(),
+      cancellationRequestIds: [502, 501],
+      itemCount: 2,
+      documentUrl: 'https://api.example.com/doc',
+      documentFileName: 'cancelacion.pdf',
+      tempDocumentToken: 'token',
+    });
+
+    expect(notificationRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'service_order:201:cancellation:501-502',
+      messageType: 'cancellation.summary',
+      metadataJson: expect.stringContaining('"cancellationRequestIds":[501,502]'),
+    }));
+    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledWith(expect.objectContaining({
+      documentUrl: 'https://api.example.com/doc',
+      documentFileName: 'cancelacion.pdf',
+      bodyParameters: ['Juan Pérez', '2', 'SO-001'],
+    }));
+  });
+
+  it('envía una recotización con documento y acciones ligadas a la versión', async () => {
+    const notificationRepository = createMockRepo();
+    notificationRepository.findOne.mockResolvedValue(null);
+    const attemptRepository = createMockRepo();
+    const inboxService = {
+      getThreadForServiceOrder: jest.fn().mockResolvedValue({
+        clientPhone: '+51932998578',
+        contextToken: 'ctx-201',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest.fn().mockResolvedValue({
+        status: 'SENT',
+        externalMessageId: 'wamid.rediagnosis',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = {
+      buildRediagnosisAgreementTemplate: jest.fn().mockReturnValue({
+        templateName: 'rediagnostico_recotizacion_equipo',
+        languageCode: 'es_PE',
+        bodyParameters: ['Juan Pérez', 'Laptop Lenovo', 'SO-001', '280.00'],
+        quickReplyPayloads: ['ACEPTAR_COTIZACION:42', 'CONSULTA'],
+        documentUrl: 'https://api.example.com/recotizacion.pdf',
+        documentFileName: 'recotizacion.pdf',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+    );
+
+    await service.dispatchDiagnosisQuoteTemplate({
+      serviceOrder: createServiceOrder(),
+      commercialVersionId: 42,
+      equipmentLabel: 'Laptop Lenovo',
+      totalAmount: 280,
+      documentUrl: 'https://api.example.com/recotizacion.pdf',
+      documentFileName: 'recotizacion.pdf',
+      tempDocumentToken: 'token-42',
+      isRediagnosis: true,
+    });
+
+    expect(whatsappTemplateService.buildRediagnosisAgreementTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentUrl: 'https://api.example.com/recotizacion.pdf',
+        quickReplyPayloads: ['ACEPTAR_COTIZACION:42', 'CONSULTA'],
+      }),
+    );
+    expect(notificationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'commercial_version:42:rediagnosis-quote-template',
+        messageType: 'rediagnosis.quote.issued',
+      }),
+    );
+  });
+
+  it('programa tres reintentos posteriores al primer fallo transitorio', async () => {
+    const notificationRepository = createMockRepo();
+    notificationRepository.findOne.mockResolvedValue(null);
+    const attemptRepository = createMockRepo();
+    const inboxService = { getThreadForServiceOrder: jest.fn().mockResolvedValue({ clientPhone: '+51932998578', contextToken: 'ctx-201' }) } as any;
+    const inboxChannelService = { dispatchTemplateMessage: jest.fn().mockRejectedValue(Object.assign(new Error('Meta temporalmente no disponible'), { status: 503 })) } as any;
+    const whatsappTemplateService = { buildPaymentReceiptTemplate: jest.fn().mockReturnValue({
+      templateName: 'comprobante_pago_orden_servicio', languageCode: 'es_PE', bodyParameters: ['Juan', 'SO-1', 'B001-1', 'S/ 20.00'],
+      quickReplyPayloads: ['CONSULTA'], documentUrl: 'https://api.example.com/receipt.pdf', documentFileName: 'receipt.pdf',
+    }) } as any;
+    const configService = { get: jest.fn((key: string) => key === 'WHATSAPP_NOTIFICATION_RETRY_DELAYS_MINUTES' ? '1,5,30' : undefined) } as any;
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any, attemptRepository as any, inboxService, inboxChannelService,
+      whatsappTemplateService, undefined, configService,
+    );
+
+    await service.dispatchPaymentReceiptTemplate({
+      serviceOrder: createServiceOrder(), electronicDocumentId: 9, documentNumber: 'B001-1', totalAmount: 20,
+      documentUrl: 'https://api.example.com/receipt.pdf', documentFileName: 'receipt.pdf', tempDocumentToken: 'token',
+    });
+
+    expect(notificationRepository.save).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'RETRY_SCHEDULED', attemptCount: 1, nextAttemptAt: expect.any(Date),
+    }));
+  });
 });

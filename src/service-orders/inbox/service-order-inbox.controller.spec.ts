@@ -3,12 +3,16 @@ import { ServiceOrderInboxController } from './service-order-inbox.controller';
 import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from './service-order-inbox.service';
 import { ServiceOrderInboxEventsService } from './service-order-inbox-events.service';
+import { ModuleRef } from '@nestjs/core';
+import { ServiceOrderCommercialDecisionService } from '../service-agreements/service-order-commercial-decision.service';
 
 describe('ServiceOrderInboxController', () => {
   let controller: ServiceOrderInboxController;
   let inboxService: jest.Mocked<ServiceOrderInboxService>;
   let channelService: jest.Mocked<ServiceOrderInboxChannelService>;
   let eventsService: jest.Mocked<ServiceOrderInboxEventsService>;
+  let moduleRef: jest.Mocked<ModuleRef>;
+  let decisionService: jest.Mocked<ServiceOrderCommercialDecisionService>;
 
   beforeEach(() => {
     inboxService = {
@@ -32,8 +36,14 @@ describe('ServiceOrderInboxController', () => {
       publishChanged: jest.fn(),
       stream: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInboxEventsService>;
+    decisionService = {
+      recordWhatsAppAcceptance: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderCommercialDecisionService>;
+    moduleRef = {
+      get: jest.fn().mockReturnValue(decisionService),
+    } as unknown as jest.Mocked<ModuleRef>;
 
-    controller = new ServiceOrderInboxController(inboxService, channelService, eventsService);
+    controller = new ServiceOrderInboxController(inboxService, channelService, eventsService, moduleRef);
   });
 
   it('builds viewer context when listing threads', async () => {
@@ -109,6 +119,29 @@ describe('ServiceOrderInboxController', () => {
     expect(inboxService.updateDeliveryStatus).toHaveBeenCalledWith({ externalMessageId: 'wamid-1', status: 'delivered' });
     expect(eventsService.publishChanged).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ ok: true, receivedMessages: 1, receivedStatuses: 1 });
+  });
+
+  it('registra directamente la aceptación enviada mediante respuesta rápida', async () => {
+    channelService.normalizeWebhookPayload.mockReturnValue({
+      messages: [{
+        externalMessageId: 'wamid-accept-1',
+        text: 'Aceptar cotización',
+        quickReplyPayload: 'ACEPTAR_COTIZACION:42',
+      }],
+      statuses: [],
+    } as any);
+
+    await controller.receiveWebhook(
+      { entry: [] },
+      'sha256=firma',
+      { rawBody: Buffer.from('raw') },
+    );
+
+    expect(moduleRef.get).toHaveBeenCalledWith(
+      ServiceOrderCommercialDecisionService,
+      { strict: false },
+    );
+    expect(decisionService.recordWhatsAppAcceptance).toHaveBeenCalledWith(42);
   });
 
   it('responde HTTP 200 al webhook de Meta', () => {

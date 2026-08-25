@@ -35,6 +35,8 @@ import { ServiceOrderInboxService } from './service-order-inbox.service';
 import { ServiceOrderInboxQueryDto } from './dto/service-order-inbox-query.dto';
 import { SendServiceOrderInboxMessageDto } from './dto/send-service-order-inbox-message.dto';
 import { ServiceOrderInboxEventsService } from './service-order-inbox-events.service';
+import { ModuleRef } from '@nestjs/core';
+import { ServiceOrderCommercialDecisionService } from '../service-agreements/service-order-commercial-decision.service';
 
 @Controller('service-orders/inbox')
 export class ServiceOrderInboxController {
@@ -44,6 +46,7 @@ export class ServiceOrderInboxController {
     private readonly inboxService: ServiceOrderInboxService,
     private readonly channelService: ServiceOrderInboxChannelService,
     private readonly eventsService: ServiceOrderInboxEventsService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
@@ -147,6 +150,7 @@ export class ServiceOrderInboxController {
     for (const message of normalizedPayload.messages) {
       try {
         await this.inboxService.receiveInboundMessage(message);
+        await this.processCommercialQuickReply(message.quickReplyPayload);
         this.eventsService.publishChanged();
       } catch (error) {
         firstMessageError ??= error;
@@ -172,6 +176,22 @@ export class ServiceOrderInboxController {
       receivedMessages: normalizedPayload.messages.length,
       receivedStatuses: normalizedPayload.statuses.length,
     };
+  }
+
+  private async processCommercialQuickReply(
+    quickReplyPayload?: string | null,
+  ): Promise<void> {
+    const match = /^ACEPTAR_COTIZACION:(\d+)$/.exec(
+      quickReplyPayload?.trim() ?? '',
+    );
+    if (!match) return;
+
+    const commercialVersionId = Number(match[1]);
+    const decisionService = this.moduleRef.get(
+      ServiceOrderCommercialDecisionService,
+      { strict: false },
+    );
+    await decisionService.recordWhatsAppAcceptance(commercialVersionId);
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)

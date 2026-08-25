@@ -9,8 +9,10 @@
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ServiceOrderAgreementsService } from './service-agreements.service';
 import { JwtAccessGuard } from '../../auth/guards/jwt-access.guard';
 import { RolesGuard } from '../../rbac/guards/roles.guard';
@@ -29,6 +31,7 @@ import { CreateServiceOrderCommercialRevisionDto } from './dto/create-service-or
 import { ServiceOrderCommercialRevisionService } from './service-order-commercial-revision.service';
 import { RecordServiceOrderClientDecisionDto } from './dto/record-service-order-client-decision.dto';
 import { ServiceOrderCommercialDecisionService } from './service-order-commercial-decision.service';
+import { ServiceOrderCommercialIssuanceService } from './service-order-commercial-issuance.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -38,6 +41,7 @@ export class ServiceOrderAgreementsController {
     private readonly serviceOrderAgreementsService: ServiceOrderAgreementsService,
     private readonly commercialRevisionService: ServiceOrderCommercialRevisionService,
     private readonly commercialDecisionService: ServiceOrderCommercialDecisionService,
+    private readonly commercialIssuanceService: ServiceOrderCommercialIssuanceService,
   ) {}
 
   @Permissions('service-order-agreement.read')
@@ -62,6 +66,21 @@ export class ServiceOrderAgreementsController {
   @Post('client-decisions')
   recordClientDecision(@Body() dto: RecordServiceOrderClientDecisionDto, @Req() req: any) {
     return this.commercialDecisionService.recordDecision(dto, req.user);
+  }
+
+  @Permissions('service-order-agreement.read')
+  @Get('commercial-versions/:id/pdf-preview')
+  async previewCommercialVersionPdf(@Param('id', ParseIntPipe) id: number, @Res() response: Response): Promise<void> {
+    const result = await this.commercialIssuanceService.preview(id);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `inline; filename="${result.fileName}"`);
+    response.send(result.buffer);
+  }
+
+  @Permissions('service-order-agreement.confirm')
+  @Post('commercial-versions/:id/issue')
+  issueCommercialVersion(@Param('id', ParseIntPipe) id: number) {
+    return this.commercialIssuanceService.issue(id);
   }
 
   @Permissions('service-order-agreement.read')

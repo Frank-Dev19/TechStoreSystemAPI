@@ -425,7 +425,7 @@ export class ServiceOrderService {
     const totalCommitted = Number(serviceOrder.montoComprometidoVigente ?? 0);
     const totalReconciled = Number(serviceOrder.montoReconciliado ?? 0);
     if (totalCommitted > 0 && totalReconciled + 0.01 < totalCommitted) {
-      throw new BadRequestException('La orden no puede entregarse hasta cubrir totalmente su acuerdo vigente');
+      throw new BadRequestException('La orden no puede entregarse hasta cubrir totalmente su cotización vigente');
     }
 
     serviceOrder.operativeStatus = ServiceOrderOperativeStatus.ENTREGADA;

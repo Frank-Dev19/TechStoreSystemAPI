@@ -8,13 +8,17 @@ import { ElectronicBillingController } from './electronic-billing.controller';
 import { ElectronicBillingService } from './electronic-billing.service';
 import { ElectronicDocument } from './entities/electronic-document.entity';
 import { ApisPeruBillingClient } from './services/apisperu-billing.client';
+import { ServiceOrdersModule } from '../service-orders/service-orders.module';
+import { ServiceOrderSaleLink } from '../service-orders/entities/service-order-sale-link.entity';
+import { ServiceOrder } from '../service-orders/entities/service-order.entity';
 
 @Module({
   imports: [
     ConfigModule,
     BusinessProfileModule,
     MailerModule,
-    TypeOrmModule.forFeature([Sale, ElectronicDocument]),
+    ServiceOrdersModule,
+    TypeOrmModule.forFeature([Sale, ElectronicDocument, ServiceOrderSaleLink, ServiceOrder]),
   ],
   controllers: [ElectronicBillingController],
   providers: [ElectronicBillingService, ApisPeruBillingClient],

@@ -89,6 +89,17 @@ Every item lifecycle mutation MUST lock the order and recalculate the parent pro
 - **WHEN** recalculating or saving the aggregate projection fails
 - **THEN** the item transition and all local side effects MUST roll back
 
+### Requirement: Terminal Operative States Block Technical Transitions
+
+Technical transitions MUST only be accepted while an item is operatively `ABIERTA` or `EN_PROCESO`. An item pending cancellation, cancelled, ready for pickup, delivered, or closed without solution MUST remain read-only for technical workflow transitions.
+
+#### Scenario: Direct API call attempts to reactivate a cancelled item
+
+- **GIVEN** an item is operatively cancelled but retains an earlier technical status
+- **WHEN** a caller requests a new technical transition for that item
+- **THEN** the backend MUST reject the transition inside the locked transaction
+- **AND** it MUST NOT persist an item change, event, or aggregate projection
+
 ### Requirement: Repair Does Not Require Part Assignment
 
 The service-order workflow MUST NOT require linking inventory products, lots, or serial numbers to an equipment item in order to start, complete, or deliver a repair.

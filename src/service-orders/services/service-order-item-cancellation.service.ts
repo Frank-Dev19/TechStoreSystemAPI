@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EntityManager, In } from 'typeorm';
 import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
@@ -33,6 +35,9 @@ import { ServiceOrderAgreementSource } from '../service-agreements/service-agree
 import { ServiceOrderAgreementStatus } from '../service-agreements/service-agreement-status.enum';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
 import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/service-order-item-commercial-version-status.enum';
+import { ServiceOrderCancellationSummaryPdfService } from '../documents/service-order-cancellation-summary-pdf.service';
+import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
+import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 
 type CancellationViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
@@ -40,9 +45,15 @@ const DIAGNOSIS_CANCELLATION_FEE = 20;
 
 @Injectable()
 export class ServiceOrderItemCancellationService {
+  private readonly logger = new Logger(ServiceOrderItemCancellationService.name);
+
   constructor(
     private readonly manager: EntityManager,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
+    private readonly cancellationPdfService: ServiceOrderCancellationSummaryPdfService,
+    private readonly tempDocumentsService: ServiceOrderTempDocumentsService,
+    private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly configService: ConfigService,
   ) {}
 
   async requestCancellations(
@@ -52,7 +63,7 @@ export class ServiceOrderItemCancellationService {
     viewer?: CancellationViewer,
   ) {
     const requesterId = this.requireActor(actorId);
-    return this.manager.transaction(async (manager) => {
+    const completed = await this.manager.transaction(async (manager) => {
       const order = await manager.getRepository(ServiceOrder).findOne({
         where: { id: serviceOrderId },
         lock: { mode: 'pessimistic_write' },
@@ -187,15 +198,27 @@ export class ServiceOrderItemCancellationService {
         order.id,
       );
       return {
-        requests,
-        order: projectedOrder,
-        agreement,
-        chargedItemsCount: chargedItems.length,
-        chargeTotal: Number(
-          (chargedItems.length * DIAGNOSIS_CANCELLATION_FEE).toFixed(2),
-        ),
+        response: {
+          requests,
+          order: projectedOrder,
+          agreement,
+          chargedItemsCount: chargedItems.length,
+          chargeTotal: Number(
+            (chargedItems.length * DIAGNOSIS_CANCELLATION_FEE).toFixed(2),
+          ),
+        },
+        notification: {
+          order: projectedOrder,
+          requests,
+          items,
+          channel: dto.channel,
+          requestedAt: now,
+          reason,
+        },
       };
     });
+    await this.dispatchCancellationSummary(completed.notification);
+    return completed.response;
   }
 
   async requestCancellation(
@@ -219,6 +242,58 @@ export class ServiceOrderItemCancellationService {
       request: result.requests[0],
       order: result.order,
     }));
+  }
+
+  private async dispatchCancellationSummary(input: {
+    order: ServiceOrder;
+    requests: ServiceOrderItemCancellationRequest[];
+    items: ServiceOrderItem[];
+    channel: RequestServiceOrderItemsCancellationDto['channel'];
+    requestedAt: Date;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const requestByItemId = new Map(input.requests.map((request) => [Number(request.serviceOrderItemId), request]));
+      const generatedPdf = await this.cancellationPdfService.generate({
+        orderCode: input.order.code,
+        clientName: input.order.clientSnapshotName ?? null,
+        requestedAt: input.requestedAt,
+        channel: input.channel,
+        items: input.items.map((item) => {
+          const request = requestByItemId.get(Number(item.id));
+          return {
+            code: item.code,
+            equipmentLabel: [item.equipmentTypeOther || item.equipmentType, item.brand, item.model].filter(Boolean).join(' '),
+            serialNumber: item.serialNumber,
+            reason: request?.reason ?? input.reason,
+            diagnosisStarted: Number(request?.chargeAmount ?? 0) > 0,
+            chargeAmount: Number(request?.chargeAmount ?? 0),
+          };
+        }),
+      });
+      const tempDocument = await this.tempDocumentsService.createRecord({
+        sourceType: 'ORDER_CANCELLATION_SUMMARY',
+        mimeType: generatedPdf.mimeType,
+        fileName: generatedPdf.fileName,
+        absolutePath: generatedPdf.absolutePath,
+        metadata: {
+          orderId: input.order.id,
+          cancellationRequestIds: input.requests.map((request) => request.id),
+        },
+      });
+      const baseUrl = (this.configService.get<string>('APP_PUBLIC_BASE_URL') || 'http://localhost:3000').replace(/\/+$/, '');
+      await this.messageMatrixService.dispatchCancellationSummaryTemplate({
+        serviceOrder: input.order,
+        cancellationRequestIds: input.requests.map((request) => request.id),
+        itemCount: input.items.length,
+        documentUrl: `${baseUrl}/service-orders/temp-documents/${tempDocument.token}`,
+        documentFileName: generatedPdf.fileName,
+        tempDocumentToken: tempDocument.token,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown cancellation summary error';
+      this.logger.error(`Cancellation ${input.requests.map((request) => request.id).join(',')} was committed but its summary could not be sent: ${message}`);
+    }
   }
 
   async resolveCancellation(

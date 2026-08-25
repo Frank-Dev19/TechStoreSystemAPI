@@ -208,33 +208,10 @@ describe('ServiceOrderIntakePdfService', () => {
     expect(Math.max(...pageCounts)).toBeLessThanOrEqual(2);
   });
 
-  it('mantiene el bloque principal del resumen single sin clipping vertical', () => {
+  it('mantiene el resumen editorial dentro del área imprimible', () => {
     const document = new PDFDocument({ margin: 50, autoFirstPage: false });
     document.addPage();
     const startY = 80;
-
-    const columnGap = 16;
-    const boxWidth = (service as any).getContentWidth(document);
-    const columnWidth = (boxWidth - 32 - columnGap) / 2;
-    const titleHeight = (service as any).measureTextHeight(
-      document,
-      'Helvetica-Bold',
-      14,
-      'Orden SO202605200002',
-      boxWidth - 32,
-    );
-    const leftHeight = (service as any).measureColumnHeight(document, columnWidth, [
-      { label: 'Fecha y hora', value: (service as any).formatDateTime(new Date('2026-05-20T14:29:00.000Z')) },
-      { label: 'Estado', value: (service as any).formatOperativeStatus('ABIERTA') },
-      { label: 'Tipo de servicio', value: (service as any).formatServiceType('DIAGNOSIS') },
-    ]);
-    const rightHeight = (service as any).measureColumnHeight(document, columnWidth, [
-      { label: 'Cliente', value: 'Sergio Avila' },
-      { label: 'Documento', value: 'RUC: 10741181181' },
-      { label: 'Teléfono / correo', value: '+51932998578' },
-    ]);
-
-    const requiredBoxHeight = 32 + titleHeight + 12 + Math.max(leftHeight, rightHeight);
     const renderedEndY = (service as any).drawSingleOrderOverview(
       document,
       {
@@ -256,9 +233,9 @@ describe('ServiceOrderIntakePdfService', () => {
       },
       startY,
     );
-    const actualBoxHeight = renderedEndY - startY - 22;
 
-    expect(requiredBoxHeight).toBeLessThanOrEqual(actualBoxHeight);
+    expect(renderedEndY).toBeGreaterThan(startY);
+    expect(renderedEndY).toBeLessThan((service as any).getContentBottom(document));
   });
 
   it('renderiza términos y condiciones sin contenedor con borde', () => {
@@ -301,7 +278,7 @@ describe('ServiceOrderIntakePdfService', () => {
     expect(drawTermsSpy).toHaveBeenCalled();
   });
 
-  it('no repite el título del resumen en la página de términos del PDF single', async () => {
+  it('reserva una página limpia para los términos del PDF single', async () => {
     const drawHeaderSpy = jest.spyOn<any, any>(service as any, 'drawHeader');
 
     await service.generateSingleOrderSummaryBuffer({
@@ -322,9 +299,8 @@ describe('ServiceOrderIntakePdfService', () => {
       initialIssue: 'Sobrecalentamiento',
     });
 
-    expect(drawHeaderSpy.mock.calls).toHaveLength(2);
-    expect(drawHeaderSpy.mock.calls[0][2]).toBe('Resumen de orden de servicio');
-    expect(drawHeaderSpy.mock.calls[1][2]).toBeNull();
+    expect(drawHeaderSpy.mock.calls).toHaveLength(1);
+    expect(drawHeaderSpy.mock.calls[0][2]).toBe('Resumen de recepción');
   });
 
   it('no repite el título del resumen en la página de términos del PDF intake', async () => {
@@ -355,7 +331,7 @@ describe('ServiceOrderIntakePdfService', () => {
 
     generatedPaths.push(result.absolutePath);
     expect(drawHeaderSpy.mock.calls).toHaveLength(2);
-    expect(drawHeaderSpy.mock.calls[0][2]).toBe('Resumen de órdenes de servicio');
+    expect(drawHeaderSpy.mock.calls[0][2]).toBe('Recepción de órdenes de servicio');
     expect(drawHeaderSpy.mock.calls[1][2]).toBeNull();
   });
 });

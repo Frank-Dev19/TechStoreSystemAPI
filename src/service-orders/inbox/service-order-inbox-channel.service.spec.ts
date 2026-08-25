@@ -76,6 +76,34 @@ describe('ServiceOrderInboxChannelService', () => {
     );
   });
 
+  it('normaliza el payload y el texto visible de una respuesta rápida', () => {
+    const service = createService({ NODE_ENV: 'development' });
+
+    const result = service.normalizeWebhookPayload({
+      entry: [{
+        changes: [{
+          value: {
+            messages: [{
+              id: 'wamid-button-1',
+              from: '51999999999',
+              timestamp: '1712345678',
+              type: 'button',
+              button: {
+                payload: 'ACEPTAR_COTIZACION:42',
+                text: 'Aceptar cotización',
+              },
+            }],
+          },
+        }],
+      }],
+    });
+
+    expect(result.messages[0]).toEqual(expect.objectContaining({
+      text: 'Aceptar cotización',
+      quickReplyPayload: 'ACEPTAR_COTIZACION:42',
+    }));
+  });
+
   it('usa el número E.164 persistido sin inferencias extra al enviar a Meta', () => {
     const service = createService({ NODE_ENV: 'development' });
 
@@ -120,5 +148,36 @@ describe('ServiceOrderInboxChannelService', () => {
         body: expect.stringContaining('"type":"template"'),
       }),
     );
+  });
+
+  it('envía el token dinámico en el botón URL de la encuesta', async () => {
+    const service = createService({
+      NODE_ENV: 'development',
+      WHATSAPP_CLOUD_PHONE_NUMBER_ID: '1075203729009969',
+      WHATSAPP_CLOUD_ACCESS_TOKEN: 'token',
+    });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ messages: [{ id: 'wamid.survey' }] }),
+    });
+    global.fetch = fetchMock as any;
+
+    await service.dispatchTemplateMessage({
+      clientPhone: '+51932998578',
+      templateName: 'encuesta_calidad_servicio',
+      languageCode: 'es_PE',
+      bodyParameters: ['Juan', 'SO-1', '2 equipos'],
+      urlButtonParameters: ['7.signature'],
+      contextToken: 'thread-1',
+    });
+
+    const request = fetchMock.mock.calls[0][1];
+    const payload = JSON.parse(request.body);
+    expect(payload.template.components).toContainEqual({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: '7.signature' }],
+    });
   });
 });

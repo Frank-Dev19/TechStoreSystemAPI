@@ -10,6 +10,7 @@ import {
 import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-transition-policy';
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
 import { ServiceOrderItemWorkflowService } from './service-order-item-workflow.service';
+import { ServiceOrderFinalReportNotificationService } from './service-order-final-report-notification.service';
 
 describe('ServiceOrderItemWorkflowService', () => {
   let service: ServiceOrderItemWorkflowService;
@@ -19,6 +20,7 @@ describe('ServiceOrderItemWorkflowService', () => {
   let manager: any;
   let transitionPolicy: jest.Mocked<ServiceOrderTransitionPolicy>;
   let projectionService: jest.Mocked<ServiceOrderAggregateProjectionService>;
+  let finalReportNotificationService: jest.Mocked<ServiceOrderFinalReportNotificationService>;
   let order: ServiceOrder;
   let firstItem: ServiceOrderItem;
   let secondItem: ServiceOrderItem;
@@ -56,7 +58,15 @@ describe('ServiceOrderItemWorkflowService', () => {
         itemProgress: { total: 2, active: 2, resolved: 1, readyForPickup: 1, delivered: 0, cancelled: 0, isPartial: true },
       }),
     } as unknown as jest.Mocked<ServiceOrderAggregateProjectionService>;
-    service = new ServiceOrderItemWorkflowService(manager, transitionPolicy, projectionService);
+    finalReportNotificationService = {
+      notifyResolvedItem: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<ServiceOrderFinalReportNotificationService>;
+    service = new ServiceOrderItemWorkflowService(
+      manager,
+      transitionPolicy,
+      projectionService,
+      finalReportNotificationService,
+    );
   });
 
   it('resuelve un equipo sin sobrescribir el estado de su hermano y recalcula la cabecera', async () => {
@@ -80,6 +90,7 @@ describe('ServiceOrderItemWorkflowService', () => {
     );
     expect(projectionService.recalculateLocked).toHaveBeenCalledWith(manager, order.id);
     expect(result.itemProgress?.isPartial).toBe(true);
+    expect(finalReportNotificationService.notifyResolvedItem).toHaveBeenCalledWith(order.id, firstItem.id);
   });
 
   it('bloquea la ejecución si cualquier equipo activo sigue pendiente comercialmente', async () => {
@@ -103,6 +114,7 @@ describe('ServiceOrderItemWorkflowService', () => {
 
     expect(itemRepository.save).toHaveBeenCalled();
     expect(manager.transaction).toHaveBeenCalledTimes(1);
+    expect(finalReportNotificationService.notifyResolvedItem).not.toHaveBeenCalled();
   });
 
   it('impide que un técnico actúe sobre una orden asignada a otro técnico', async () => {
@@ -118,6 +130,50 @@ describe('ServiceOrderItemWorkflowService', () => {
     ).rejects.toThrow(ForbiddenException);
 
     expect(itemRepository.findOne).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ServiceOrderOperativeStatus.CANCELACION_SOLICITADA,
+    ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+    ServiceOrderOperativeStatus.ENTREGADA,
+    ServiceOrderOperativeStatus.CANCELADA,
+    ServiceOrderOperativeStatus.CERRADA_SIN_SOLUCION,
+  ])('impide transiciones técnicas cuando el equipo está en estado operativo %s', async (operativeStatus) => {
+    firstItem.technicalStatus = ServiceOrderTechnicalStatus.ASIGNADA;
+    firstItem.operativeStatus = operativeStatus;
+
+    await expect(
+      service.changeTechnicalStatus(
+        order.id,
+        firstItem.id,
+        ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,
+        7,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(transitionPolicy.assertTransition).not.toHaveBeenCalled();
+    expect(itemRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
+    expect(projectionService.recalculateLocked).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ServiceOrderOperativeStatus.ABIERTA,
+    ServiceOrderOperativeStatus.EN_PROCESO,
+  ])('permite transiciones técnicas desde el estado operativo %s', async (operativeStatus) => {
+    firstItem.technicalStatus = ServiceOrderTechnicalStatus.ASIGNADA;
+    firstItem.operativeStatus = operativeStatus;
+
+    await service.changeTechnicalStatus(
+      order.id,
+      firstItem.id,
+      ServiceOrderTechnicalStatus.EN_DIAGNOSTICO,
+      7,
+    );
+
+    expect(itemRepository.save).toHaveBeenCalledWith(firstItem);
+    expect(eventRepository.save).toHaveBeenCalled();
+    expect(projectionService.recalculateLocked).toHaveBeenCalledWith(manager, order.id);
   });
 });
 

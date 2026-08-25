@@ -9,6 +9,7 @@ import { isTechnicianScopedRoleSet } from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { Product } from '../../inventory/entities/product.entity';
 import { PricingConfigService } from '../../pricing/services/pricing-config.service';
+import { PricingEngineService } from '../../pricing/services/pricing-engine.service';
 import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-commercial-line.entity';
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
@@ -68,6 +69,7 @@ export class ServiceOrderCommercialRevisionService {
     private readonly manager: EntityManager,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
     private readonly pricingConfigService: PricingConfigService,
+    private readonly pricingEngineService: PricingEngineService,
   ) {}
 
   async createRevision(
@@ -371,6 +373,14 @@ export class ServiceOrderCommercialRevisionService {
     if (discountPct < 0 || discountPct > 100) {
       throw new BadRequestException('El descuento debe estar entre 0% y 100%');
     }
+    if (
+      line.type === ServiceOrderCommercialLineType.PRODUCT &&
+      discountPct > 0
+    ) {
+      throw new BadRequestException(
+        'Los productos de una cotización no admiten descuentos',
+      );
+    }
 
     if (line.type === ServiceOrderCommercialLineType.PRODUCT) {
       const product = productMap.get(Number(line.productId));
@@ -378,8 +388,14 @@ export class ServiceOrderCommercialRevisionService {
         throw new NotFoundException(
           `Product with id ${line.productId} not found`,
         );
-      return this.prepareDiscountedLine(
-        {
+      const pricing = await this.pricingEngineService.calculatePrice(product.id);
+      if (unitPrice < pricing.minAllowedPrice) {
+        throw new BadRequestException(
+          `El precio de ${product.name} no puede ser menor a S/ ${pricing.minAllowedPrice.toFixed(2)}`,
+        );
+      }
+      return {
+        line: {
           type: line.type,
           productId: product.id,
           serviceId: null,
@@ -388,17 +404,18 @@ export class ServiceOrderCommercialRevisionService {
           catalogDescriptionSnapshot: product.description ?? null,
           quantity,
           unitPrice,
+          recommendedPriceSnapshot: pricing.recommendedPrice,
+          minimumPriceSnapshot: pricing.minAllowedPrice,
+          costSnapshot: pricing.cpp,
+          costSourceSnapshot: pricing.costSource,
           grossAmount,
           discountAmount: 0,
           netAmount: grossAmount,
           requiresPurchase: line.requiresPurchase ?? false,
           notes: line.notes?.trim() || null,
         },
-        discountPct,
-        line.discountOverrideReason,
-        viewer,
-        product.id,
-      );
+        discount: null,
+      };
     }
 
     return this.prepareDiscountedLine(
@@ -409,12 +426,14 @@ export class ServiceOrderCommercialRevisionService {
         catalogCodeSnapshot: line.serviceId
           ? `SERVICE-${line.serviceId}`
           : 'TECHNICAL_SERVICE',
-        catalogNameSnapshot: line.serviceId
-          ? `Servicio #${line.serviceId}`
-          : 'Servicio técnico',
+        catalogNameSnapshot: 'Servicio técnico',
         catalogDescriptionSnapshot: null,
         quantity,
         unitPrice,
+        recommendedPriceSnapshot: null,
+        minimumPriceSnapshot: null,
+        costSnapshot: null,
+        costSourceSnapshot: null,
         grossAmount,
         discountAmount: 0,
         netAmount: grossAmount,

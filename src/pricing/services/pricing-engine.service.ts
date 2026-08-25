@@ -9,9 +9,10 @@
  */
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { Stock } from 'src/inventory/entities/stock.entity';
 import { Product } from 'src/inventory/entities/product.entity';
+import { Movement } from 'src/inventory/entities/movement.entity';
 import { PricingConfigService } from './pricing-config.service';
 import { TaxConfigService } from './tax-config.service';
 
@@ -41,6 +42,13 @@ export interface PriceCalculation {
 
     // Stock disponible
     stockQty: number;
+
+    // Precio final sugerido al operador (incluye IGV)
+    recommendedPrice: number;
+    minAllowedPrice: number;
+
+    // Trazabilidad interna; no se muestra en el editor de cotizaciones
+    costSource: 'CURRENT_STOCK' | 'MOVEMENT_HISTORY';
 }
 
 export interface DiscountValidation {
@@ -59,6 +67,8 @@ export class PricingEngineService {
         private readonly stockRepo: Repository<Stock>,
         @InjectRepository(Product)
         private readonly productRepo: Repository<Product>,
+        @InjectRepository(Movement)
+        private readonly movementRepo: Repository<Movement>,
         private readonly configService: PricingConfigService,
         private readonly taxService: TaxConfigService,
     ) {}
@@ -66,7 +76,11 @@ export class PricingEngineService {
     /**
      * Obtener el CPP actual de un producto (sumando todos sus lotes de stock).
      */
-    private async getCPP(productId: number): Promise<{ cpp: number; stockQty: number }> {
+    private async getCPP(productId: number): Promise<{
+        cpp: number;
+        stockQty: number;
+        costSource: 'CURRENT_STOCK' | 'MOVEMENT_HISTORY';
+    }> {
         const stockLines = await this.stockRepo.find({
             where: { productId },
         });
@@ -82,8 +96,26 @@ export class PricingEngineService {
             }
         }
 
-        const cpp = totalQty > 0 ? totalCost / totalQty : 0;
-        return { cpp, stockQty: totalQty };
+        const currentCpp = totalQty > 0 ? totalCost / totalQty : 0;
+        if (currentCpp > 0) {
+            return { cpp: currentCpp, stockQty: totalQty, costSource: 'CURRENT_STOCK' };
+        }
+
+        const latestCostMovement = await this.movementRepo.findOne({
+            where: { productId, unitCost: MoreThan(0) },
+            order: { occurredAt: 'DESC', id: 'DESC' },
+        });
+        const historicalCost = Number(latestCostMovement?.unitCost ?? 0);
+        if (historicalCost <= 0) {
+            throw new BadRequestException(
+                'El producto no tiene un costo vigente ni historico para calcular un precio recomendado',
+            );
+        }
+        return {
+            cpp: historicalCost,
+            stockQty: totalQty,
+            costSource: 'MOVEMENT_HISTORY',
+        };
     }
 
     /**
@@ -96,7 +128,7 @@ export class PricingEngineService {
         if (!product) throw new BadRequestException('Producto no encontrado');
 
         // 1) CPP
-        const { cpp, stockQty } = await this.getCPP(productId);
+        const { cpp, stockQty, costSource } = await this.getCPP(productId);
 
         // 2) Configuración de márgenes
         const { config, scope } = await this.configService.resolveForProduct(productId);
@@ -112,6 +144,10 @@ export class PricingEngineService {
 
         const salePriceWithIgv = Number((salePrice * (1 + igvRate / 100)).toFixed(2));
         const minPriceWithIgv = Number((minPrice * (1 + igvRate / 100)).toFixed(2));
+        const recommendedPrice = salePriceWithIgv;
+        const minAllowedPrice = Number(
+            (Math.ceil(recommendedPrice * 0.9 * 100) / 100).toFixed(2),
+        );
 
         return {
             productId: product.id,
@@ -127,6 +163,9 @@ export class PricingEngineService {
             salePriceWithIgv,
             minPriceWithIgv,
             stockQty,
+            recommendedPrice,
+            minAllowedPrice,
+            costSource,
         };
     }
 

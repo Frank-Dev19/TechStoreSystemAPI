@@ -29,9 +29,11 @@ import { ServiceOrderAgreement } from './entities/service-agreement.entity';
 import { ServiceOrderClientDecision } from './entities/service-order-client-decision.entity';
 import { ServiceOrderAgreementStatus } from './service-agreement-status.enum';
 import { ServiceOrderClientDecisionType } from './service-order-client-decision-type.enum';
+import { ServiceOrderClientDecisionChannel } from './service-order-client-decision-channel.enum';
 import { ServiceOrderItemCommercialVersionStatus } from './service-order-item-commercial-version-status.enum';
 
 type DecisionViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
+type DecisionOptions = { customerInitiated?: boolean };
 
 @Injectable()
 export class ServiceOrderCommercialDecisionService {
@@ -43,6 +45,7 @@ export class ServiceOrderCommercialDecisionService {
   async recordDecision(
     dto: RecordServiceOrderClientDecisionDto,
     viewer?: DecisionViewer,
+    options: DecisionOptions = {},
   ) {
     return this.manager.transaction(async (manager) => {
       const versionRepository = manager.getRepository(
@@ -57,6 +60,13 @@ export class ServiceOrderCommercialDecisionService {
         throw new NotFoundException(
           `Commercial version with id ${dto.commercialVersionId} not found`,
         );
+      }
+
+      if (
+        options.customerInitiated &&
+        version.status === ServiceOrderItemCommercialVersionStatus.ACCEPTED
+      ) {
+        return { alreadyAccepted: true, version };
       }
 
       const linkRepository = manager.getRepository(ServiceOrderAgreementItem);
@@ -99,9 +109,13 @@ export class ServiceOrderCommercialDecisionService {
           'No se pudo resolver la orden de la versión comercial',
         );
       }
-      this.ensureViewerCanRecord(order.assignedToTechnicianId, viewer);
-      const recorderId = Number(viewer?.sub ?? 0);
-      if (!recorderId)
+      if (!options.customerInitiated) {
+        this.ensureViewerCanRecord(order.assignedToTechnicianId, viewer);
+      }
+      const recorderId = options.customerInitiated
+        ? null
+        : Number(viewer?.sub ?? 0);
+      if (!options.customerInitiated && !recorderId)
         throw new BadRequestException(
           'No se pudo identificar al usuario que registra la decisión',
         );
@@ -138,7 +152,7 @@ export class ServiceOrderCommercialDecisionService {
         agreement.status !== ServiceOrderAgreementStatus.DRAFT
       ) {
         throw new BadRequestException(
-          'El acuerdo consolidado ya no está disponible para decisiones',
+          'La cotización consolidada ya no está disponible para decisiones',
         );
       }
 
@@ -261,6 +275,19 @@ export class ServiceOrderCommercialDecisionService {
     });
   }
 
+  recordWhatsAppAcceptance(commercialVersionId: number) {
+    return this.recordDecision(
+      {
+        commercialVersionId,
+        decision: ServiceOrderClientDecisionType.ACCEPTED,
+        channel: ServiceOrderClientDecisionChannel.WHATSAPP,
+        observation: 'Aceptado directamente por el cliente mediante WhatsApp',
+      },
+      undefined,
+      { customerInitiated: true },
+    );
+  }
+
   private async assertNoConfirmedSale(
     manager: EntityManager,
     serviceOrderId: number,
@@ -281,7 +308,7 @@ export class ServiceOrderCommercialDecisionService {
     serviceOrderId: number,
     item: ServiceOrderItem,
     request: ServiceOrderItemCancellationRequest,
-    actorId: number,
+    actorId: number | null,
   ): Promise<void> {
     const repository = manager.getRepository(ServiceOrderEvent);
     await repository.save(
