@@ -17,7 +17,8 @@ type BaseTemplateInput = {
 };
 
 type OrderIntakeTemplateInput = BaseTemplateInput & {
-  orderDescriptor: string;
+  orderCode: string;
+  equipmentCount: string;
   documentUrl: string;
   documentFileName: string;
 };
@@ -81,9 +82,9 @@ export class ServiceOrderWhatsAppTemplateService {
 
   buildOrderIntakeTemplate(input: OrderIntakeTemplateInput): WhatsAppTemplateDispatch {
     return this.buildTemplate(
-      this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') || 'ordenes_ingresadas_asignadas',
-      this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_LANGUAGE') || 'es',
-      [input.clientName, input.orderDescriptor],
+      this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') || 'resumen_de_orden_de_servicio',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_LANGUAGE') || 'es_PE',
+      [input.clientName, input.orderCode, input.equipmentCount],
       input.quickReplyPayloads,
       input.documentUrl,
       input.documentFileName,
@@ -92,9 +93,9 @@ export class ServiceOrderWhatsAppTemplateService {
 
   buildStandardOrderConfirmedTemplate(input: OrderIntakeTemplateInput): WhatsAppTemplateDispatch {
     return this.buildTemplate(
-      this.configService.get<string>('WHATSAPP_TEMPLATE_STANDARD_ORDER_NAME') || 'orden_standard_confirmada',
-      this.configService.get<string>('WHATSAPP_TEMPLATE_STANDARD_ORDER_LANGUAGE') || 'es',
-      [input.clientName, input.orderDescriptor],
+      this.configService.get<string>('WHATSAPP_TEMPLATE_STANDARD_ORDER_NAME') || 'resumen_de_orden_de_servicio',
+      this.configService.get<string>('WHATSAPP_TEMPLATE_STANDARD_ORDER_LANGUAGE') || 'es_PE',
+      [input.clientName, input.orderCode, input.equipmentCount],
       input.quickReplyPayloads,
       input.documentUrl,
       input.documentFileName,

@@ -333,7 +333,9 @@ describe('ServiceOrderItemDeliveryService', () => {
       sequenceNumber: 3,
     });
 
-    await expect(service.deliverItem(order.id, item.id, 22)).rejects.toThrow('acuerdo comercial vigente');
+    await expect(service.deliverItem(order.id, item.id, 22)).rejects.toThrow(
+      'cotización vigente confirmada',
+    );
   });
 
   it('rechaza un equipo que no esté listo o conserve una cancelación pendiente', async () => {

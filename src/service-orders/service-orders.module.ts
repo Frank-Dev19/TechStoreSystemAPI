@@ -63,10 +63,14 @@ import { ServiceOrderStageSlaPolicyService } from './services/service-order-stag
 import { ServiceOrderWhatsAppTemplateService } from './services/service-order-whatsapp-template.service';
 import { ServiceOrderWorkflowService } from './services/service-order-workflow.service';
 import { ServiceOrderTransitionPolicy } from './state-machines/service-order-transition-policy';
+import { MailerModule } from '../mailer/mailer.module';
+import { ServiceOrderSummaryEmailService } from './services/service-order-summary-email.service';
+import { ServiceOrderIntakeNotificationService } from './services/service-order-intake-notification.service';
 
 @Module({
   imports: [
     PricingModule,
+    MailerModule,
     TypeOrmModule.forFeature([
       ServiceOrder,
       ServiceOrderItem,
@@ -114,6 +118,8 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
     ServiceOrderInitialCommercialService,
     ServiceOrderFinalReportNotificationService,
     ServiceOrderPickupReminderService,
+    ServiceOrderSummaryEmailService,
+    ServiceOrderIntakeNotificationService,
     ServiceOrderWorkflowService,
     ServiceOrderSlaStageResolverService,
     ServiceOrderStageSlaPolicyService,

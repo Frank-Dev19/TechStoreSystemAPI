@@ -178,6 +178,22 @@ export class ServiceOrderIntakePdfService {
     });
   }
 
+  async generateSingleOrderSummary(input: GenerateSingleOrderSummaryPdfInput): Promise<GeneratedPdfResult> {
+    const directory = join(process.cwd(), 'storage', 'temp', 'service-orders');
+    await fs.mkdir(directory, { recursive: true });
+
+    const fileName = `${input.code}-resumen-${randomUUID()}.pdf`;
+    const absolutePath = join(directory, fileName);
+    const fileBuffer = await this.generateSingleOrderSummaryBuffer(input);
+    await fs.writeFile(absolutePath, fileBuffer);
+
+    return {
+      fileName,
+      absolutePath,
+      mimeType: 'application/pdf',
+    };
+  }
+
   private async createPdfBuffer(render: (document: PdfDocumentInstance) => void): Promise<Buffer> {
     const document = new PDFDocument({ margin: PAGE_MARGIN, bufferPages: true, autoFirstPage: false });
     const chunks: Buffer[] = [];

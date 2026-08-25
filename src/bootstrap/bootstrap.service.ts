@@ -409,6 +409,12 @@ export class BootstrapService implements OnModuleInit {
       },
       {
         moduleKey: 'service-order',
+        actionKey: 'email',
+        description: 'Enviar documentos de órdenes por correo',
+        sortOrder: 39,
+      },
+      {
+        moduleKey: 'service-order',
         actionKey: 'delete',
         description: 'Eliminar ordenes de servicio',
         sortOrder: 60,
@@ -965,6 +971,7 @@ export class BootstrapService implements OnModuleInit {
           'service-order.item-deliver',
           'service-order.item-cancel',
           'service-order.billing-link',
+          'service-order.email',
           'clients.read',
           'clients.create',
           'clients.update',

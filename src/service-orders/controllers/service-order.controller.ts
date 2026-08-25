@@ -46,6 +46,8 @@ import { DeliverServiceOrderItemsDto } from '../dto/deliver-service-order-items.
 import { SendPickupReminderDto } from '../dto/send-pickup-reminder.dto';
 import { ServiceOrderPickupReminderService } from '../services/service-order-pickup-reminder.service';
 import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
+import { ServiceOrderSummaryEmailService } from '../services/service-order-summary-email.service';
+import { SendServiceOrderSummaryEmailDto } from '../dto/send-service-order-summary-email.dto';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -62,6 +64,7 @@ export class ServiceOrderController {
     private readonly inboxService: ServiceOrderInboxService,
     private readonly pickupReminderService: ServiceOrderPickupReminderService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly summaryEmailService: ServiceOrderSummaryEmailService,
   ) {}
 
   @Permissions('service-order.create')
@@ -144,6 +147,16 @@ export class ServiceOrderController {
     response.setHeader('Content-Type', result.mimeType);
     response.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
     return new StreamableFile(result.buffer);
+  }
+
+  @Permissions('service-order.email')
+  @Post(':id/summary-email')
+  sendSummaryEmail(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendServiceOrderSummaryEmailDto,
+    @Req() req: any,
+  ) {
+    return this.summaryEmailService.send(id, dto.to, req.user);
   }
 
   @Permissions('service-order.read')

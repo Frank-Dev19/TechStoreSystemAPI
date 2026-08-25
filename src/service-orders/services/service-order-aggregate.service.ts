@@ -21,6 +21,7 @@ import { ServiceOrderCodeService } from './service-order-code.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 import { ServiceOrderInitialCommercialService } from './service-order-initial-commercial.service';
 import { buildServiceOrderItemProgress } from './service-order-aggregate-projection.service';
+import { ServiceOrderIntakeNotificationService } from './service-order-intake-notification.service';
 
 @Injectable()
 export class ServiceOrderAggregateService {
@@ -29,13 +30,18 @@ export class ServiceOrderAggregateService {
     private readonly codeService: ServiceOrderCodeService,
     private readonly workflowService: ServiceOrderWorkflowService,
     private readonly initialCommercialService: ServiceOrderInitialCommercialService,
+    private readonly intakeNotificationService: ServiceOrderIntakeNotificationService,
   ) {}
 
   async create(dto: CreateServiceOrderAggregateDto, creatorId: number): Promise<ServiceOrder> {
     if (!dto.items?.length) {
       throw new BadRequestException('At least one service-order item is required');
     }
-    return this.dataSource.transaction(async (manager) => this.createInTransaction(manager, dto, creatorId));
+    const serviceOrder = await this.dataSource.transaction(async (manager) =>
+      this.createInTransaction(manager, dto, creatorId),
+    );
+    await this.intakeNotificationService.notifyOrders([serviceOrder]);
+    return serviceOrder;
   }
 
   private async createInTransaction(

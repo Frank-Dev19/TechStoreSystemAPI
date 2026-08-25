@@ -10,6 +10,7 @@ import { ServiceOrderAggregateService } from './service-order-aggregate.service'
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 import { ServiceOrderInitialCommercialService } from './service-order-initial-commercial.service';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
+import { ServiceOrderIntakeNotificationService } from './service-order-intake-notification.service';
 
 type MockRepo = {
   create: jest.Mock;
@@ -35,6 +36,7 @@ describe('ServiceOrderAggregateService', () => {
   let codeService: jest.Mocked<ServiceOrderCodeService>;
   let workflowService: jest.Mocked<ServiceOrderWorkflowService>;
   let initialCommercialService: jest.Mocked<ServiceOrderInitialCommercialService>;
+  let intakeNotificationService: jest.Mocked<ServiceOrderIntakeNotificationService>;
 
   beforeEach(() => {
     orderRepo = createRepo();
@@ -71,8 +73,17 @@ describe('ServiceOrderAggregateService', () => {
     initialCommercialService = {
       createForDirectService: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderInitialCommercialService>;
+    intakeNotificationService = {
+      notifyOrders: jest.fn(),
+    } as unknown as jest.Mocked<ServiceOrderIntakeNotificationService>;
 
-    service = new ServiceOrderAggregateService(dataSource, codeService, workflowService, initialCommercialService);
+    service = new ServiceOrderAggregateService(
+      dataSource,
+      codeService,
+      workflowService,
+      initialCommercialService,
+      intakeNotificationService,
+    );
   });
 
   it('crea una cabecera y varios equipos en una sola transacción', async () => {
@@ -134,6 +145,7 @@ describe('ServiceOrderAggregateService', () => {
     );
     expect(result.items).toHaveLength(2);
     expect(initialCommercialService.createForDirectService).not.toHaveBeenCalled();
+    expect(intakeNotificationService.notifyOrders).toHaveBeenCalledWith([result]);
   });
 
   it('propaga el fallo de un equipo para que la transacción se revierta', async () => {
@@ -156,6 +168,7 @@ describe('ServiceOrderAggregateService', () => {
     ).rejects.toThrow('item write failed');
 
     expect(workflowService.registerInitialAssignment).not.toHaveBeenCalled();
+    expect(intakeNotificationService.notifyOrders).not.toHaveBeenCalled();
   });
 
   it('guarda los comerciales iniciales directos dentro de la misma transacción', async () => {

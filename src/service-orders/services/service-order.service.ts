@@ -904,6 +904,9 @@ export class ServiceOrderService {
       );
       await this.messageMatrixService.dispatchOrderIntakeTemplate({
         serviceOrders: orders,
+        equipmentCount: this.formatEquipmentCount(
+          orders.reduce((total, order) => total + Math.max(order.items?.length ?? 0, 1), 0),
+        ),
         documentUrl: `${baseUrl}/service-orders/temp-documents/${tempDocument.token}`,
         documentFileName: generatedPdf.fileName,
         tempDocumentToken: tempDocument.token,
@@ -928,6 +931,10 @@ export class ServiceOrderService {
     }
 
     return serviceOrder.equipmentType;
+  }
+
+  private formatEquipmentCount(count: number): string {
+    return `${count} ${count === 1 ? 'equipo' : 'equipos'}`;
   }
 
   private applyViewerScope(qb: any, viewer?: ServiceOrderViewer): void {

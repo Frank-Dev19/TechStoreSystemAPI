@@ -15,6 +15,7 @@ import { ServiceOrderSurveyService } from '../surveys/service-order-survey.servi
 
 type DispatchOrderIntakeTemplateInput = {
   serviceOrders: ServiceOrder[];
+  equipmentCount: string;
   documentUrl: string;
   documentFileName: string;
   tempDocumentToken: string;
@@ -97,23 +98,14 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
 
-    const descriptor = serviceOrders.length === 1 ? 'tu orden de servicio' : 'tus órdenes de servicio';
-    const allStandard = serviceOrders.every((order) => order.serviceType === 'STANDARD_SERVICE');
-    const template = allStandard
-      ? this.whatsappTemplateService.buildStandardOrderConfirmedTemplate({
-          clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
-          orderDescriptor: descriptor,
-          documentUrl: input.documentUrl,
-          documentFileName: input.documentFileName,
-          quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
-        })
-      : this.whatsappTemplateService.buildOrderIntakeTemplate({
-        clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
-        orderDescriptor: descriptor,
-        documentUrl: input.documentUrl,
-        documentFileName: input.documentFileName,
-        quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
-      });
+    const template = this.whatsappTemplateService.buildOrderIntakeTemplate({
+      clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
+      orderCode: serviceOrders[0].code,
+      equipmentCount: input.equipmentCount,
+      documentUrl: input.documentUrl,
+      documentFileName: input.documentFileName,
+      quickReplyPayloads: ['CONSULTA'],
+    });
 
     const notification = await this.notificationRepository.save(
       this.notificationRepository.create({

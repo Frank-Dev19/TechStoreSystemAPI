@@ -147,7 +147,7 @@ describe('ServiceOrderMessageMatrixService', () => {
     expect(inboxChannelService.dispatchTemplateMessage).not.toHaveBeenCalled();
   });
 
-  it('stores batch metadata for intake notification', async () => {
+  it('stores intake metadata and uses the single three-variable contract', async () => {
     const notificationRepository = createMockRepo();
     const attemptRepository = createMockRepo();
     const inboxService = {
@@ -165,12 +165,12 @@ describe('ServiceOrderMessageMatrixService', () => {
     } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
     const whatsappTemplateService = {
       buildOrderIntakeTemplate: jest.fn().mockReturnValue({
-        templateName: 'ordenes_ingresadas_asignadas',
-        languageCode: 'es',
+        templateName: 'resumen_de_orden_de_servicio',
+        languageCode: 'es_PE',
         documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
         documentFileName: 'resumen-ordenes.pdf',
-        bodyParameters: ['Juan Pérez', 'tus órdenes de servicio'],
-        quickReplyPayloads: ['ENTENDIDO', 'CONSULTA'],
+        bodyParameters: ['Juan Pérez', 'SO-001', '2 equipos'],
+        quickReplyPayloads: ['CONSULTA'],
       }),
     } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
 
@@ -184,9 +184,19 @@ describe('ServiceOrderMessageMatrixService', () => {
 
     await service.dispatchOrderIntakeTemplate({
       serviceOrders: [createServiceOrder({ id: 201 }), createServiceOrder({ id: 202, code: 'SO-002' })],
+      equipmentCount: '2 equipos',
       documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
       documentFileName: 'resumen-ordenes.pdf',
       tempDocumentToken: 'abc',
+    });
+
+    expect(whatsappTemplateService.buildOrderIntakeTemplate).toHaveBeenCalledWith({
+      clientName: 'Juan Pérez',
+      orderCode: 'SO-001',
+      equipmentCount: '2 equipos',
+      documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
+      documentFileName: 'resumen-ordenes.pdf',
+      quickReplyPayloads: ['CONSULTA'],
     });
 
     expect(notificationRepository.save).toHaveBeenCalledWith(

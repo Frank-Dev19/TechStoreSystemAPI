@@ -2,6 +2,35 @@ import { ConfigService } from '@nestjs/config';
 import { ServiceOrderWhatsAppTemplateService } from './service-order-whatsapp-template.service';
 
 describe('ServiceOrderWhatsAppTemplateService', () => {
+  it('construye el resumen de recepción con código general y cantidad de equipos', () => {
+    const configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') return 'resumen_de_orden_de_servicio';
+        if (key === 'WHATSAPP_TEMPLATE_ORDER_INTAKE_LANGUAGE') return 'es_PE';
+        return undefined;
+      }),
+    } as unknown as ConfigService;
+    const service = new ServiceOrderWhatsAppTemplateService(configService);
+
+    expect(
+      service.buildOrderIntakeTemplate({
+        clientName: 'Juan Pérez',
+        orderCode: 'SO-25-08-2026-0001',
+        equipmentCount: '2 equipos',
+        documentUrl: 'https://api.example.com/resumen.pdf',
+        documentFileName: 'resumen.pdf',
+        quickReplyPayloads: ['CONSULTA'],
+      }),
+    ).toEqual({
+      templateName: 'resumen_de_orden_de_servicio',
+      languageCode: 'es_PE',
+      bodyParameters: ['Juan Pérez', 'SO-25-08-2026-0001', '2 equipos'],
+      quickReplyPayloads: ['CONSULTA'],
+      documentUrl: 'https://api.example.com/resumen.pdf',
+      documentFileName: 'resumen.pdf',
+    });
+  });
+
   it('usa el idioma específico por template cuando existe', () => {
     const configService = {
       get: jest.fn((key: string) => {
@@ -100,13 +129,36 @@ describe('ServiceOrderWhatsAppTemplateService', () => {
       documentUrl: 'https://api.example.com/document.pdf',
       documentFileName: 'resumen-cancelacion.pdf',
       quickReplyPayloads: ['CONSULTA'],
-    })).toEqual(expect.objectContaining({
+    })).toEqual({
       templateName: 'resumen_cancelacion_equipos',
       languageCode: 'es_PE',
       bodyParameters: ['Juan', '2', 'SO-1'],
+      quickReplyPayloads: ['CONSULTA'],
       documentUrl: 'https://api.example.com/document.pdf',
       documentFileName: 'resumen-cancelacion.pdf',
-    }));
+    });
+  });
+
+  it('construye el diagnóstico y cotización inicial con sus cuatro variables y botones', () => {
+    const configService = { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService;
+    const service = new ServiceOrderWhatsAppTemplateService(configService);
+
+    expect(service.buildDiagnosisAgreementAvailableTemplate({
+      clientName: 'Juan',
+      equipmentLabel: 'Laptop Lenovo',
+      orderCode: 'SO-1',
+      totalAmount: '120.00',
+      documentUrl: 'https://api.example.com/cotizacion.pdf',
+      documentFileName: 'cotizacion.pdf',
+      quickReplyPayloads: ['ACEPTAR_COTIZACION:41', 'CONSULTA'],
+    })).toEqual({
+      templateName: 'diagnostico_cotizacion_equipo',
+      languageCode: 'es_PE',
+      bodyParameters: ['Juan', 'Laptop Lenovo', 'SO-1', '120.00'],
+      quickReplyPayloads: ['ACEPTAR_COTIZACION:41', 'CONSULTA'],
+      documentUrl: 'https://api.example.com/cotizacion.pdf',
+      documentFileName: 'cotizacion.pdf',
+    });
   });
 
   it('construye la plantilla peruana de recotización con el PDF actualizado', () => {
@@ -131,24 +183,57 @@ describe('ServiceOrderWhatsAppTemplateService', () => {
     });
   });
 
-  it('construye las plantillas pendientes con sus documentos y variables', () => {
+  it('construye el recordatorio de cotización con el mismo contrato comercial', () => {
     const configService = { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService;
     const service = new ServiceOrderWhatsAppTemplateService(configService);
 
     expect(service.buildQuoteReminderTemplate({
       clientName: 'Juan', equipmentLabel: 'Laptop Lenovo', orderCode: 'SO-1', totalAmount: '120.00',
       documentUrl: 'https://api.example.com/quote.pdf', documentFileName: 'quote.pdf',
-    })).toEqual(expect.objectContaining({
+      quickReplyPayloads: ['ACEPTAR_COTIZACION:41', 'CONSULTA'],
+    })).toEqual({
       templateName: 'recordatorio_cotizacion_pendiente',
+      languageCode: 'es_PE',
       bodyParameters: ['Juan', 'Laptop Lenovo', 'SO-1', '120.00'],
-    }));
+      quickReplyPayloads: ['ACEPTAR_COTIZACION:41', 'CONSULTA'],
+      documentUrl: 'https://api.example.com/quote.pdf',
+      documentFileName: 'quote.pdf',
+    });
+  });
+
+  it('construye el comprobante aceptado por SUNAT con el PDF oficial', () => {
+    const configService = { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService;
+    const service = new ServiceOrderWhatsAppTemplateService(configService);
+
     expect(service.buildPaymentReceiptTemplate({
       clientName: 'Juan', orderCode: 'SO-1', documentNumber: 'B001-1', totalAmount: 'S/ 120.00',
       documentUrl: 'https://api.example.com/receipt.pdf', documentFileName: 'receipt.pdf',
-    })).toEqual(expect.objectContaining({ templateName: 'comprobante_pago_orden_servicio' }));
+      quickReplyPayloads: ['CONSULTA'],
+    })).toEqual({
+      templateName: 'comprobante_pago_orden_servicio',
+      languageCode: 'es_PE',
+      bodyParameters: ['Juan', 'SO-1', 'B001-1', 'S/ 120.00'],
+      quickReplyPayloads: ['CONSULTA'],
+      documentUrl: 'https://api.example.com/receipt.pdf',
+      documentFileName: 'receipt.pdf',
+    });
+  });
+
+  it('construye el recordatorio de recojo consolidado por orden', () => {
+    const configService = { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService;
+    const service = new ServiceOrderWhatsAppTemplateService(configService);
+
     expect(service.buildPickupReminderTemplate({
       clientName: 'Juan', orderCode: 'SO-1', equipmentSummary: '2 equipos',
       documentUrl: 'https://api.example.com/pickup.pdf', documentFileName: 'pickup.pdf',
-    })).toEqual(expect.objectContaining({ templateName: 'recordatorio_recojo_equipo' }));
+      quickReplyPayloads: ['CONSULTA'],
+    })).toEqual({
+      templateName: 'recordatorio_recojo_equipo',
+      languageCode: 'es_PE',
+      bodyParameters: ['Juan', 'SO-1', '2 equipos'],
+      quickReplyPayloads: ['CONSULTA'],
+      documentUrl: 'https://api.example.com/pickup.pdf',
+      documentFileName: 'pickup.pdf',
+    });
   });
 });
