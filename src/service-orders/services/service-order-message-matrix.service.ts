@@ -8,7 +8,6 @@ import { NotificationMessage } from '../entities/notification-message.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderOperativeStatus, ServiceOrderTechnicalStatus } from '../enums';
 import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
-import { ServiceOrderDiagnosisOutcome } from '../diagnoses/service-order-diagnosis-outcome.enum';
 import { ServiceOrderInboxChannelService } from '../inbox/service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
 import { ServiceOrderWhatsAppTemplateService, WhatsAppTemplateDispatch } from './service-order-whatsapp-template.service';
@@ -270,106 +269,22 @@ export class ServiceOrderMessageMatrixService {
   }
 
   async notifyWorkflowTransition(
-    serviceOrder: ServiceOrder,
-    nextTechnicalStatus: ServiceOrderTechnicalStatus,
+    _serviceOrder: ServiceOrder,
+    _nextTechnicalStatus: ServiceOrderTechnicalStatus,
   ): Promise<void> {
-    switch (nextTechnicalStatus) {
-      case ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION:
-        await this.dispatchBusinessNotification({
-          serviceOrder,
-          messageType: 'authorization.confirmed',
-          idempotencyKey: `service_order:${serviceOrder.id}:authorization:confirmed`,
-          template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
-            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-            orderCode: serviceOrder.code,
-          }),
-        });
-        return;
-      case ServiceOrderTechnicalStatus.RESUELTA:
-        await this.dispatchBusinessNotification({
-          serviceOrder,
-          messageType: 'ready.for.pickup',
-          idempotencyKey: `service_order:${serviceOrder.id}:ready-for-pickup`,
-          template: this.whatsappTemplateService.buildReadyForPickupTemplate({
-            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-            orderCode: serviceOrder.code,
-            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-          }),
-        });
-        return;
-      case ServiceOrderTechnicalStatus.SIN_SOLUCION:
-        await this.dispatchBusinessNotification({
-          serviceOrder,
-          messageType: 'no.solution',
-          idempotencyKey: `service_order:${serviceOrder.id}:no-solution`,
-          template: this.whatsappTemplateService.buildNoSolutionTemplate({
-            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-            orderCode: serviceOrder.code,
-            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-          }),
-        });
-        return;
-      case ServiceOrderTechnicalStatus.BLOQUEADA:
-      case ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO:
-        await this.dispatchBusinessNotification({
-          serviceOrder,
-          messageType: 'pause.blocked',
-          idempotencyKey: `service_order:${serviceOrder.id}:pause:${nextTechnicalStatus}`,
-          template: this.whatsappTemplateService.buildPauseOrBlockedTemplate({
-            clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-            orderCode: serviceOrder.code,
-            equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-          }),
-        });
-        return;
-      default:
-        return;
-    }
+    return;
   }
 
   async notifyDiagnosisUpdated(
-    serviceOrder: ServiceOrder,
-    diagnosis: ServiceOrderDiagnosis,
-    previousDiagnosis: ServiceOrderDiagnosis | null,
+    _serviceOrder: ServiceOrder,
+    _diagnosis: ServiceOrderDiagnosis,
+    _previousDiagnosis: ServiceOrderDiagnosis | null,
   ): Promise<void> {
-    if (!this.isDiagnosisMaterialChange(diagnosis, previousDiagnosis)) {
-      return;
-    }
-
-    if (
-      [ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES, ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED].includes(
-        diagnosis.outcome,
-      )
-    ) {
-      const statusLabel =
-        diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
-          ? 'aprobada'
-          : 'rechazada';
-      await this.dispatchBusinessNotification({
-        serviceOrder,
-        messageType: 'warranty.status',
-        idempotencyKey: `service_order:${serviceOrder.id}:warranty:${diagnosis.id}:${diagnosis.outcome}`,
-        template: this.whatsappTemplateService.buildWarrantyStatusTemplate({
-          clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-          orderCode: serviceOrder.code,
-          statusLabel,
-        }),
-      });
-    }
+    return;
   }
 
-  async notifyAgreementConfirmed(serviceOrder: ServiceOrder, agreementId: number): Promise<void> {
-    await this.dispatchBusinessNotification({
-      serviceOrder,
-      messageType: 'authorization.confirmed',
-      idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:confirmed`,
-      template: this.whatsappTemplateService.buildAuthorizationConfirmedTemplate({
-        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-        orderCode: serviceOrder.code,
-        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-      }),
-    });
+  async notifyAgreementConfirmed(_serviceOrder: ServiceOrder, _agreementId: number): Promise<void> {
+    return;
   }
 
   async notifySurveyRequest(serviceOrder: ServiceOrder): Promise<void> {
@@ -591,22 +506,6 @@ export class ServiceOrderMessageMatrixService {
     for (const notification of pending) await this.retryNotification(notification);
   }
 
-  private isDiagnosisMaterialChange(
-    diagnosis: ServiceOrderDiagnosis,
-    previousDiagnosis: ServiceOrderDiagnosis | null,
-  ): boolean {
-    if (!previousDiagnosis) {
-      return true;
-    }
-
-    return (
-      diagnosis.outcome !== previousDiagnosis.outcome ||
-      this.normalizeComparableText(diagnosis.summary) !== this.normalizeComparableText(previousDiagnosis.summary) ||
-      this.normalizeComparableText(diagnosis.recommendedAction) !==
-        this.normalizeComparableText(previousDiagnosis.recommendedAction)
-    );
-  }
-
   private async dispatchBusinessNotification(input: DispatchBusinessNotificationInput): Promise<void> {
     await this.dispatchTemplateNotification(input.serviceOrder, input.idempotencyKey, input.messageType, input.template);
   }
@@ -816,13 +715,6 @@ export class ServiceOrderMessageMatrixService {
         .join(' ');
     }
     return this.buildEquipmentLabel(serviceOrder);
-  }
-
-  private normalizeComparableText(value: string | null | undefined): string {
-    return String(value ?? '')
-      .trim()
-      .replace(/\s+/g, ' ')
-      .toLowerCase();
   }
 
 }

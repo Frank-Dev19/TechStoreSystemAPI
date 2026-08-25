@@ -45,7 +45,7 @@ const createServiceOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder
   }) as ServiceOrder;
 
 describe('ServiceOrderMessageMatrixService', () => {
-  it('usa template para acuerdo confirmado aunque la ventana de 24h esté abierta', async () => {
+  it('omite la plantilla heredada de autorización confirmada', async () => {
     const notificationRepository = createMockRepo();
     const attemptRepository = createMockRepo();
     const inboxService = {
@@ -80,15 +80,10 @@ describe('ServiceOrderMessageMatrixService', () => {
     await service.notifyAgreementConfirmed(createServiceOrder(), 9001);
 
     expect(inboxService.hasCustomerServiceWindow).not.toHaveBeenCalled();
-    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        templateName: 'autorizacion_confirmada_inicio_servicio',
-        bodyParameters: ['Juan Pérez', 'SO-001', 'Laptop'],
-      }),
-    );
+    expect(inboxChannelService.dispatchTemplateMessage).not.toHaveBeenCalled();
   });
 
-  it('usa template para acuerdo confirmado cuando la ventana de 24h está cerrada', async () => {
+  it('omite la plantilla heredada de autorización aunque la ventana esté cerrada', async () => {
     const notificationRepository = createMockRepo();
     const attemptRepository = createMockRepo();
     const inboxService = {
@@ -122,7 +117,7 @@ describe('ServiceOrderMessageMatrixService', () => {
 
     await service.notifyAgreementConfirmed(createServiceOrder(), 9002);
 
-    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalled();
+    expect(inboxChannelService.dispatchTemplateMessage).not.toHaveBeenCalled();
   });
 
   it('omite la encuesta automática cuando no existe una plantilla configurada', async () => {
