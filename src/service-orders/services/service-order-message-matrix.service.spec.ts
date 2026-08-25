@@ -292,6 +292,66 @@ describe('ServiceOrderMessageMatrixService', () => {
     );
   });
 
+  it('reintenta una cotización cuya entrega anterior quedó programada para reintento', async () => {
+    const notificationRepository = createMockRepo();
+    notificationRepository.findOne.mockResolvedValue({
+      id: 15,
+      serviceOrderId: 201,
+      idempotencyKey: 'commercial_version:42:diagnosis-quote-template',
+      status: 'RETRY_SCHEDULED',
+      attemptCount: 1,
+      nextAttemptAt: new Date(),
+      lastError: 'Meta temporalmente no disponible',
+    });
+    const attemptRepository = createMockRepo();
+    const inboxService = {
+      getThreadForServiceOrder: jest.fn().mockResolvedValue({
+        clientPhone: '+51932998578',
+        contextToken: 'ctx-201',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest.fn().mockResolvedValue({
+        status: 'SENT',
+        externalMessageId: 'wamid.retry',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = {
+      buildDiagnosisAgreementAvailableTemplate: jest.fn().mockReturnValue({
+        templateName: 'diagnostico_cotizacion_equipo',
+        languageCode: 'es_PE',
+        bodyParameters: ['Juan Pérez', 'Laptop Lenovo', 'SO-001', '280.00'],
+        quickReplyPayloads: ['ACEPTAR_COTIZACION:42', 'CONSULTA'],
+        documentUrl: 'https://api.example.com/cotizacion.pdf',
+        documentFileName: 'cotizacion.pdf',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+    );
+
+    const result = await service.dispatchDiagnosisQuoteTemplate({
+      serviceOrder: createServiceOrder(),
+      commercialVersionId: 42,
+      equipmentLabel: 'Laptop Lenovo',
+      totalAmount: 280,
+      documentUrl: 'https://api.example.com/cotizacion.pdf',
+      documentFileName: 'cotizacion.pdf',
+      tempDocumentToken: 'token-42',
+      isRediagnosis: false,
+    });
+
+    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledTimes(1);
+    expect(notificationRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'SENT', attemptCount: 2, nextAttemptAt: null, lastError: null }),
+    );
+    expect(result).toBe('SENT');
+  });
+
   it('programa tres reintentos posteriores al primer fallo transitorio', async () => {
     const notificationRepository = createMockRepo();
     notificationRepository.findOne.mockResolvedValue(null);

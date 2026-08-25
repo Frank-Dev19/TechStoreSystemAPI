@@ -187,7 +187,9 @@ export class ServiceOrderMessageMatrixService {
     const notificationKind = input.isRediagnosis ? 'rediagnosis-quote' : 'diagnosis-quote';
     const idempotencyKey = `commercial_version:${input.commercialVersionId}:${notificationKind}-template`;
     let notification = await this.notificationRepository.findOne({ where: { idempotencyKey } });
-    if (notification && notification.status !== 'FAILED') return notification.status;
+    if (notification && ['SENT', 'DELIVERED', 'READ'].includes(notification.status)) {
+      return notification.status;
+    }
     const templateBuilder = input.isRediagnosis
       ? this.whatsappTemplateService.buildRediagnosisAgreementTemplate.bind(this.whatsappTemplateService)
       : this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate.bind(this.whatsappTemplateService);
