@@ -179,7 +179,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
     ).rejects.toThrow('no puede ser menor a S/ 90.00');
   });
 
-  it('crea una revisión global reutilizando la versión aceptada del hermano sin cambios', async () => {
+  it('crea una revisión independiente sin incluir la versión aceptada de un equipo hermano', async () => {
     const order = createOrder();
     const itemOne = createItem(order, 701, 1);
     const itemTwo = createItem(order, 702, 2);
@@ -248,6 +248,12 @@ describe('ServiceOrderCommercialRevisionService', () => {
     );
 
     expect(versionRepo.save).toHaveBeenCalledTimes(1);
+    expect(versionRepo.findOne).toHaveBeenCalledTimes(1);
+    expect(versionRepo.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ serviceOrderItemId: itemTwo.id }),
+      }),
+    );
     expect(lineRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         type: ServiceOrderCommercialLineType.SERVICE,
@@ -264,10 +270,6 @@ describe('ServiceOrderCommercialRevisionService', () => {
     );
     expect(agreementItemRepo.save).toHaveBeenCalledWith([
       expect.objectContaining({
-        serviceOrderItemId: itemOne.id,
-        commercialVersionId: acceptedOne.id,
-      }),
-      expect.objectContaining({
         serviceOrderItemId: itemTwo.id,
         commercialVersionId: draftTwo.id,
       }),
@@ -276,14 +278,14 @@ describe('ServiceOrderCommercialRevisionService', () => {
       expect.objectContaining({
         serviceOrderId: order.id,
         derivedFromAgreementId: 900,
-        totalAmount: 200,
+        totalAmount: 120,
       }),
     );
     expect(projection.recalculateLocked).toHaveBeenCalledWith(
       manager,
       order.id,
     );
-    expect(result.items).toHaveLength(2);
+    expect(result.items).toHaveLength(1);
   });
 
   it('reemplaza el borrador previo del equipo cuando el cliente solicita un nuevo cambio', async () => {
@@ -351,37 +353,52 @@ describe('ServiceOrderCommercialRevisionService', () => {
     );
   });
 
-  it('rechaza una revisión si un equipo activo sin cambios todavía no tiene versión comercial', async () => {
+  it('crea la primera cotización de un equipo aunque otro equipo activo todavía no tenga versión comercial', async () => {
     const order = createOrder();
     const itemOne = createItem(order, 701, 1);
     const itemTwo = createItem(order, 702, 2);
     orderRepo.findOne.mockResolvedValue(order);
     itemRepo.find.mockResolvedValue([itemOne, itemTwo]);
-    versionRepo.findOne.mockImplementation(async ({ where }) =>
-      Number(where.serviceOrderItemId) === itemOne.id
-        ? null
-        : { id: 802, serviceOrderItemId: itemTwo.id },
-    );
+    versionRepo.findOne.mockResolvedValue(null);
+    versionRepo.createQueryBuilder.mockReturnValue(sequenceQueryBuilder('0'));
+    versionRepo.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 802,
+    }));
+    agreementRepo.findOne.mockResolvedValue(null);
+    agreementRepo.createQueryBuilder.mockReturnValue(updateQueryBuilder());
+    agreementRepo.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 901,
+    }));
+    projection.recalculateLocked.mockResolvedValue(order);
 
-    await expect(
-      service.createRevision({
-        serviceOrderId: order.id,
-        items: [
-          {
-            serviceOrderItemId: itemTwo.id,
-            lines: [
-              {
-                type: ServiceOrderCommercialLineType.SERVICE,
-                quantity: 1,
-                unitPrice: 120,
-              },
-            ],
-          },
-        ],
+    const result = await service.createRevision({
+      serviceOrderId: order.id,
+      items: [
+        {
+          serviceOrderItemId: itemTwo.id,
+          lines: [
+            {
+              type: ServiceOrderCommercialLineType.SERVICE,
+              quantity: 1,
+              unitPrice: 120,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(agreementItemRepo.save).toHaveBeenCalledWith([
+      expect.objectContaining({
+        serviceOrderItemId: itemTwo.id,
+        commercialVersionId: 802,
       }),
-    ).rejects.toThrow('equipo activo');
-
-    expect(agreementRepo.save).not.toHaveBeenCalled();
+    ]);
+    expect(agreementRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 120 }),
+    );
+    expect(result.items).toHaveLength(1);
   });
 
   it('rechaza items repetidos para impedir dos versiones nuevas del mismo equipo en una revisión', async () => {

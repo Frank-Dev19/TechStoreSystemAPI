@@ -128,29 +128,20 @@ export class ServiceOrderCommercialRevisionService {
 
       for (const item of activeItems) {
         const edit = editedByItemId.get(Number(item.id));
-        if (edit) {
-          const version = await this.createEditedVersion(
-            manager,
-            item,
-            edit,
-            productMap,
-            viewer,
-            order,
-          );
-          item.commercialStatus =
-            ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
-          await itemRepository.save(item);
-          selectedVersions.push({ item, version });
-          continue;
-        }
+        if (!edit) continue;
 
-        const currentVersion = await this.findCurrentVersion(manager, item.id);
-        if (!currentVersion) {
-          throw new BadRequestException(
-            `No se puede consolidar la revisión porque el equipo activo ${item.code} aún no tiene versión comercial`,
-          );
-        }
-        selectedVersions.push({ item, version: currentVersion });
+        const version = await this.createEditedVersion(
+          manager,
+          item,
+          edit,
+          productMap,
+          viewer,
+          order,
+        );
+        item.commercialStatus =
+          ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA;
+        await itemRepository.save(item);
+        selectedVersions.push({ item, version });
       }
 
       const agreementRepository = manager.getRepository(ServiceOrderAgreement);
