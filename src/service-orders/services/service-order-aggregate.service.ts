@@ -34,6 +34,11 @@ export class ServiceOrderAggregateService {
   ) {}
 
   async create(dto: CreateServiceOrderAggregateDto, creatorId: number): Promise<ServiceOrder> {
+    if (dto.serviceType === ServiceType.WARRANTY_SERVICE) {
+      throw new BadRequestException(
+        'Las órdenes de garantía deben crearse desde una cobertura vigente',
+      );
+    }
     if (!dto.items?.length) {
       throw new BadRequestException('At least one service-order item is required');
     }
@@ -44,7 +49,11 @@ export class ServiceOrderAggregateService {
     return serviceOrder;
   }
 
-  private async createInTransaction(
+  async notifyCreated(serviceOrder: ServiceOrder): Promise<void> {
+    await this.intakeNotificationService.notifyOrders([serviceOrder]);
+  }
+
+  async createInTransaction(
     manager: EntityManager,
     dto: CreateServiceOrderAggregateDto,
     creatorId: number,
@@ -81,7 +90,9 @@ export class ServiceOrderAggregateService {
       operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
       technicalStatus,
       commercialStatus,
-      economicStatus: ServiceOrderEconomicStatus.NO_APLICA,
+      economicStatus: dto.serviceType === ServiceType.WARRANTY_SERVICE
+        ? ServiceOrderEconomicStatus.EXONERADO
+        : ServiceOrderEconomicStatus.NO_APLICA,
       montoComprometidoVigente: 0,
       montoReconciliado: 0,
       receivedAt: now,
@@ -128,7 +139,7 @@ export class ServiceOrderAggregateService {
         deliveredAt: null,
         cancelledAt: null,
         cancellationReason: null,
-        warrantySourceItemId: null,
+        warrantySourceItemId: item.warrantySourceItemId ?? null,
       }),
     );
     const savedItems = await itemRepository.save(items);

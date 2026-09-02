@@ -31,6 +31,7 @@ import { SupplierModule } from './suppliers/supplier.module';
 import { BusinessProfileModule } from './business-profile/business-profile.module';
 import { ElectronicBillingModule } from './electronic-billing/electronic-billing.module';
 import { MailSettingsModule } from './mail-settings/mail-settings.module';
+import { WarrantiesModule } from './warranties/warranties.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -63,6 +64,7 @@ import { MailSettingsModule } from './mail-settings/mail-settings.module';
     HealthModule,
     BusinessProfileModule,
     ElectronicBillingModule,
+    WarrantiesModule,
   ],
 })
 export class AppModule {}

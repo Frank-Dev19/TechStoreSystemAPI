@@ -19,6 +19,7 @@ import {
 } from '../enums';
 import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-transition-policy';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
+import { WarrantiesService } from '../../warranties/warranties.service';
 
 type TechnicianTypeBalance = {
   assignedCount: number;
@@ -73,6 +74,7 @@ export class ServiceOrderWorkflowService {
     private readonly userRepository: Repository<User>,
     private readonly transitionPolicy: ServiceOrderTransitionPolicy,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly warrantiesService: WarrantiesService,
   ) {}
 
   async autoAssignTechnician(serviceOrderId: number, actorId?: number): Promise<ServiceOrder> {
@@ -176,6 +178,15 @@ export class ServiceOrderWorkflowService {
       if (previousTechnicianId === dto.technicianId) {
         return serviceOrder;
       }
+
+      await this.warrantiesService.assertTechnicianAssignment(
+        manager,
+        serviceOrder,
+        dto.technicianId,
+        viewer,
+        dto.warrantyOverrideReason,
+        actorId,
+      );
 
       const assignedAt = new Date();
       await manager.getRepository(ServiceOrder).update(serviceOrder.id, {

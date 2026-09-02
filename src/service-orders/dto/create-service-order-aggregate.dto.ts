@@ -20,6 +20,7 @@ import {
 import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from '../../common/utils/phone.util';
 import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
+import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
 
 const trimOptionalText = ({ value }: { value: unknown }): unknown => {
   if (typeof value !== 'string') return value;
@@ -131,6 +132,15 @@ export class CreateServiceOrderItemDto {
   @IsPositive()
   @IsOptional()
   warrantySourceItemId?: number;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  warrantyDurationValue?: number;
+
+  @IsEnum(WarrantyDurationUnit)
+  @IsOptional()
+  warrantyDurationUnit?: WarrantyDurationUnit;
 
   @ValidateNested()
   @Type(() => CreateServiceOrderInitialCommercialDto)

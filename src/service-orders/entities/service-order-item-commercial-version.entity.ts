@@ -12,6 +12,7 @@ import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/s
 import { ServiceOrderItemCommercialLine } from './service-order-item-commercial-line.entity';
 import { ServiceOrderItem } from './service-order-item.entity';
 import { ServiceOrderClientDecision } from '../service-agreements/entities/service-order-client-decision.entity';
+import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
 
 @Entity('service_order_item_commercial_versions')
 @Unique('UQ_service_order_item_commercial_version', ['serviceOrderItemId', 'versionNumber'])
@@ -41,6 +42,17 @@ export class ServiceOrderItemCommercialVersion {
 
   @Column({ name: 'total_amount', type: 'decimal', precision: 12, scale: 2 })
   totalAmount: number;
+
+  @Column({ name: 'warranty_duration_value', type: 'int', unsigned: true, default: 30 })
+  warrantyDurationValue: number;
+
+  @Column({
+    name: 'warranty_duration_unit',
+    type: 'enum',
+    enum: WarrantyDurationUnit,
+    default: WarrantyDurationUnit.DAY,
+  })
+  warrantyDurationUnit: WarrantyDurationUnit;
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;

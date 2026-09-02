@@ -13,6 +13,7 @@ import {
 import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-transition-policy';
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
 import { ServiceOrderFinalReportNotificationService } from './service-order-final-report-notification.service';
+import { WarrantiesService } from '../../warranties/warranties.service';
 
 type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
@@ -23,6 +24,7 @@ export class ServiceOrderItemWorkflowService {
     private readonly transitionPolicy: ServiceOrderTransitionPolicy,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
     private readonly finalReportNotificationService: ServiceOrderFinalReportNotificationService,
+    private readonly warrantiesService: WarrantiesService,
   ) {}
 
   async changeTechnicalStatus(
@@ -63,6 +65,9 @@ export class ServiceOrderItemWorkflowService {
       this.applyItemLifecycle(item, nextStatus, reason, now);
       await itemRepository.save(item);
       await this.recordEvent(manager, order.id, item, previousStatus, nextStatus, actorId, reason);
+      if (nextStatus === ServiceOrderTechnicalStatus.EN_DIAGNOSTICO) {
+        await this.warrantiesService.markClaimInReview(manager, order.id, actorId);
+      }
       return this.projectionService.recalculateLocked(manager, serviceOrderId);
     };
 

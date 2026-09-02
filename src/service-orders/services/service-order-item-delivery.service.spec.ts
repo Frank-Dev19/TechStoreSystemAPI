@@ -85,7 +85,12 @@ describe('ServiceOrderItemDeliveryService', () => {
     messageMatrix = {
       notifySurveyRequest: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
-    service = new ServiceOrderItemDeliveryService(manager, projection, messageMatrix);
+    service = new ServiceOrderItemDeliveryService(
+      manager,
+      projection,
+      messageMatrix,
+      { issueServiceCoveragesForDelivery: jest.fn() } as any,
+    );
   });
 
   it('entrega varios equipos en una sola transacción con la misma fecha', async () => {

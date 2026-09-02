@@ -17,6 +17,8 @@ import { ServiceOrderAgreementSource } from '../service-agreements/service-agree
 import { ServiceOrderAgreementStatus } from '../service-agreements/service-agreement-status.enum';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
 import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/service-order-item-commercial-version-status.enum';
+import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
+import { DEFAULT_SERVICE_WARRANTY_DURATION } from '../../warranties/warranty.constants';
 
 const TECHNICAL_SERVICE_CODE = 'TECHNICAL_SERVICE';
 const TECHNICAL_SERVICE_NAME = 'Servicio técnico';
@@ -79,6 +81,8 @@ export class ServiceOrderInitialCommercialService {
           versionNumber: 1,
           status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
           totalAmount,
+          warrantyDurationValue: input.warrantyDurationValue ?? DEFAULT_SERVICE_WARRANTY_DURATION,
+          warrantyDurationUnit: input.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
           notes: commercial.notes ?? input.notes ?? null,
           createdByUserId: creatorId,
           acceptedAt,

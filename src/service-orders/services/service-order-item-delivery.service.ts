@@ -15,6 +15,8 @@ import { ServiceOrderAgreement } from '../service-agreements/entities/service-ag
 import { ServiceOrderAgreementStatus } from '../service-agreements/service-agreement-status.enum';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
+import { WarrantiesService } from '../../warranties/warranties.service';
+import { ServiceType } from '../enums';
 
 type DeliveryViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
@@ -24,6 +26,7 @@ export class ServiceOrderItemDeliveryService {
     private readonly manager: EntityManager,
     private readonly projectionService: ServiceOrderAggregateProjectionService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
+    private readonly warrantiesService: WarrantiesService,
   ) {}
 
   async deliverOnlyItem(serviceOrderId: number, actorId?: number, viewer?: DeliveryViewer) {
@@ -121,7 +124,7 @@ export class ServiceOrderItemDeliveryService {
         includesChargedCancellation ||= isCancelled && hasCancellationCharge;
       }
 
-      if (requiresEconomicCoverage) {
+      if (requiresEconomicCoverage && order.serviceType !== ServiceType.WARRANTY_SERVICE) {
         const currentAgreement = await manager.getRepository(ServiceOrderAgreement).findOne({
           where: { serviceOrderId },
           order: { sequenceNumber: 'DESC', createdAt: 'DESC' },
@@ -139,6 +142,14 @@ export class ServiceOrderItemDeliveryService {
         }
       }
 
+      if (
+        requiresEconomicCoverage &&
+        order.serviceType === ServiceType.WARRANTY_SERVICE &&
+        order.economicStatus !== ServiceOrderEconomicStatus.EXONERADO
+      ) {
+        throw new BadRequestException('La atención por garantía debe permanecer exonerada');
+      }
+
       const now = new Date();
       for (const item of pendingItems) {
         const previousStatus = item.operativeStatus;
@@ -149,6 +160,9 @@ export class ServiceOrderItemDeliveryService {
         await itemRepository.save(item);
         await this.recordEvent(manager, order.id, item, previousStatus, actorId);
       }
+      await this.warrantiesService.issueServiceCoveragesForDelivery(manager, order, pendingItems, {
+        id: actorId,
+      });
       const result = await this.projectionService.recalculateLocked(manager, serviceOrderId);
       shouldNotifySurvey =
         pendingItems.length > 0 &&

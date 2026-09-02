@@ -129,6 +129,9 @@ export class ServiceOrder {
   @Column({ name: 'assigned_at', type: 'datetime', nullable: true })
   assignedAt: Date | null;
 
+  @Column({ name: 'warranty_claim_id', type: 'bigint', unsigned: true, nullable: true, unique: true })
+  warrantyClaimId: number | null;
+
   @ManyToOne(() => Client, { eager: false, nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'client_id' })
   client: Client | null;

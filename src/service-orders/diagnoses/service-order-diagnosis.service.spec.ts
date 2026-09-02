@@ -58,7 +58,10 @@ const createOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder =>
     ...overrides,
   }) as ServiceOrder;
 
-const createItem = (order: ServiceOrder, overrides: Partial<ServiceOrderItem> = {}): ServiceOrderItem =>
+const createItem = (
+  order: ServiceOrder,
+  overrides: Partial<ServiceOrderItem> = {},
+): ServiceOrderItem =>
   ({
     id: 101,
     serviceOrderId: order.id,
@@ -106,6 +109,7 @@ describe('ServiceOrderDiagnosisService', () => {
   let itemWorkflowService: jest.Mocked<ServiceOrderItemWorkflowService>;
   let commercialVersionService: jest.Mocked<ServiceOrderItemCommercialVersionService>;
   let messageMatrixService: jest.Mocked<ServiceOrderMessageMatrixService>;
+  let warrantiesService: { consumeForDiagnosis: jest.Mock };
 
   beforeEach(() => {
     diagnosisRepository = createMockRepo();
@@ -113,14 +117,15 @@ describe('ServiceOrderDiagnosisService', () => {
     itemRepository = createMockRepo();
     diagnosisRepositoryInTx = createMockRepo();
 
-    diagnosisRepository.manager.transaction.mockImplementation(async (callback) =>
-      callback({
-        getRepository: jest.fn((entity) => {
-          if (entity === ServiceOrder) return orderRepository;
-          if (entity === ServiceOrderItem) return itemRepository;
-          return diagnosisRepositoryInTx;
+    diagnosisRepository.manager.transaction.mockImplementation(
+      async (callback) =>
+        callback({
+          getRepository: jest.fn((entity) => {
+            if (entity === ServiceOrder) return orderRepository;
+            if (entity === ServiceOrderItem) return itemRepository;
+            return diagnosisRepositoryInTx;
+          }),
         }),
-      }),
     );
 
     itemWorkflowService = {
@@ -132,20 +137,29 @@ describe('ServiceOrderDiagnosisService', () => {
     messageMatrixService = {
       notifyDiagnosisUpdated: jest.fn(),
     } as unknown as jest.Mocked<ServiceOrderMessageMatrixService>;
+    warrantiesService = { consumeForDiagnosis: jest.fn() };
 
     service = new ServiceOrderDiagnosisService(
       diagnosisRepository as any,
       itemWorkflowService,
       commercialVersionService,
       messageMatrixService,
+      warrantiesService as any,
     );
   });
 
   it('registra el diagnóstico solo en el item indicado y proyecta la cabecera en la misma transacción', async () => {
     const order = createOrder();
     const item = createItem(order);
-    const sibling = createItem(order, { id: 102, position: 2, code: `${order.code}-02` });
-    const previous = { id: 1, serviceOrderItemId: item.id } as ServiceOrderDiagnosis;
+    const sibling = createItem(order, {
+      id: 102,
+      position: 2,
+      code: `${order.code}-02`,
+    });
+    const previous = {
+      id: 1,
+      serviceOrderItemId: item.id,
+    } as ServiceOrderDiagnosis;
     const saved = {
       id: 2,
       serviceOrderItemId: item.id,
@@ -155,12 +169,16 @@ describe('ServiceOrderDiagnosisService', () => {
       outcome: ServiceOrderDiagnosisOutcome.REPAIRABLE,
       summary: 'Requiere cambio de fuente',
     } as ServiceOrderDiagnosis;
-    const projected = createOrder({ technicalStatus: ServiceOrderTechnicalStatus.DIAGNOSTICADA });
+    const projected = createOrder({
+      technicalStatus: ServiceOrderTechnicalStatus.DIAGNOSTICADA,
+    });
 
     itemRepository.findOne.mockResolvedValue(item);
     orderRepository.findOne.mockResolvedValue(order);
     diagnosisRepositoryInTx.findOne.mockResolvedValue(previous);
-    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(createUpdateQueryBuilder());
+    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(
+      createUpdateQueryBuilder(),
+    );
     diagnosisRepositoryInTx.save.mockResolvedValue(saved);
     itemRepository.save.mockResolvedValue(item);
     itemWorkflowService.changeTechnicalStatus.mockResolvedValue(projected);
@@ -178,7 +196,10 @@ describe('ServiceOrderDiagnosisService', () => {
       expect.objectContaining({ serviceOrderItemId: item.id }),
     );
     expect(itemRepository.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: item.id, commercialStatus: ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA }),
+      expect.objectContaining({
+        id: item.id,
+        commercialStatus: ServiceOrderCommercialStatus.PENDIENTE_PROPUESTA,
+      }),
     );
     expect(itemWorkflowService.changeTechnicalStatus).toHaveBeenCalledWith(
       order.id,
@@ -189,8 +210,14 @@ describe('ServiceOrderDiagnosisService', () => {
       undefined,
       expect.anything(),
     );
-    expect(sibling.commercialStatus).toBe(ServiceOrderCommercialStatus.NO_REQUIERE);
-    expect(messageMatrixService.notifyDiagnosisUpdated).toHaveBeenCalledWith(projected, saved, previous);
+    expect(sibling.commercialStatus).toBe(
+      ServiceOrderCommercialStatus.NO_REQUIERE,
+    );
+    expect(messageMatrixService.notifyDiagnosisUpdated).toHaveBeenCalledWith(
+      projected,
+      saved,
+      previous,
+    );
   });
 
   it('supersede y numera diagnósticos por item, no por orden', async () => {
@@ -210,7 +237,10 @@ describe('ServiceOrderDiagnosisService', () => {
     diagnosisRepositoryInTx.createQueryBuilder
       .mockReturnValueOnce(sequenceQueryBuilder)
       .mockReturnValueOnce(queryBuilder);
-    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({ id: 9, ...entity }));
+    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({
+      id: 9,
+      ...entity,
+    }));
     itemWorkflowService.changeTechnicalStatus.mockResolvedValue(order);
 
     await service.create({
@@ -223,23 +253,38 @@ describe('ServiceOrderDiagnosisService', () => {
       'serviceOrderDiagnosis.serviceOrderItemId = :serviceOrderItemId',
       { serviceOrderItemId: item.id },
     );
-    expect(queryBuilder.where).toHaveBeenCalledWith('service_order_item_id = :serviceOrderItemId', {
-      serviceOrderItemId: item.id,
-    });
-    expect(diagnosisRepositoryInTx.create).toHaveBeenCalledWith(expect.objectContaining({ sequenceNumber: 4 }));
+    expect(queryBuilder.where).toHaveBeenCalledWith(
+      'service_order_item_id = :serviceOrderItemId',
+      {
+        serviceOrderItemId: item.id,
+      },
+    );
+    expect(diagnosisRepositoryInTx.create).toHaveBeenCalledWith(
+      expect.objectContaining({ sequenceNumber: 4 }),
+    );
   });
 
   it('deriva la definición comercial solo del item rediagnosticado', async () => {
-    const order = createOrder({ technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION });
+    const order = createOrder({
+      technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
+    });
     const item = createItem(order, {
       technicalStatus: ServiceOrderTechnicalStatus.EN_EJECUCION,
       commercialStatus: ServiceOrderCommercialStatus.AUTORIZADA,
     });
     itemRepository.findOne.mockResolvedValue(item);
     orderRepository.findOne.mockResolvedValue(order);
-    diagnosisRepositoryInTx.findOne.mockResolvedValue({ id: 8, serviceOrderItemId: item.id });
-    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(createUpdateQueryBuilder());
-    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({ id: 9, ...entity }));
+    diagnosisRepositoryInTx.findOne.mockResolvedValue({
+      id: 8,
+      serviceOrderItemId: item.id,
+    });
+    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(
+      createUpdateQueryBuilder(),
+    );
+    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({
+      id: 9,
+      ...entity,
+    }));
     itemWorkflowService.changeTechnicalStatus.mockResolvedValue(order);
 
     await service.create(
@@ -252,7 +297,9 @@ describe('ServiceOrderDiagnosisService', () => {
       { sub: 5, roles: [{ name: 'technician' }] } as any,
     );
 
-    expect(commercialVersionService.createRediagnosisDraft).toHaveBeenCalledWith(
+    expect(
+      commercialVersionService.createRediagnosisDraft,
+    ).toHaveBeenCalledWith(
       expect.anything(),
       item.id,
       5,
@@ -281,11 +328,20 @@ describe('ServiceOrderDiagnosisService', () => {
     itemRepository.findOne.mockResolvedValue(item);
     orderRepository.findOne.mockResolvedValue(order);
     diagnosisRepositoryInTx.findOne.mockResolvedValue(null);
-    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(createUpdateQueryBuilder());
-    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({ id: 7, ...entity }));
+    diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(
+      createUpdateQueryBuilder(),
+    );
+    diagnosisRepositoryInTx.save.mockImplementation(async (entity) => ({
+      id: 7,
+      ...entity,
+    }));
     itemWorkflowService.changeTechnicalStatus.mockResolvedValue(order);
 
-    await service.create({ serviceOrderId: order.id, sequenceNumber: 1, summary: 'Único equipo' });
+    await service.create({
+      serviceOrderId: order.id,
+      sequenceNumber: 1,
+      summary: 'Único equipo',
+    });
 
     expect(diagnosisRepositoryInTx.create).toHaveBeenCalledWith(
       expect.objectContaining({ serviceOrderItemId: item.id }),
@@ -308,13 +364,107 @@ describe('ServiceOrderDiagnosisService', () => {
 
   it('rechaza diagnósticos cuando el item no está en una etapa permitida', async () => {
     const order = createOrder();
-    const item = createItem(order, { technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA });
+    const item = createItem(order, {
+      technicalStatus: ServiceOrderTechnicalStatus.ASIGNADA,
+    });
     itemRepository.findOne.mockResolvedValue(item);
     orderRepository.findOne.mockResolvedValue(order);
 
     await expect(
-      service.create({ serviceOrderItemId: item.id, summary: 'Fuera de etapa' }),
+      service.create({
+        serviceOrderItemId: item.id,
+        summary: 'Fuera de etapa',
+      }),
     ).rejects.toThrow(BadRequestException);
     expect(itemWorkflowService.changeTechnicalStatus).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
+      ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
+    ],
+    [
+      ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED,
+      ServiceOrderTechnicalStatus.SIN_SOLUCION,
+    ],
+  ])(
+    'resuelve una garantía %s mediante diagnóstico y una transición final válida',
+    async (outcome, finalStatus) => {
+      const order = createOrder({ serviceType: ServiceType.WARRANTY_SERVICE });
+      const item = createItem(order);
+      const diagnosis = {
+        id: 12,
+        serviceOrderItemId: item.id,
+        outcome,
+        summary: 'Resultado de la revisión de garantía',
+      } as ServiceOrderDiagnosis;
+      const diagnosedOrder = createOrder({
+        serviceType: ServiceType.WARRANTY_SERVICE,
+        technicalStatus: ServiceOrderTechnicalStatus.DIAGNOSTICADA,
+      });
+      const resolvedOrder = createOrder({
+        serviceType: ServiceType.WARRANTY_SERVICE,
+        technicalStatus: finalStatus,
+      });
+
+      itemRepository.findOne.mockResolvedValue(item);
+      orderRepository.findOne.mockResolvedValue(order);
+      diagnosisRepositoryInTx.findOne.mockResolvedValue(null);
+      diagnosisRepositoryInTx.createQueryBuilder.mockReturnValue(
+        createUpdateQueryBuilder(),
+      );
+      diagnosisRepositoryInTx.save.mockResolvedValue(diagnosis);
+      itemRepository.save.mockResolvedValue(item);
+      itemWorkflowService.changeTechnicalStatus
+        .mockResolvedValueOnce(diagnosedOrder)
+        .mockResolvedValueOnce(resolvedOrder);
+
+      await expect(
+        service.create(
+          {
+            serviceOrderItemId: item.id,
+            sequenceNumber: 1,
+            outcome,
+            summary: diagnosis.summary,
+            details:
+              'Se revisó físicamente el equipo y se documentó el resultado.',
+          },
+          { sub: 5, roles: [{ name: 'technician' }] } as any,
+        ),
+      ).resolves.toBe(diagnosis);
+
+      expect(warrantiesService.consumeForDiagnosis).toHaveBeenCalledWith(
+        expect.anything(),
+        order.id,
+        diagnosis,
+        5,
+      );
+      expect(itemWorkflowService.changeTechnicalStatus).toHaveBeenNthCalledWith(
+        1,
+        order.id,
+        item.id,
+        ServiceOrderTechnicalStatus.DIAGNOSTICADA,
+        undefined,
+        undefined,
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(itemWorkflowService.changeTechnicalStatus).toHaveBeenNthCalledWith(
+        2,
+        order.id,
+        item.id,
+        finalStatus,
+        undefined,
+        diagnosis.summary,
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(messageMatrixService.notifyDiagnosisUpdated).toHaveBeenCalledWith(
+        resolvedOrder,
+        diagnosis,
+        null,
+      );
+    },
+  );
 });

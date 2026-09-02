@@ -15,6 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { ServiceOrderCommercialLineType } from '../service-order-commercial-line-type.enum';
+import { WarrantyDurationUnit } from '../../../common/enums/warranty-duration-unit.enum';
 
 export class CreateServiceOrderCommercialRevisionLineDto {
   @IsEnum(ServiceOrderCommercialLineType)
@@ -74,6 +75,15 @@ export class CreateServiceOrderCommercialRevisionItemDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  warrantyDurationValue?: number;
+
+  @IsEnum(WarrantyDurationUnit)
+  @IsOptional()
+  warrantyDurationUnit?: WarrantyDurationUnit;
 
   @IsArray()
   @ArrayMinSize(1)

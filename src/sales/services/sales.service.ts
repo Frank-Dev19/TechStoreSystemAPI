@@ -51,6 +51,7 @@ import { PaymentMethod } from '../enums/payment-method.enum';
 import { ClientKind } from 'src/clients/entities/client-kind.enum';
 import { ServiceOrderItem } from 'src/service-orders/entities/service-order-item.entity';
 import { ServiceOrderCommercialLineType } from 'src/service-orders/service-agreements/service-order-commercial-line-type.enum';
+import { WarrantiesService } from 'src/warranties/warranties.service';
 
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
@@ -152,6 +153,7 @@ export class SalesService {
     private readonly documentSeriesService: DocumentSeriesService,
     private readonly pricingEngine: PricingEngineService,
     private readonly taxConfigService: TaxConfigService,
+    private readonly warrantiesService: WarrantiesService,
   ) { }
 
   private async breakdownIncludedTax(totalIncluded: number): Promise<IncludedTaxBreakdown> {
@@ -849,6 +851,11 @@ export class SalesService {
         user,
         queryRunner.manager,
       );
+      await this.warrantiesService.issueProductCoveragesForSale(
+        queryRunner.manager,
+        savedSale.id,
+        { name: user },
+      );
 
       // Commit transacción
       await queryRunner.commitTransaction();
@@ -1161,6 +1168,11 @@ export class SalesService {
       if (itemsWithAutoData.length) {
         await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
       }
+      await this.warrantiesService.issueProductCoveragesForSale(
+        queryRunner.manager,
+        sale.id,
+        { name: user },
+      );
 
       await queryRunner.commitTransaction();
       return this.findOne(sale.id);
@@ -1490,6 +1502,11 @@ export class SalesService {
       if (itemsWithAutoData.length) {
         await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
       }
+      await this.warrantiesService.issueProductCoveragesForSale(
+        queryRunner.manager,
+        sale.id,
+        { name: user },
+      );
 
       await queryRunner.commitTransaction();
       return this.findOne(sale.id);
@@ -1811,6 +1828,11 @@ export class SalesService {
         throw new BadRequestException('Solo se pueden anular ventas en estado CONFIRMED');
       }
 
+      await this.warrantiesService.revokeForSaleCancellation(
+        queryRunner.manager,
+        sale.id,
+        { name: user },
+      );
       await this.salesInventory.registerSaleCancellationMovement(sale.id, user, queryRunner.manager);
       await this.reverseSaleCashEffects(sale, user, queryRunner.manager);
 

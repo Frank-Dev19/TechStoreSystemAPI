@@ -29,6 +29,7 @@ import { ClientModule } from 'src/clients/client.module';
 import { ServiceOrder } from 'src/service-orders/entities/service-order.entity';
 import { ServiceOrderSaleLink } from 'src/service-orders/entities/service-order-sale-link.entity';
 import { ServiceOrderAgreement } from 'src/service-orders/service-agreements/entities/service-agreement.entity';
+import { WarrantiesModule } from 'src/warranties/warranties.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { ServiceOrderAgreement } from 'src/service-orders/service-agreements/ent
     PricingModule,
     InventoryModule,
     ClientModule,
+    WarrantiesModule,
   ],
   controllers: [SalesController, CashFlowController, DocumentSeriesController],
   providers: [

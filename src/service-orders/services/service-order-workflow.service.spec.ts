@@ -137,6 +137,7 @@ describe('ServiceOrderWorkflowService', () => {
       userRepository as any,
       transitionPolicy,
       messageMatrixService,
+      { assertTechnicianAssignment: jest.fn() } as any,
     );
   });
 

@@ -241,4 +241,16 @@ describe('ServiceOrderAggregateService', () => {
 
     expect(workflowService.registerInitialAssignment).not.toHaveBeenCalled();
   });
+
+  it('impide crear una orden de garantía fuera del flujo de coberturas', async () => {
+    await expect(service.create({
+      requestOrigin: RequestOrigin.CLIENT,
+      clientId: 30,
+      assignedToTechnicianId: 7,
+      serviceType: ServiceType.WARRANTY_SERVICE,
+      items: [{ equipmentType: EquipmentType.LAPTOP, initialIssue: 'Falla recurrente' }],
+    }, 5)).rejects.toThrow('Las órdenes de garantía deben crearse desde una cobertura vigente');
+
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
 });

@@ -66,11 +66,14 @@ import { ServiceOrderTransitionPolicy } from './state-machines/service-order-tra
 import { MailerModule } from '../mailer/mailer.module';
 import { ServiceOrderSummaryEmailService } from './services/service-order-summary-email.service';
 import { ServiceOrderIntakeNotificationService } from './services/service-order-intake-notification.service';
+import { WarrantiesModule } from '../warranties/warranties.module';
+import { ServiceOrderWarrantyIntakeService } from './services/service-order-warranty-intake.service';
 
 @Module({
   imports: [
     PricingModule,
     MailerModule,
+    WarrantiesModule,
     TypeOrmModule.forFeature([
       ServiceOrder,
       ServiceOrderItem,
@@ -141,6 +144,7 @@ import { ServiceOrderIntakeNotificationService } from './services/service-order-
     ServiceOrderCancellationSummaryPdfService,
     ServiceOrderFinalReportPdfService,
     ServiceOrderPickupReminderPdfService,
+    ServiceOrderWarrantyIntakeService,
   ],
   exports: [
     ServiceOrderService,

@@ -118,6 +118,10 @@ describe('SalesService', () => {
       documentSeriesService,
       pricingEngine,
       taxConfigService,
+      {
+        issueProductCoveragesForSale: jest.fn(),
+        revokeForSaleCancellation: jest.fn(),
+      } as any,
     );
   });
 

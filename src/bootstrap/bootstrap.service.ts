@@ -591,6 +591,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'document-series', label: 'Series de comprobantes', sortOrder: 52, icon: 'fas fa-hashtag' },
       { moduleKey: 'electronic-billing', label: 'Facturacion electronica', sortOrder: 53, icon: 'fas fa-file-invoice' },
       { moduleKey: 'mail-settings', label: 'Configuracion de correo', sortOrder: 54, icon: 'fas fa-envelope' },
+      { moduleKey: 'warranties', label: 'Garantias internas', sortOrder: 55, icon: 'fas fa-shield-alt' },
       { moduleKey: 'inventory-kardex', label: 'Kardex', sortOrder: 60, icon: 'fas fa-book' },
       { moduleKey: 'inventory-products', label: 'Productos de inventario', sortOrder: 61, icon: 'fas fa-box' },
       { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
@@ -613,6 +614,7 @@ export class BootstrapService implements OnModuleInit {
     add('navigation', 'reception', 'Acceder al panel de recepcion');
     add('navigation', 'technician', 'Acceder al panel tecnico');
     add('navigation', 'inbox', 'Acceder a mensajeria');
+    add('navigation', 'warranties', 'Acceder a garantias');
     for (const action of ['read', 'simulate', 'create', 'update', 'cancel']) add('sales', action, `${action} ventas`);
     for (const action of ['read', 'manage', 'reports']) add('cashflow', action, `${action} caja`);
     for (const action of ['read', 'manage']) add('document-series', action, `${action} series`);
@@ -620,6 +622,10 @@ export class BootstrapService implements OnModuleInit {
     add('mail-settings', 'read', 'Ver configuracion de correo', 10);
     add('mail-settings', 'update', 'Actualizar configuracion de correo', 20);
     add('mail-settings', 'test', 'Probar configuracion de correo', 30);
+    add('warranties', 'read', 'Consultar coberturas y atenciones', 10);
+    add('warranties', 'create', 'Registrar una atencion por garantia', 20);
+    add('warranties', 'cancel', 'Cancelar una atencion antes de la revision', 30);
+    add('warranties', 'report', 'Consultar indicadores de garantias por tecnico', 40);
     add('inventory-kardex', 'read', 'Consultar Kardex');
     for (const action of ['read', 'manage']) add('inventory-products', action, `${action} productos`);
     add('inventory-stock', 'read', 'Consultar stock');
@@ -947,6 +953,7 @@ export class BootstrapService implements OnModuleInit {
           'app.home', 'profile.manage-own', 'navigation.clients',
           'navigation.document-types', 'navigation.suppliers', 'navigation.sales',
           'navigation.inventory-manage', 'navigation.reception', 'navigation.inbox',
+          'navigation.warranties',
           'document-type.create', 'document-type.read', 'document-type.update',
           'suppliers.create', 'suppliers.read', 'suppliers.update',
           'sales.read', 'sales.simulate', 'sales.create', 'sales.update', 'sales.cancel',
@@ -990,6 +997,9 @@ export class BootstrapService implements OnModuleInit {
           'service-order-inbox.send',
           'service-order-payment.create',
           'service-order-payment.read',
+          'warranties.read',
+          'warranties.create',
+          'warranties.cancel',
         ],
       },
       {

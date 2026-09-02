@@ -82,6 +82,7 @@ describe('ServiceOrderController', () => {
       { sendManual: jest.fn() } as any,
       { listFinalFailures: jest.fn(), retryFinalFailure: jest.fn() } as any,
       { send: jest.fn() } as any,
+      { create: jest.fn() } as any,
     );
   });
 

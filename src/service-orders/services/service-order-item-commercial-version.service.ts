@@ -35,6 +35,8 @@ export class ServiceOrderItemCommercialVersionService {
         versionNumber,
         status: ServiceOrderItemCommercialVersionStatus.DRAFT,
         totalAmount: Number(baseVersion.totalAmount),
+        warrantyDurationValue: baseVersion.warrantyDurationValue,
+        warrantyDurationUnit: baseVersion.warrantyDurationUnit,
         notes: notes?.trim() || baseVersion.notes,
         createdByUserId,
         acceptedAt: null,

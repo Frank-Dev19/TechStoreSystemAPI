@@ -4,6 +4,7 @@ import { Unit } from './unit.entity';
 import { Lot } from './lot.entity';
 import { Serial } from './serial.entity';
 import { Stock } from './stock.entity';
+import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
 
 @Entity('products')
 @Index(['sku'], { unique: true })
@@ -24,6 +25,17 @@ export class Product {
 
     @Column({ default: false }) isSerialized: boolean;
     @Column({ default: false }) managesExpiration: boolean;
+
+    @Column({ name: 'warranty_duration_value', type: 'int', unsigned: true, default: 0 })
+    warrantyDurationValue: number;
+
+    @Column({
+        name: 'warranty_duration_unit',
+        type: 'enum',
+        enum: WarrantyDurationUnit,
+        default: WarrantyDurationUnit.DAY,
+    })
+    warrantyDurationUnit: WarrantyDurationUnit;
 
     @Column({ type: 'int', default: 0 }) minStock: number;
     @Column({ type: 'int', default: 0 }) maxStock: number;

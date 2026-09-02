@@ -48,6 +48,8 @@ import { ServiceOrderPickupReminderService } from '../services/service-order-pic
 import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
 import { ServiceOrderSummaryEmailService } from '../services/service-order-summary-email.service';
 import { SendServiceOrderSummaryEmailDto } from '../dto/send-service-order-summary-email.dto';
+import { CreateWarrantyIntakeDto } from '../dto/create-warranty-intake.dto';
+import { ServiceOrderWarrantyIntakeService } from '../services/service-order-warranty-intake.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
 @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
@@ -65,6 +67,7 @@ export class ServiceOrderController {
     private readonly pickupReminderService: ServiceOrderPickupReminderService,
     private readonly messageMatrixService: ServiceOrderMessageMatrixService,
     private readonly summaryEmailService: ServiceOrderSummaryEmailService,
+    private readonly warrantyIntakeService: ServiceOrderWarrantyIntakeService,
   ) {}
 
   @Permissions('service-order.create')
@@ -74,6 +77,13 @@ export class ServiceOrderController {
       throw new BadRequestException('Usuario autenticado no encontrado');
     }
     return this.aggregateService.create(dto, userId);
+  }
+
+  @Permissions('warranties.create')
+  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES)
+  @Post('warranty-intake')
+  createWarrantyIntake(@Body() dto: CreateWarrantyIntakeDto, @Req() req: any) {
+    return this.warrantyIntakeService.create(dto, req.user);
   }
 
   @Permissions('service-order.read')

@@ -66,6 +66,7 @@ describe('ServiceOrderItemWorkflowService', () => {
       transitionPolicy,
       projectionService,
       finalReportNotificationService,
+      { markClaimInReview: jest.fn() } as any,
     );
   });
 
