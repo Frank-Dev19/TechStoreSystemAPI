@@ -94,6 +94,25 @@ describe('ServiceOrderItemWorkflowService', () => {
     expect(finalReportNotificationService.notifyResolvedItem).toHaveBeenCalledWith(order.id, firstItem.id);
   });
 
+  it('deja una garantía rechazada lista para entrega sin tratarla como servicio resuelto', async () => {
+    firstItem.technicalStatus = ServiceOrderTechnicalStatus.DIAGNOSTICADA;
+
+    await service.changeTechnicalStatus(
+      order.id,
+      firstItem.id,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
+      7,
+      'Daño atribuible al uso del cliente',
+      { sub: 7, roles: [{ name: 'technician' }] } as any,
+    );
+
+    expect(firstItem.technicalStatus).toBe(ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA);
+    expect(firstItem.operativeStatus).toBe(ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA);
+    expect(firstItem.readyForPickupAt).toBeInstanceOf(Date);
+    expect(firstItem.resolvedAt).toBeInstanceOf(Date);
+    expect(finalReportNotificationService.notifyResolvedItem).not.toHaveBeenCalled();
+  });
+
   it('bloquea la ejecución si cualquier equipo activo sigue pendiente comercialmente', async () => {
     firstItem.technicalStatus = ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
     secondItem.commercialStatus = ServiceOrderCommercialStatus.PENDIENTE_RESPUESTA_CLIENTE;

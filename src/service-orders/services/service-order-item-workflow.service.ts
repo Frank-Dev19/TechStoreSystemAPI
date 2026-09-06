@@ -123,6 +123,7 @@ export class ServiceOrderItemWorkflowService {
         item.operativeStatus = ServiceOrderOperativeStatus.ABIERTA;
         break;
       case ServiceOrderTechnicalStatus.RESUELTA:
+      case ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA:
         item.operativeStatus = ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA;
         item.serviceCompletedAt = item.serviceCompletedAt ?? now;
         item.readyForPickupAt = item.readyForPickupAt ?? now;

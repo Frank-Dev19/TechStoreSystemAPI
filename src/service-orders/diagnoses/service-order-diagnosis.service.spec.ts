@@ -386,7 +386,7 @@ describe('ServiceOrderDiagnosisService', () => {
     ],
     [
       ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED,
-      ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
     ],
   ])(
     'resuelve una garantía %s mediante diagnóstico y una transición final válida',

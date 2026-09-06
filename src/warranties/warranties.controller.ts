@@ -1,13 +1,29 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard';
-import { ADMIN_ROLE_NAMES, RECEPTIONIST_ROLE_NAMES } from '../common/constants/role-names';
+import {
+  ADMIN_ROLE_NAMES,
+  RECEPTIONIST_ROLE_NAMES,
+} from '../common/constants/role-names';
 import { CurrentUser } from '../rbac/decorators/current-user.decorator';
 import { Permissions } from '../rbac/decorators/permissions.decorator';
 import { Roles } from '../rbac/decorators/roles.decorator';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { RolesGuard } from '../rbac/guards/roles.guard';
 import { CancelWarrantyClaimDto } from './dto/cancel-warranty-claim.dto';
-import { FilterWarrantiesDto, WarrantyTechnicianReportDto } from './dto/filter-warranties.dto';
+import {
+  FilterWarrantyClaimsDto,
+  FilterWarrantiesDto,
+  WarrantyTechnicianReportDto,
+} from './dto/filter-warranties.dto';
 import { WarrantiesService } from './warranties.service';
 
 @Controller('warranties')
@@ -22,9 +38,15 @@ export class WarrantiesController {
     return this.warrantiesService.findCoverages(filter);
   }
 
+  @Get('coverage-groups')
+  @Permissions('warranties.read')
+  findCoverageGroups(@Query() filter: FilterWarrantiesDto) {
+    return this.warrantiesService.findCoverageGroups(filter);
+  }
+
   @Get('claims')
   @Permissions('warranties.read')
-  findClaims(@Query() filter: FilterWarrantiesDto) {
+  findClaims(@Query() filter: FilterWarrantyClaimsDto) {
     return this.warrantiesService.findClaims(filter);
   }
 

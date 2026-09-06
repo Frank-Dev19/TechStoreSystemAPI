@@ -520,7 +520,7 @@ export class ServiceOrderDiagnosisService {
       return ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION;
     }
     if (outcome === ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED) {
-      return ServiceOrderTechnicalStatus.SIN_SOLUCION;
+      return ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA;
     }
     return null;
   }

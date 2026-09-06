@@ -39,6 +39,7 @@ export const serviceOrderTransitionMap = {
       ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL,
       ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
       ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
     ],
     [ServiceOrderTechnicalStatus.PENDIENTE_DEFINICION_COMERCIAL]: [
       ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION,
@@ -62,6 +63,7 @@ export const serviceOrderTransitionMap = {
     ],
     [ServiceOrderTechnicalStatus.RESUELTA]: [],
     [ServiceOrderTechnicalStatus.SIN_SOLUCION]: [],
+    [ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA]: [],
   },
   comercial: {
     [ServiceOrderCommercialStatus.NO_REQUIERE]: [],

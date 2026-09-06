@@ -7,6 +7,7 @@ import { WarrantyMovement } from './entities/warranty-movement.entity';
 import { WarrantyClaimStatus } from './enums/warranty-claim-status.enum';
 import { WarrantyCoverageStatus } from './enums/warranty-coverage-status.enum';
 import { WarrantyMovementType } from './enums/warranty-movement-type.enum';
+import { WarrantySourceType } from './enums/warranty-source-type.enum';
 import { WarrantiesService } from './warranties.service';
 
 const repository = () => ({
@@ -16,6 +17,47 @@ const repository = () => ({
 });
 
 describe('WarrantiesService', () => {
+  it('agrupa las coberturas de una venta por producto sin perder sus unidades', () => {
+    const service = new WarrantiesService(
+      repository() as any,
+      repository() as any,
+      repository() as any,
+    );
+    const baseCoverage = {
+      sourceType: WarrantySourceType.PRODUCT,
+      saleId: 21,
+      serviceOrderId: null,
+      productId: 5,
+      sourceCodeSnapshot: 'RM',
+      sourceNameSnapshot: 'RAM Kingston 8GB',
+      coverageAmount: 50,
+      customer: { id: 3, name: 'Daniel Méndez', documentNumber: '15151515' },
+      sale: { series: 'B001', number: '00000025' },
+      serviceOrder: null,
+      createdAt: new Date('2026-09-01T12:00:00-05:00'),
+    };
+    const coverages = [
+      { ...baseCoverage, id: 1, serialSnapshot: 'RM01', status: WarrantyCoverageStatus.ACTIVE },
+      { ...baseCoverage, id: 2, serialSnapshot: 'RM02', status: WarrantyCoverageStatus.CONSUMED },
+      { ...baseCoverage, id: 3, serialSnapshot: 'RM03', status: WarrantyCoverageStatus.ACTIVE },
+    ] as WarrantyCoverage[];
+
+    const group = (service as any).buildCoverageGroup({
+      sourceType: WarrantySourceType.PRODUCT,
+      saleId: 21,
+      serviceOrderId: null,
+      latestCreatedAt: baseCoverage.createdAt,
+      unitCount: 3,
+    }, coverages);
+
+    expect(group.referenceCode).toBe('B001-00000025');
+    expect(group.unitCount).toBe(3);
+    expect(group.itemGroups).toHaveLength(1);
+    expect(group.itemGroups[0].coverages).toHaveLength(3);
+    expect(group.statusCounts.ACTIVE).toBe(2);
+    expect(group.statusCounts.CONSUMED).toBe(1);
+  });
+
   it.each([
     [ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES, WarrantyClaimStatus.RESOLVED_APPLIES],
     [ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED, WarrantyClaimStatus.RESOLVED_REJECTED],

@@ -146,6 +146,33 @@ describe('ServiceOrderAggregateProjectionService', () => {
     expect(result.itemProgress?.isPartial).toBe(false);
   });
 
+  it('proyecta una garantía rechazada como terminal y lista para entrega', async () => {
+    const order = createProjectionOrder(14);
+    const item = createItem(
+      141,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
+      ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA,
+    );
+    item.serviceCompletedAt = new Date('2026-09-03T15:00:00.000Z');
+    item.readyForPickupAt = item.serviceCompletedAt;
+    item.resolvedAt = item.serviceCompletedAt;
+    const orderRepository = {
+      findOne: jest.fn().mockResolvedValue(order),
+      save: jest.fn(async (value) => value),
+    };
+    const manager = {
+      getRepository: jest.fn((entity) =>
+        entity === ServiceOrder ? orderRepository : { find: jest.fn().mockResolvedValue([item]) },
+      ),
+    } as any;
+
+    const result = await service.recalculateLocked(manager, order.id);
+
+    expect(result.technicalStatus).toBe(ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA);
+    expect(result.operativeStatus).toBe(ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA);
+    expect(result.itemProgress).toEqual(expect.objectContaining({ resolved: 1, readyForPickup: 1 }));
+  });
+
   it('proyecta entrega parcial y finaliza solo cuando todos los equipos activos fueron entregados', async () => {
     const order = createProjectionOrder(13);
     const deliveredAt = new Date('2026-08-03T14:00:00.000Z');

@@ -1,6 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, EntityManager, In, IsNull, Repository } from 'typeorm';
+import {
+  Brackets,
+  EntityManager,
+  In,
+  IsNull,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { WarrantyDurationUnit } from '../common/enums/warranty-duration-unit.enum';
 import { Movement } from '../inventory/entities/movement.entity';
 import { MovementSerial } from '../inventory/entities/movement-serial.entity';
@@ -13,12 +24,19 @@ import { ServiceOrder } from '../service-orders/entities/service-order.entity';
 import { ServiceOrderItem } from '../service-orders/entities/service-order-item.entity';
 import { ServiceOrderItemCommercialVersion } from '../service-orders/entities/service-order-item-commercial-version.entity';
 import { ServiceOrderSaleLink } from '../service-orders/entities/service-order-sale-link.entity';
-import { ServiceOrderOperativeStatus, ServiceType } from '../service-orders/enums';
+import {
+  ServiceOrderOperativeStatus,
+  ServiceType,
+} from '../service-orders/enums';
 import { ServiceOrderItemCommercialVersionStatus } from '../service-orders/service-agreements/service-order-item-commercial-version-status.enum';
 import { User } from '../users/entities/user.entity';
 import { ADMIN_ROLE_NAMES, hasRoleName } from '../common/constants/role-names';
 import { JwtPayload } from '../common/utils/jwt-payload.type';
-import { FilterWarrantiesDto, WarrantyTechnicianReportDto } from './dto/filter-warranties.dto';
+import {
+  FilterWarrantyClaimsDto,
+  FilterWarrantiesDto,
+  WarrantyTechnicianReportDto,
+} from './dto/filter-warranties.dto';
 import { WarrantyClaim } from './entities/warranty-claim.entity';
 import { WarrantyCoverage } from './entities/warranty-coverage.entity';
 import { WarrantyMovement } from './entities/warranty-movement.entity';
@@ -26,7 +44,10 @@ import { WarrantyClaimStatus } from './enums/warranty-claim-status.enum';
 import { WarrantyCoverageStatus } from './enums/warranty-coverage-status.enum';
 import { WarrantyMovementType } from './enums/warranty-movement-type.enum';
 import { WarrantySourceType } from './enums/warranty-source-type.enum';
-import { DEFAULT_SERVICE_WARRANTY_DURATION, WARRANTY_COVERAGE_AMOUNT } from './warranty.constants';
+import {
+  DEFAULT_SERVICE_WARRANTY_DURATION,
+  WARRANTY_COVERAGE_AMOUNT,
+} from './warranty.constants';
 import { addWarrantyDuration } from './warranty-date.util';
 import { resolveWarrantyTechnician } from './warranty-policy';
 
@@ -40,6 +61,16 @@ type TechnicianReportRaw = {
   appliedWarranties: string | number;
   rejectedWarranties: string | number;
 };
+
+type CoverageGroupRaw = {
+  sourceType: WarrantySourceType;
+  saleId: string | number | null;
+  serviceOrderId: string | number | null;
+  latestCreatedAt: Date | string;
+  unitCount: string | number;
+};
+
+type CoverageStatusCounts = Record<WarrantyCoverageStatus, number>;
 
 @Injectable()
 export class WarrantiesService {
@@ -63,19 +94,26 @@ export class WarrantiesService {
     });
     if (!sale || sale.status !== SaleStatus.CONFIRMED) return [];
 
-    const serviceLink = await manager.getRepository(ServiceOrderSaleLink).findOne({
-      where: { saleId, deletedAt: IsNull() },
-      relations: ['serviceOrder'],
-      order: { id: 'ASC' },
-    });
-    const operationalCustomerId = Number(serviceLink?.serviceOrder?.clientId ?? sale.customerId);
+    const serviceLink = await manager
+      .getRepository(ServiceOrderSaleLink)
+      .findOne({
+        where: { saleId, deletedAt: IsNull() },
+        relations: ['serviceOrder'],
+        order: { id: 'ASC' },
+      });
+    const operationalCustomerId = Number(
+      serviceLink?.serviceOrder?.clientId ?? sale.customerId,
+    );
     const serialsByProduct = await this.loadSaleSerials(manager, saleId);
     const issued: WarrantyCoverage[] = [];
 
-    for (const item of [...(sale.items ?? [])].sort((left, right) => Number(left.id) - Number(right.id))) {
+    for (const item of [...(sale.items ?? [])].sort(
+      (left, right) => Number(left.id) - Number(right.id),
+    )) {
       const product = item.product;
       const durationValue = Number(product?.warrantyDurationValue ?? 0);
-      if (item.itemType !== 'PRODUCT' || !product || durationValue <= 0) continue;
+      if (item.itemType !== 'PRODUCT' || !product || durationValue <= 0)
+        continue;
 
       const quantity = Number(item.quantity);
       if (!Number.isInteger(quantity) || quantity <= 0) {
@@ -83,13 +121,17 @@ export class WarrantiesService {
           `El producto ${product.name} requiere una cantidad entera para emitir garantías por unidad`,
         );
       }
-      const startsAt = sale.createdAt ? new Date(sale.createdAt) : new Date(`${sale.issueDate}T00:00:00-05:00`);
+      const startsAt = sale.createdAt
+        ? new Date(sale.createdAt)
+        : new Date(`${sale.issueDate}T00:00:00-05:00`);
       const serialQueue = serialsByProduct.get(Number(product.id)) ?? [];
 
       for (let unit = 1; unit <= quantity; unit += 1) {
         const serial = product.isSerialized ? serialQueue.shift() : undefined;
         if (product.isSerialized && !serial) {
-          throw new BadRequestException(`No se encontró el serial vendido para ${product.name}`);
+          throw new BadRequestException(
+            `No se encontró el serial vendido para ${product.name}`,
+          );
         }
         const sourceUnitKey = serial
           ? `sale-item:${item.id}:serial:${serial.id}`
@@ -101,7 +143,9 @@ export class WarrantiesService {
           customerId: operationalCustomerId,
           saleId: sale.id,
           saleItemId: item.id,
-          serviceOrderId: serviceLink ? Number(serviceLink.serviceOrderId) : null,
+          serviceOrderId: serviceLink
+            ? Number(serviceLink.serviceOrderId)
+            : null,
           serviceOrderItemId: null,
           productId: product.id,
           serialId: serial?.id ?? null,
@@ -111,7 +155,8 @@ export class WarrantiesService {
           originTechnicianId: null,
           originTechnicianNameSnapshot: null,
           durationValue,
-          durationUnit: product.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
+          durationUnit:
+            product.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
           startsAt,
           actor,
         });
@@ -120,18 +165,22 @@ export class WarrantiesService {
     }
 
     // También cubre el caso válido en que el equipo fue entregado antes de enlazar la venta.
-    const linkedOrders = await manager.getRepository(ServiceOrderSaleLink).find({
-      where: { saleId, deletedAt: IsNull() },
-      relations: ['serviceOrder', 'serviceOrder.items'],
-      order: { id: 'ASC' },
-    });
+    const linkedOrders = await manager
+      .getRepository(ServiceOrderSaleLink)
+      .find({
+        where: { saleId, deletedAt: IsNull() },
+        relations: ['serviceOrder', 'serviceOrder.items'],
+        order: { id: 'ASC' },
+      });
     for (const link of linkedOrders) {
-      issued.push(...await this.issueServiceCoveragesForDelivery(
-        manager,
-        link.serviceOrder,
-        link.serviceOrder.items ?? [],
-        actor,
-      ));
+      issued.push(
+        ...(await this.issueServiceCoveragesForDelivery(
+          manager,
+          link.serviceOrder,
+          link.serviceOrder.items ?? [],
+          actor,
+        )),
+      );
     }
     return issued;
   }
@@ -144,7 +193,9 @@ export class WarrantiesService {
   ): Promise<WarrantyCoverage[]> {
     if (order.serviceType === ServiceType.WARRANTY_SERVICE) return [];
     const eligibleItems = items.filter(
-      (item) => item.deliveredAt && item.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA,
+      (item) =>
+        item.deliveredAt &&
+        item.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA,
     );
     if (!eligibleItems.length) return [];
 
@@ -154,25 +205,37 @@ export class WarrantiesService {
       order: { linkedAt: 'DESC' },
     });
     if (!saleLink || saleLink.sale.status !== SaleStatus.CONFIRMED) return [];
-    if (!order.clientId) throw new BadRequestException('La orden no tiene cliente para emitir su garantía');
+    if (!order.clientId)
+      throw new BadRequestException(
+        'La orden no tiene cliente para emitir su garantía',
+      );
     if (!order.assignedToTechnicianId) {
-      throw new BadRequestException('La orden no tiene técnico responsable para emitir su garantía');
+      throw new BadRequestException(
+        'La orden no tiene técnico responsable para emitir su garantía',
+      );
     }
     const technician = await manager.getRepository(User).findOne({
       where: { id: order.assignedToTechnicianId },
     });
-    if (!technician) throw new BadRequestException('El técnico responsable de la orden no existe');
+    if (!technician)
+      throw new BadRequestException(
+        'El técnico responsable de la orden no existe',
+      );
 
     const issued: WarrantyCoverage[] = [];
     for (const item of eligibleItems) {
-      const version = await manager.getRepository(ServiceOrderItemCommercialVersion).findOne({
-        where: {
-          serviceOrderItemId: item.id,
-          status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
-        },
-        order: { versionNumber: 'DESC', acceptedAt: 'DESC' },
-      });
-      const durationValue = Number(version?.warrantyDurationValue ?? DEFAULT_SERVICE_WARRANTY_DURATION);
+      const version = await manager
+        .getRepository(ServiceOrderItemCommercialVersion)
+        .findOne({
+          where: {
+            serviceOrderItemId: item.id,
+            status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+          },
+          order: { versionNumber: 'DESC', acceptedAt: 'DESC' },
+        });
+      const durationValue = Number(
+        version?.warrantyDurationValue ?? DEFAULT_SERVICE_WARRANTY_DURATION,
+      );
       if (durationValue <= 0) continue;
       const coverage = await this.createCoverageIfMissing(manager, {
         sourceType: WarrantySourceType.SERVICE,
@@ -186,7 +249,9 @@ export class WarrantiesService {
         productId: null,
         serialId: null,
         sourceCodeSnapshot: item.code,
-        sourceNameSnapshot: [item.brand, item.model].filter(Boolean).join(' ') || item.equipmentType,
+        sourceNameSnapshot:
+          [item.brand, item.model].filter(Boolean).join(' ') ||
+          item.equipmentType,
         serialSnapshot: item.serialNumber,
         originTechnicianId: technician.id,
         originTechnicianNameSnapshot: technician.name,
@@ -212,10 +277,13 @@ export class WarrantiesService {
       relations: ['product', 'serial', 'serviceOrderItem'],
       lock: { mode: 'pessimistic_write' },
     });
-    if (!coverage) throw new NotFoundException('Cobertura de garantía no encontrada');
+    if (!coverage)
+      throw new NotFoundException('Cobertura de garantía no encontrada');
     await this.expireIfNeeded(manager, coverage, actorId);
     if (coverage.status !== WarrantyCoverageStatus.ACTIVE) {
-      throw new BadRequestException(`La cobertura no está disponible: ${coverage.status}`);
+      throw new BadRequestException(
+        `La cobertura no está disponible: ${coverage.status}`,
+      );
     }
 
     const now = new Date();
@@ -243,7 +311,14 @@ export class WarrantiesService {
     );
     coverage.status = WarrantyCoverageStatus.RESERVED;
     await coverageRepository.save(coverage);
-    await this.recordMovement(manager, coverage, WarrantyMovementType.RESERVED, actorId, null, claim.id);
+    await this.recordMovement(
+      manager,
+      coverage,
+      WarrantyMovementType.RESERVED,
+      actorId,
+      null,
+      claim.id,
+    );
     return { coverage, claim };
   }
 
@@ -256,15 +331,24 @@ export class WarrantiesService {
     overrideReason?: string,
   ): Promise<WarrantyClaim> {
     const repository = manager.getRepository(WarrantyClaim);
-    const claim = await repository.findOne({ where: { id: claimId }, lock: { mode: 'pessimistic_write' } });
-    if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+    const claim = await repository.findOne({
+      where: { id: claimId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!claim)
+      throw new NotFoundException('Reclamo de garantía no encontrado');
     claim.serviceOrderId = serviceOrderId;
     claim.serviceOrderItemId = serviceOrderItemId;
     claim.attendingTechnicianId = attendingTechnicianId;
     claim.technicianOverrideReason = overrideReason?.trim() || null;
     await repository.save(claim);
-    if (claim.originTechnicianId && claim.originTechnicianId !== attendingTechnicianId) {
-      const coverage = await manager.getRepository(WarrantyCoverage).findOneByOrFail({ id: claim.coverageId });
+    if (
+      claim.originTechnicianId &&
+      claim.originTechnicianId !== attendingTechnicianId
+    ) {
+      const coverage = await manager
+        .getRepository(WarrantyCoverage)
+        .findOneByOrFail({ id: claim.coverageId });
       await this.recordMovement(
         manager,
         coverage,
@@ -278,7 +362,11 @@ export class WarrantiesService {
     return claim;
   }
 
-  async markClaimInReview(manager: EntityManager, serviceOrderId: number, actorId?: number): Promise<void> {
+  async markClaimInReview(
+    manager: EntityManager,
+    serviceOrderId: number,
+    actorId?: number,
+  ): Promise<void> {
     const claim = await manager.getRepository(WarrantyClaim).findOne({
       where: { serviceOrderId, status: WarrantyClaimStatus.RECEIVED },
       lock: { mode: 'pessimistic_write' },
@@ -305,7 +393,8 @@ export class WarrantiesService {
       relations: ['coverage'],
       lock: { mode: 'pessimistic_write' },
     });
-    if (!claim) throw new NotFoundException('Reclamo de garantía asociado no encontrado');
+    if (!claim)
+      throw new NotFoundException('Reclamo de garantía asociado no encontrado');
 
     const assignment = resolveWarrantyTechnician({
       sourceType: claim.coverage.sourceType,
@@ -342,7 +431,12 @@ export class WarrantiesService {
     diagnosis: ServiceOrderDiagnosis,
     actorId?: number,
   ): Promise<WarrantyClaim | null> {
-    if (![ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES, ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED].includes(diagnosis.outcome)) {
+    if (
+      ![
+        ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
+        ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED,
+      ].includes(diagnosis.outcome)
+    ) {
       return null;
     }
     const claimRepository = manager.getRepository(WarrantyClaim);
@@ -356,18 +450,22 @@ export class WarrantiesService {
       where: { id: claim.coverageId },
       lock: { mode: 'pessimistic_write' },
     });
-    if (!coverage) throw new NotFoundException('Cobertura del reclamo no encontrada');
+    if (!coverage)
+      throw new NotFoundException('Cobertura del reclamo no encontrada');
     if (coverage.status === WarrantyCoverageStatus.CONSUMED) return claim;
     if (coverage.status !== WarrantyCoverageStatus.RESERVED) {
-      throw new BadRequestException(`No se puede consumir una cobertura en estado ${coverage.status}`);
+      throw new BadRequestException(
+        `No se puede consumir una cobertura en estado ${coverage.status}`,
+      );
     }
 
     const now = new Date();
     coverage.status = WarrantyCoverageStatus.CONSUMED;
     coverage.consumedAt = now;
-    claim.status = diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
-      ? WarrantyClaimStatus.RESOLVED_APPLIES
-      : WarrantyClaimStatus.RESOLVED_REJECTED;
+    claim.status =
+      diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
+        ? WarrantyClaimStatus.RESOLVED_APPLIES
+        : WarrantyClaimStatus.RESOLVED_REJECTED;
     claim.diagnosisId = diagnosis.id;
     claim.outcome = diagnosis.outcome;
     claim.resolvedAt = now;
@@ -387,14 +485,24 @@ export class WarrantiesService {
     return claim;
   }
 
-  async cancelClaim(claimId: number, actorId: number, reason: string): Promise<WarrantyClaim> {
+  async cancelClaim(
+    claimId: number,
+    actorId: number,
+    reason: string,
+  ): Promise<WarrantyClaim> {
     return this.claimRepository.manager.transaction(async (manager) => {
       const claimRepository = manager.getRepository(WarrantyClaim);
-      const claim = await claimRepository.findOne({ where: { id: claimId }, lock: { mode: 'pessimistic_write' } });
-      if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+      const claim = await claimRepository.findOne({
+        where: { id: claimId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!claim)
+        throw new NotFoundException('Reclamo de garantía no encontrado');
       if (claim.status === WarrantyClaimStatus.CANCELLED) return claim;
       if (claim.status !== WarrantyClaimStatus.RECEIVED) {
-        throw new BadRequestException('Solo se puede cancelar una garantía antes de iniciar la revisión técnica');
+        throw new BadRequestException(
+          'Solo se puede cancelar una garantía antes de iniciar la revisión técnica',
+        );
       }
       const coverageRepository = manager.getRepository(WarrantyCoverage);
       const coverage = await coverageRepository.findOne({
@@ -402,7 +510,9 @@ export class WarrantiesService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!coverage || coverage.status !== WarrantyCoverageStatus.RESERVED) {
-        throw new BadRequestException('La cobertura del reclamo ya no está reservada');
+        throw new BadRequestException(
+          'La cobertura del reclamo ya no está reservada',
+        );
       }
       claim.status = WarrantyClaimStatus.CANCELLED;
       claim.cancelledAt = new Date();
@@ -411,24 +521,41 @@ export class WarrantiesService {
       coverage.status = WarrantyCoverageStatus.ACTIVE;
       await claimRepository.save(claim);
       await coverageRepository.save(coverage);
-      await this.recordMovement(manager, coverage, WarrantyMovementType.RELEASED, actorId, reason, claim.id);
+      await this.recordMovement(
+        manager,
+        coverage,
+        WarrantyMovementType.RELEASED,
+        actorId,
+        reason,
+        claim.id,
+      );
       return claim;
     });
   }
 
-  async revokeForSaleCancellation(manager: EntityManager, saleId: number, actor: Actor = {}): Promise<void> {
+  async revokeForSaleCancellation(
+    manager: EntityManager,
+    saleId: number,
+    actor: Actor = {},
+  ): Promise<void> {
     const repository = manager.getRepository(WarrantyCoverage);
     const coverages = await repository.find({
-      where: { saleId, status: In([
-        WarrantyCoverageStatus.ACTIVE,
-        WarrantyCoverageStatus.RESERVED,
-        WarrantyCoverageStatus.CONSUMED,
-        WarrantyCoverageStatus.EXPIRED,
-      ]) },
+      where: {
+        saleId,
+        status: In([
+          WarrantyCoverageStatus.ACTIVE,
+          WarrantyCoverageStatus.RESERVED,
+          WarrantyCoverageStatus.CONSUMED,
+          WarrantyCoverageStatus.EXPIRED,
+        ]),
+      },
       lock: { mode: 'pessimistic_write' },
     });
     const blocked = coverages.find((coverage) =>
-      [WarrantyCoverageStatus.RESERVED, WarrantyCoverageStatus.CONSUMED].includes(coverage.status),
+      [
+        WarrantyCoverageStatus.RESERVED,
+        WarrantyCoverageStatus.CONSUMED,
+      ].includes(coverage.status),
     );
     if (blocked) {
       throw new BadRequestException(
@@ -457,58 +584,319 @@ export class WarrantiesService {
   async findCoverages(filter: FilterWarrantiesDto) {
     const page = Math.max(1, Number(filter.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(filter.limit ?? 20)));
-    const qb = this.coverageRepository
-      .createQueryBuilder('coverage')
-      .leftJoinAndSelect('coverage.customer', 'customer')
-      .leftJoinAndSelect('coverage.product', 'product')
-      .leftJoinAndSelect('coverage.serial', 'serial')
+    const qb = this.createCoverageSearchQuery(filter, true)
       .orderBy('coverage.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
-    if (filter.customerId) qb.andWhere('coverage.customerId = :customerId', { customerId: filter.customerId });
-    if (filter.sourceType) qb.andWhere('coverage.sourceType = :sourceType', { sourceType: filter.sourceType });
-    if (filter.status) qb.andWhere('coverage.status = :status', { status: filter.status });
-    if (filter.search?.trim()) {
-      qb.andWhere(new Brackets((where) => {
-        where.where('coverage.sourceCodeSnapshot LIKE :search')
-          .orWhere('coverage.sourceNameSnapshot LIKE :search')
-          .orWhere('coverage.serialSnapshot LIKE :search')
-          .orWhere('customer.name LIKE :search');
-      })).setParameter('search', `%${filter.search.trim()}%`);
-    }
     const [data, total] = await qb.getManyAndCount();
     return { data, total, page, limit };
   }
 
-  async findClaims(filter: FilterWarrantiesDto) {
+  async findCoverageGroups(filter: FilterWarrantiesDto) {
+    const page = Math.max(1, Number(filter.page ?? 1));
+    const limit = Math.min(50, Math.max(1, Number(filter.limit ?? 10)));
+    const rawGroups = await this.createCoverageSearchQuery(filter)
+      .select('coverage.sourceType', 'sourceType')
+      .addSelect('coverage.saleId', 'saleId')
+      .addSelect('coverage.serviceOrderId', 'serviceOrderId')
+      .addSelect('MAX(coverage.createdAt)', 'latestCreatedAt')
+      .addSelect('COUNT(coverage.id)', 'unitCount')
+      .groupBy('coverage.sourceType')
+      .addGroupBy('coverage.saleId')
+      .addGroupBy('coverage.serviceOrderId')
+      .orderBy('latestCreatedAt', 'DESC')
+      .getRawMany<CoverageGroupRaw>();
+
+    const groupedRows = this.mergeCoverageGroupRows(rawGroups);
+    const total = groupedRows.length;
+    const coverageTotal = groupedRows.reduce(
+      (sum, group) => sum + Number(group.unitCount),
+      0,
+    );
+    const selectedGroups = groupedRows.slice((page - 1) * limit, page * limit);
+    if (!selectedGroups.length) {
+      return { data: [], total, coverageTotal, page, limit };
+    }
+
+    const coverageQuery = this.createCoverageSearchQuery(filter, true)
+      .andWhere(
+        new Brackets((where) => {
+          selectedGroups.forEach((group, index) => {
+            if (group.sourceType === WarrantySourceType.PRODUCT) {
+              where.orWhere(
+                `(coverage.sourceType = :groupType${index} AND coverage.saleId = :groupSaleId${index})`,
+                {
+                  [`groupType${index}`]: group.sourceType,
+                  [`groupSaleId${index}`]: Number(group.saleId),
+                },
+              );
+            } else {
+              where.orWhere(
+                `(coverage.sourceType = :groupType${index} AND coverage.serviceOrderId = :groupOrderId${index})`,
+                {
+                  [`groupType${index}`]: group.sourceType,
+                  [`groupOrderId${index}`]: Number(group.serviceOrderId),
+                },
+              );
+            }
+          });
+        }),
+      )
+      .orderBy('coverage.createdAt', 'DESC')
+      .addOrderBy('coverage.id', 'ASC');
+
+    const coverages = await coverageQuery.getMany();
+    const data = selectedGroups.map((group) =>
+      this.buildCoverageGroup(group, coverages),
+    );
+    return { data, total, coverageTotal, page, limit };
+  }
+
+  async findClaims(filter: FilterWarrantyClaimsDto) {
     const page = Math.max(1, Number(filter.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(filter.limit ?? 20)));
-    const [data, total] = await this.claimRepository.findAndCount({
-      relations: ['coverage', 'coverage.customer', 'coverage.product', 'attendingTechnician'],
-      order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const query = this.claimRepository
+      .createQueryBuilder('claim')
+      .leftJoinAndSelect('claim.coverage', 'coverage')
+      .leftJoinAndSelect('coverage.customer', 'customer')
+      .leftJoinAndSelect('coverage.product', 'product')
+      .leftJoinAndSelect('claim.attendingTechnician', 'attendingTechnician')
+      .leftJoinAndSelect('claim.diagnosis', 'diagnosis')
+      .leftJoinAndSelect('claim.serviceOrder', 'serviceOrder');
+
+    if (filter.sourceType) {
+      query.andWhere('coverage.sourceType = :sourceType', {
+        sourceType: filter.sourceType,
+      });
+    }
+    if (filter.status) {
+      query.andWhere('claim.status = :status', { status: filter.status });
+    }
+    if (filter.outcome) {
+      query.andWhere('claim.outcome = :outcome', { outcome: filter.outcome });
+    }
+    if (filter.dateFrom) {
+      query.andWhere('DATE(claim.createdAt) >= :dateFrom', {
+        dateFrom: filter.dateFrom,
+      });
+    }
+    if (filter.dateTo) {
+      query.andWhere('DATE(claim.createdAt) <= :dateTo', {
+        dateTo: filter.dateTo,
+      });
+    }
+    if (filter.search?.trim()) {
+      query
+        .andWhere(
+          new Brackets((where) => {
+            where
+              .where('customer.name LIKE :claimSearch')
+              .orWhere('customer.documentNumber LIKE :claimSearch')
+              .orWhere('coverage.sourceCodeSnapshot LIKE :claimSearch')
+              .orWhere('coverage.sourceNameSnapshot LIKE :claimSearch')
+              .orWhere('coverage.serialSnapshot LIKE :claimSearch')
+              .orWhere('product.sku LIKE :claimSearch')
+              .orWhere('product.name LIKE :claimSearch')
+              .orWhere('serviceOrder.code LIKE :claimSearch')
+              .orWhere('claim.reportedIssue LIKE :claimSearch')
+              .orWhere('diagnosis.summary LIKE :claimSearch')
+              .orWhere('diagnosis.details LIKE :claimSearch')
+              .orWhere('attendingTechnician.name LIKE :claimSearch');
+          }),
+        )
+        .setParameter('claimSearch', `%${filter.search.trim()}%`);
+    }
+
+    const [data, total] = await query
+      .orderBy('claim.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
     return { data, total, page, limit };
+  }
+
+  private createCoverageSearchQuery(
+    filter: FilterWarrantiesDto,
+    selectRelations = false,
+  ): SelectQueryBuilder<WarrantyCoverage> {
+    const qb = this.coverageRepository.createQueryBuilder('coverage');
+    const join = selectRelations ? 'leftJoinAndSelect' : 'leftJoin';
+    qb[join]('coverage.customer', 'customer')
+      [join]('coverage.product', 'product')
+      [join]('coverage.serial', 'serial')
+      [join]('coverage.sale', 'sale')
+      [join]('coverage.serviceOrder', 'serviceOrder');
+
+    if (filter.customerId) {
+      qb.andWhere('coverage.customerId = :customerId', {
+        customerId: filter.customerId,
+      });
+    }
+    if (filter.sourceType) {
+      qb.andWhere('coverage.sourceType = :sourceType', {
+        sourceType: filter.sourceType,
+      });
+    }
+    if (filter.status) {
+      qb.andWhere('coverage.status = :status', { status: filter.status });
+    }
+    if (filter.search?.trim()) {
+      qb.andWhere(
+        new Brackets((where) => {
+          where
+            .where('coverage.sourceCodeSnapshot LIKE :search')
+            .orWhere('coverage.sourceNameSnapshot LIKE :search')
+            .orWhere('coverage.serialSnapshot LIKE :search')
+            .orWhere('customer.name LIKE :search')
+            .orWhere('customer.documentNumber LIKE :search')
+            .orWhere('product.sku LIKE :search')
+            .orWhere('product.name LIKE :search')
+            .orWhere('sale.series LIKE :search')
+            .orWhere('sale.number LIKE :search')
+            .orWhere("CONCAT(sale.series, '-', sale.number) LIKE :search")
+            .orWhere('serviceOrder.code LIKE :search');
+        }),
+      ).setParameter('search', `%${filter.search.trim()}%`);
+    }
+    return qb;
+  }
+
+  private buildCoverageGroup(
+    group: CoverageGroupRaw,
+    coverages: WarrantyCoverage[],
+  ) {
+    const saleId = group.saleId == null ? null : Number(group.saleId);
+    const serviceOrderId =
+      group.serviceOrderId == null ? null : Number(group.serviceOrderId);
+    const groupCoverages = coverages.filter((coverage) =>
+      group.sourceType === WarrantySourceType.PRODUCT
+        ? coverage.sourceType === group.sourceType &&
+          Number(coverage.saleId) === saleId
+        : coverage.sourceType === group.sourceType &&
+          Number(coverage.serviceOrderId) === serviceOrderId,
+    );
+    const first = groupCoverages[0];
+    const itemMap = new Map<string, WarrantyCoverage[]>();
+    for (const coverage of groupCoverages) {
+      const itemKey =
+        coverage.sourceType === WarrantySourceType.PRODUCT
+          ? `product:${coverage.productId ?? coverage.sourceNameSnapshot}`
+          : `service-item:${coverage.serviceOrderItemId ?? coverage.id}`;
+      itemMap.set(itemKey, [...(itemMap.get(itemKey) ?? []), coverage]);
+    }
+    const itemGroups = [...itemMap.entries()].map(([key, items]) => ({
+      key,
+      sourceCode: items[0].sourceCodeSnapshot,
+      sourceName: items[0].sourceNameSnapshot,
+      productId: items[0].productId,
+      unitCount: items.length,
+      coverageAmount: items.reduce(
+        (sum, item) => sum + Number(item.coverageAmount),
+        0,
+      ),
+      statusCounts: this.countCoverageStatuses(items),
+      coverages: items,
+    }));
+    const referenceCode =
+      group.sourceType === WarrantySourceType.PRODUCT
+        ? [first?.sale?.series, first?.sale?.number].filter(Boolean).join('-')
+        : first?.serviceOrder?.code;
+
+    return {
+      key:
+        group.sourceType === WarrantySourceType.PRODUCT
+          ? `sale:${saleId}`
+          : `service:${serviceOrderId}`,
+      sourceType: group.sourceType,
+      referenceCode:
+        referenceCode || first?.sourceCodeSnapshot || 'Sin referencia',
+      customer: first?.customer,
+      createdAt: group.latestCreatedAt,
+      unitCount: groupCoverages.length,
+      coverageAmount: groupCoverages.reduce(
+        (sum, coverage) => sum + Number(coverage.coverageAmount),
+        0,
+      ),
+      statusCounts: this.countCoverageStatuses(groupCoverages),
+      itemGroups,
+    };
+  }
+
+  private mergeCoverageGroupRows(rows: CoverageGroupRaw[]): CoverageGroupRaw[] {
+    const groups = new Map<string, CoverageGroupRaw>();
+    for (const row of rows) {
+      const key =
+        row.sourceType === WarrantySourceType.PRODUCT
+          ? `sale:${row.saleId}`
+          : `service:${row.serviceOrderId}`;
+      const current = groups.get(key);
+      if (!current) {
+        groups.set(key, { ...row });
+        continue;
+      }
+      current.unitCount = Number(current.unitCount) + Number(row.unitCount);
+      if (
+        new Date(row.latestCreatedAt).getTime() >
+        new Date(current.latestCreatedAt).getTime()
+      ) {
+        current.latestCreatedAt = row.latestCreatedAt;
+      }
+    }
+    return [...groups.values()].sort(
+      (left, right) =>
+        new Date(right.latestCreatedAt).getTime() -
+        new Date(left.latestCreatedAt).getTime(),
+    );
+  }
+
+  private countCoverageStatuses(
+    coverages: WarrantyCoverage[],
+  ): CoverageStatusCounts {
+    const counts = Object.values(WarrantyCoverageStatus).reduce(
+      (result, status) => {
+        result[status] = 0;
+        return result;
+      },
+      {} as CoverageStatusCounts,
+    );
+    for (const coverage of coverages) counts[coverage.status] += 1;
+    return counts;
   }
 
   async getTechnicianReport(filter: WarrantyTechnicianReportDto) {
     const qb = this.coverageRepository
       .createQueryBuilder('coverage')
       .leftJoin(WarrantyClaim, 'claim', 'claim.coverage_id = coverage.id')
-      .where('coverage.sourceType = :sourceType', { sourceType: WarrantySourceType.SERVICE })
+      .where('coverage.sourceType = :sourceType', {
+        sourceType: WarrantySourceType.SERVICE,
+      })
       .andWhere('coverage.originTechnicianId IS NOT NULL')
       .select('coverage.originTechnicianId', 'technicianId')
       .addSelect('coverage.originTechnicianNameSnapshot', 'technicianName')
       .addSelect('COUNT(DISTINCT coverage.id)', 'deliveredServices')
-      .addSelect(`SUM(CASE WHEN coverage.status = '${WarrantyCoverageStatus.CONSUMED}' THEN 1 ELSE 0 END)`, 'consumedWarranties')
-      .addSelect(`SUM(CASE WHEN claim.status = '${WarrantyClaimStatus.RESOLVED_APPLIES}' THEN 1 ELSE 0 END)`, 'appliedWarranties')
-      .addSelect(`SUM(CASE WHEN claim.status = '${WarrantyClaimStatus.RESOLVED_REJECTED}' THEN 1 ELSE 0 END)`, 'rejectedWarranties')
+      .addSelect(
+        `SUM(CASE WHEN coverage.status = '${WarrantyCoverageStatus.CONSUMED}' THEN 1 ELSE 0 END)`,
+        'consumedWarranties',
+      )
+      .addSelect(
+        `SUM(CASE WHEN claim.status = '${WarrantyClaimStatus.RESOLVED_APPLIES}' THEN 1 ELSE 0 END)`,
+        'appliedWarranties',
+      )
+      .addSelect(
+        `SUM(CASE WHEN claim.status = '${WarrantyClaimStatus.RESOLVED_REJECTED}' THEN 1 ELSE 0 END)`,
+        'rejectedWarranties',
+      )
       .groupBy('coverage.originTechnicianId')
       .addGroupBy('coverage.originTechnicianNameSnapshot')
       .orderBy('consumedWarranties', 'DESC');
-    if (filter.dateFrom) qb.andWhere('coverage.startsAt >= :dateFrom', { dateFrom: `${filter.dateFrom} 00:00:00` });
-    if (filter.dateTo) qb.andWhere('coverage.startsAt <= :dateTo', { dateTo: `${filter.dateTo} 23:59:59` });
+    if (filter.dateFrom)
+      qb.andWhere('coverage.startsAt >= :dateFrom', {
+        dateFrom: `${filter.dateFrom} 00:00:00`,
+      });
+    if (filter.dateTo)
+      qb.andWhere('coverage.startsAt <= :dateTo', {
+        dateTo: `${filter.dateTo} 23:59:59`,
+      });
     const rows = await qb.getRawMany<TechnicianReportRaw>();
     return {
       generatedAt: new Date(),
@@ -523,18 +911,29 @@ export class WarrantiesService {
           consumedWarranties,
           appliedWarranties: Number(row.appliedWarranties ?? 0),
           rejectedWarranties: Number(row.rejectedWarranties ?? 0),
-          consumedAmount: Number((consumedWarranties * WARRANTY_COVERAGE_AMOUNT).toFixed(2)),
+          consumedAmount: Number(
+            (consumedWarranties * WARRANTY_COVERAGE_AMOUNT).toFixed(2),
+          ),
           warrantyRate: deliveredServices
-            ? Number(((consumedWarranties / deliveredServices) * 100).toFixed(2))
+            ? Number(
+                ((consumedWarranties / deliveredServices) * 100).toFixed(2),
+              )
             : 0,
         };
       }),
     };
   }
 
-  private async loadSaleSerials(manager: EntityManager, saleId: number): Promise<Map<number, Serial[]>> {
+  private async loadSaleSerials(
+    manager: EntityManager,
+    saleId: number,
+  ): Promise<Map<number, Serial[]>> {
     const movements = await manager.getRepository(Movement).find({
-      where: { type: 'OUT', sourceDocType: 'SALE', sourceDocId: String(saleId) },
+      where: {
+        type: 'OUT',
+        sourceDocType: 'SALE',
+        sourceDocId: String(saleId),
+      },
       order: { id: 'ASC' },
     });
     const result = new Map<number, Serial[]>();
@@ -553,18 +952,44 @@ export class WarrantiesService {
 
   private async createCoverageIfMissing(
     manager: EntityManager,
-    input: Omit<WarrantyCoverage, 'id' | 'customer' | 'sale' | 'saleItem' | 'serviceOrder' | 'serviceOrderItem' | 'product' | 'serial' | 'originTechnician' | 'claims' | 'status' | 'expiresAt' | 'coverageAmount' | 'consumedAt' | 'revokedAt' | 'createdAt' | 'updatedAt'> & { actor: Actor },
+    input: Omit<
+      WarrantyCoverage,
+      | 'id'
+      | 'customer'
+      | 'sale'
+      | 'saleItem'
+      | 'serviceOrder'
+      | 'serviceOrderItem'
+      | 'product'
+      | 'serial'
+      | 'originTechnician'
+      | 'claims'
+      | 'status'
+      | 'expiresAt'
+      | 'coverageAmount'
+      | 'consumedAt'
+      | 'revokedAt'
+      | 'createdAt'
+      | 'updatedAt'
+    > & { actor: Actor },
   ): Promise<WarrantyCoverage | null> {
     const repository = manager.getRepository(WarrantyCoverage);
     const existing = await repository.findOne({
-      where: { sourceType: input.sourceType, sourceUnitKey: input.sourceUnitKey },
+      where: {
+        sourceType: input.sourceType,
+        sourceUnitKey: input.sourceUnitKey,
+      },
     });
     if (existing) return null;
     const { actor, ...values } = input;
     const coverage = await repository.save(
       repository.create({
         ...values,
-        expiresAt: addWarrantyDuration(input.startsAt, input.durationValue, input.durationUnit),
+        expiresAt: addWarrantyDuration(
+          input.startsAt,
+          input.durationValue,
+          input.durationUnit,
+        ),
         coverageAmount: WARRANTY_COVERAGE_AMOUNT,
         status: WarrantyCoverageStatus.ACTIVE,
         consumedAt: null,
@@ -584,11 +1009,25 @@ export class WarrantiesService {
     return coverage;
   }
 
-  private async expireIfNeeded(manager: EntityManager, coverage: WarrantyCoverage, actorId?: number): Promise<void> {
-    if (coverage.status !== WarrantyCoverageStatus.ACTIVE || coverage.expiresAt.getTime() >= Date.now()) return;
+  private async expireIfNeeded(
+    manager: EntityManager,
+    coverage: WarrantyCoverage,
+    actorId?: number,
+  ): Promise<void> {
+    if (
+      coverage.status !== WarrantyCoverageStatus.ACTIVE ||
+      coverage.expiresAt.getTime() >= Date.now()
+    )
+      return;
     coverage.status = WarrantyCoverageStatus.EXPIRED;
     await manager.getRepository(WarrantyCoverage).save(coverage);
-    await this.recordMovement(manager, coverage, WarrantyMovementType.EXPIRED, actorId ?? null, 'Vigencia finalizada');
+    await this.recordMovement(
+      manager,
+      coverage,
+      WarrantyMovementType.EXPIRED,
+      actorId ?? null,
+      'Vigencia finalizada',
+    );
   }
 
   private async recordMovement(
@@ -602,15 +1041,20 @@ export class WarrantiesService {
     actorName?: string | null,
   ): Promise<void> {
     const repository = manager.getRepository(WarrantyMovement);
-    await repository.save(repository.create({
-      coverageId: coverage.id,
-      claimId,
-      type,
-      amount: type === WarrantyMovementType.CONSUMED ? Number(coverage.coverageAmount) : 0,
-      actorId,
-      actorNameSnapshot: actorName ?? null,
-      reason,
-      metadataJson,
-    }));
+    await repository.save(
+      repository.create({
+        coverageId: coverage.id,
+        claimId,
+        type,
+        amount:
+          type === WarrantyMovementType.CONSUMED
+            ? Number(coverage.coverageAmount)
+            : 0,
+        actorId,
+        actorNameSnapshot: actorName ?? null,
+        reason,
+        metadataJson,
+      }),
+    );
   }
 }

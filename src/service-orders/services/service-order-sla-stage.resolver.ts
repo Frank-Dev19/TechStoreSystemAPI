@@ -19,6 +19,7 @@ export class ServiceOrderSlaStageResolverService {
       case ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO:
         return 'service';
       case ServiceOrderTechnicalStatus.RESUELTA:
+      case ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA:
         return 'pickup';
       case ServiceOrderTechnicalStatus.SIN_SOLUCION:
         return 'terminal';

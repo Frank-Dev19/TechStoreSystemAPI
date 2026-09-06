@@ -19,6 +19,7 @@ describe('ServiceOrderSlaStageResolverService', () => {
     [ServiceOrderTechnicalStatus.BLOQUEADA, 'service'],
     [ServiceOrderTechnicalStatus.ESPERANDO_REPUESTOS_O_TERCERO, 'service'],
     [ServiceOrderTechnicalStatus.RESUELTA, 'pickup'],
+    [ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA, 'pickup'],
     [ServiceOrderTechnicalStatus.SIN_SOLUCION, 'terminal'],
   ])('maps %s to %s', (technicalStatus, expectedStage) => {
     expect(service.resolve(technicalStatus)).toBe(expectedStage);

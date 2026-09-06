@@ -21,7 +21,11 @@ export type ServiceOrderItemProgress = {
 
 export function buildServiceOrderItemProgress(items: ServiceOrderItem[]): ServiceOrderItemProgress {
   const activeItems = items.filter((item) => item.operativeStatus !== ServiceOrderOperativeStatus.CANCELADA);
-  const terminalStatuses = [ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderTechnicalStatus.SIN_SOLUCION];
+  const terminalStatuses = [
+    ServiceOrderTechnicalStatus.RESUELTA,
+    ServiceOrderTechnicalStatus.SIN_SOLUCION,
+    ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
+  ];
   const resolved = activeItems.filter((item) => terminalStatuses.includes(item.technicalStatus)).length;
   const readyForPickup = activeItems.filter((item) =>
     [ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA, ServiceOrderOperativeStatus.ENTREGADA].includes(
@@ -183,7 +187,11 @@ export class ServiceOrderAggregateProjectionService {
   }
 
   private isTerminalTechnical(status: ServiceOrderTechnicalStatus): boolean {
-    return [ServiceOrderTechnicalStatus.RESUELTA, ServiceOrderTechnicalStatus.SIN_SOLUCION].includes(status);
+    return [
+      ServiceOrderTechnicalStatus.RESUELTA,
+      ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
+    ].includes(status);
   }
 
   private earliest(values: Array<Date | null>): Date | null {

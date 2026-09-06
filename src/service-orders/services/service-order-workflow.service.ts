@@ -360,6 +360,7 @@ export class ServiceOrderWorkflowService {
         serviceOrder.operativeStatus = ServiceOrderOperativeStatus.EN_PROCESO;
         break;
       case ServiceOrderTechnicalStatus.RESUELTA:
+      case ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA:
         serviceOrder.operativeStatus = ServiceOrderOperativeStatus.LISTA_PARA_ENTREGA;
         break;
       case ServiceOrderTechnicalStatus.SIN_SOLUCION:
@@ -375,7 +376,10 @@ export class ServiceOrderWorkflowService {
         break;
     }
 
-    if (nextTechnicalStatus === ServiceOrderTechnicalStatus.RESUELTA) {
+    if (
+      nextTechnicalStatus === ServiceOrderTechnicalStatus.RESUELTA ||
+      nextTechnicalStatus === ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA
+    ) {
       serviceOrder.readyForPickupAt = serviceOrder.readyForPickupAt ?? now;
       serviceOrder.resolvedAt = serviceOrder.resolvedAt ?? now;
     }
@@ -400,6 +404,7 @@ export class ServiceOrderWorkflowService {
         serviceOrder.serviceStartedAt = serviceOrder.serviceStartedAt ?? now;
         break;
       case ServiceOrderTechnicalStatus.RESUELTA:
+      case ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA:
         serviceOrder.serviceCompletedAt = serviceOrder.serviceCompletedAt ?? now;
         serviceOrder.readyForPickupAt = serviceOrder.readyForPickupAt ?? now;
         break;
@@ -417,6 +422,7 @@ export class ServiceOrderWorkflowService {
     return [
       ServiceOrderTechnicalStatus.RESUELTA,
       ServiceOrderTechnicalStatus.SIN_SOLUCION,
+      ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA,
     ].includes(status);
   }
 

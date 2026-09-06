@@ -10,6 +10,8 @@ import {
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderDiagnosisOutcome } from '../../service-orders/diagnoses/service-order-diagnosis-outcome.enum';
+import { ServiceOrderDiagnosis } from '../../service-orders/diagnoses/entities/service-order-diagnosis.entity';
+import { ServiceOrder } from '../../service-orders/entities/service-order.entity';
 import { WarrantyClaimStatus } from '../enums/warranty-claim-status.enum';
 import { WarrantyCoverage } from './warranty-coverage.entity';
 
@@ -32,11 +34,19 @@ export class WarrantyClaim {
   @Column({ name: 'service_order_id', type: 'bigint', unsigned: true, nullable: true })
   serviceOrderId: number | null;
 
+  @ManyToOne(() => ServiceOrder, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'service_order_id' })
+  serviceOrder: ServiceOrder | null;
+
   @Column({ name: 'service_order_item_id', type: 'bigint', unsigned: true, nullable: true })
   serviceOrderItemId: number | null;
 
   @Column({ name: 'diagnosis_id', type: 'bigint', unsigned: true, nullable: true })
   diagnosisId: number | null;
+
+  @ManyToOne(() => ServiceOrderDiagnosis, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'diagnosis_id' })
+  diagnosis: ServiceOrderDiagnosis | null;
 
   @Column({ name: 'outcome', type: 'enum', enum: ServiceOrderDiagnosisOutcome, nullable: true })
   outcome: ServiceOrderDiagnosisOutcome | null;
