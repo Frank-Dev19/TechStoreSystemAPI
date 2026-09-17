@@ -7,3 +7,8 @@ coverage
 *.log
 .env
 .env.*
+.git
+.atl
+.playwright-mcp
+output
+tmp
