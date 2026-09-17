@@ -12,6 +12,8 @@ import { Lot } from 'src/inventory/entities/lot.entity';
 
 @Entity({ name: 'sale_items' })
 export class SaleItem {
+    @Column({ name: 'material_sources', type: 'json', nullable: true })
+    materialSources?: import('../../service-orders/materials/material-sale').MaterialSaleSource[] | null;
     @PrimaryGeneratedColumn()
     id: number;
 

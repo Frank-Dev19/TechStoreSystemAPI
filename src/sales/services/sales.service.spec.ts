@@ -125,6 +125,15 @@ describe('SalesService', () => {
     );
   });
 
+  it('conserva mano de obra base 80 y precio final cero al vender con repuestos de 150', () => {
+    const lines = (service as any).buildDraftLinesFromAgreement({ code: 'OS-1' }, { items: [{ serviceOrderItemId: 1, serviceOrderItem: { position: 1, code: 'OS-1-01' }, commercialVersion: { lines: [
+      { type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 80, netAmount: 0, catalogNameSnapshot: 'Servicio técnico' },
+      { type: ServiceOrderCommercialLineType.PRODUCT, productId: 15, quantity: 1, unitPrice: 150, netAmount: 150, catalogNameSnapshot: 'RAM' },
+    ] } }] });
+    expect(lines[0]).toEqual(expect.objectContaining({ baseUnitPrice: 80, finalUnitPrice: 0 }));
+    expect(lines[1]).toEqual(expect.objectContaining({ baseUnitPrice: 150, finalUnitPrice: 150 }));
+  });
+
   it('builds one invoice line per equipment from the confirmed commercial versions', () => {
     const lines = (service as any).buildDraftLinesFromAgreement(
       { code: 'SO-24-08-2026-0001' } as ServiceOrder,
@@ -242,6 +251,7 @@ describe('SalesService', () => {
         return [];
       }),
       softDelete: jest.fn().mockResolvedValue({ affected: 1 }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       save: jest.fn().mockImplementation(async (_entity, value) => value),
     };
     const queryRunner = {
@@ -323,6 +333,7 @@ describe('SalesService', () => {
       rollbackTransaction: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
+        findOneBy: jest.fn().mockResolvedValue({ id: 44, status: ServiceOrderAgreementStatus.CONFIRMED }),
         findOne: jest.fn().mockImplementation(async (entity) => {
           if (entity === ServiceOrderSaleLink) return null;
           return {
@@ -403,6 +414,7 @@ describe('SalesService', () => {
       }),
     );
     expect(result).toEqual(expect.objectContaining({ id: 501, total: 120 }));
+    expect(salesInventory.registerSaleMovement).not.toHaveBeenCalled();
   });
 
   it('revierte la transacción si la orden ya tiene vínculo para el acuerdo vigente', async () => {
@@ -413,6 +425,7 @@ describe('SalesService', () => {
       rollbackTransaction: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
+        findOneBy: jest.fn().mockResolvedValue({ id: 44, status: ServiceOrderAgreementStatus.CONFIRMED }),
         findOne: jest.fn().mockImplementation(async (entity) => {
           if (entity === ServiceOrderSaleLink) return { id: 1 };
           return {

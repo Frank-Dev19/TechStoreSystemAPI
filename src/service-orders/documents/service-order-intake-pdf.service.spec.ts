@@ -10,6 +10,10 @@ describe('ServiceOrderIntakePdfService', () => {
     service = new ServiceOrderIntakePdfService();
   });
 
+  it('presenta STANDARD_SERVICE como Servicio express', () => {
+    expect((service as any).formatServiceType('STANDARD_SERVICE')).toBe('Servicio express');
+  });
+
   afterEach(async () => {
     await Promise.all(
       generatedPaths.splice(0).map(async (path) => {

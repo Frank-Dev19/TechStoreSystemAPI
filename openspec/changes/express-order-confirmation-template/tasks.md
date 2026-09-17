@@ -1,0 +1,5 @@
+- [x] 1.1 Definir el contrato de plantilla Express y su compatibilidad con el resumen general.
+- [x] 2.1 Agregar pruebas fallidas para construcción y selección de la plantilla Express.
+- [x] 2.2 Implementar el cuarto parámetro y la selección por tipo de servicio.
+- [x] 2.3 Actualizar los valores de configuración documentados.
+- [x] 3.1 Ejecutar pruebas focalizadas, typecheck y build.

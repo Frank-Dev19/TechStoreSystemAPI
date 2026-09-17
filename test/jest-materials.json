@@ -1,0 +1,8 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "moduleNameMapper": { "^src/(.*)$": "<rootDir>/src/$1" },
+  "testMatch": ["<rootDir>/test/materials.mysql.e2e-spec.ts"],
+  "transform": { "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": { "module": "commonjs", "moduleResolution": "node", "resolvePackageJsonExports": false, "isolatedModules": false, "esModuleInterop": true, "experimentalDecorators": true, "emitDecoratorMetadata": true, "target": "ES2023", "skipLibCheck": true } }] }
+}

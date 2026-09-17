@@ -1,4 +1,13 @@
-import { ServiceOrderCommercialStatus, ServiceOrderEconomicStatus, ServiceOrderOperativeStatus, ServiceOrderPriority, ServiceOrderTechnicalStatus, ServiceType, RequestOrigin, EquipmentType } from '../enums';
+import {
+  ServiceOrderCommercialStatus,
+  ServiceOrderEconomicStatus,
+  ServiceOrderOperativeStatus,
+  ServiceOrderPriority,
+  ServiceOrderTechnicalStatus,
+  ServiceType,
+  RequestOrigin,
+  EquipmentType,
+} from '../enums';
 import { NotificationMessage } from '../entities/notification-message.entity';
 import { NotificationDeliveryAttempt } from '../entities/notification-delivery-attempt.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
@@ -19,7 +28,9 @@ const createMockRepo = (): MockRepo => ({
   create: jest.fn((value) => value),
 });
 
-const createServiceOrder = (overrides: Partial<ServiceOrder> = {}): ServiceOrder =>
+const createServiceOrder = (
+  overrides: Partial<ServiceOrder> = {},
+): ServiceOrder =>
   ({
     id: 201,
     code: 'SO-001',
@@ -167,7 +178,8 @@ describe('ServiceOrderMessageMatrixService', () => {
       buildOrderIntakeTemplate: jest.fn().mockReturnValue({
         templateName: 'resumen_de_orden_de_servicio',
         languageCode: 'es_PE',
-        documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
+        documentUrl:
+          'https://stsperu.online/api/service-orders/temp-documents/abc',
         documentFileName: 'resumen-ordenes.pdf',
         bodyParameters: ['Juan Pérez', 'SO-001', '2 equipos'],
         quickReplyPayloads: ['CONSULTA'],
@@ -183,18 +195,25 @@ describe('ServiceOrderMessageMatrixService', () => {
     );
 
     await service.dispatchOrderIntakeTemplate({
-      serviceOrders: [createServiceOrder({ id: 201 }), createServiceOrder({ id: 202, code: 'SO-002' })],
+      serviceOrders: [
+        createServiceOrder({ id: 201 }),
+        createServiceOrder({ id: 202, code: 'SO-002' }),
+      ],
       equipmentCount: '2 equipos',
-      documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
+      documentUrl:
+        'https://stsperu.online/api/service-orders/temp-documents/abc',
       documentFileName: 'resumen-ordenes.pdf',
       tempDocumentToken: 'abc',
     });
 
-    expect(whatsappTemplateService.buildOrderIntakeTemplate).toHaveBeenCalledWith({
+    expect(
+      whatsappTemplateService.buildOrderIntakeTemplate,
+    ).toHaveBeenCalledWith({
       clientName: 'Juan Pérez',
       orderCode: 'SO-001',
       equipmentCount: '2 equipos',
-      documentUrl: 'https://stsperu.online/api/service-orders/temp-documents/abc',
+      documentUrl:
+        'https://stsperu.online/api/service-orders/temp-documents/abc',
       documentFileName: 'resumen-ordenes.pdf',
       quickReplyPayloads: ['CONSULTA'],
     });
@@ -208,14 +227,113 @@ describe('ServiceOrderMessageMatrixService', () => {
     );
   });
 
+  it('usa la plantilla Express con el total autorizado para STANDARD_SERVICE', async () => {
+    const notificationRepository = createMockRepo();
+    notificationRepository.findOne.mockResolvedValue(null);
+    const attemptRepository = createMockRepo();
+    const inboxService = {
+      getThreadForServiceOrder: jest.fn().mockResolvedValue({
+        clientPhone: '+51932998578',
+        contextToken: 'ctx-201',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest.fn().mockResolvedValue({
+        status: 'SENT',
+        externalMessageId: 'wamid.express',
+      }),
+    } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = {
+      buildOrderIntakeTemplate: jest.fn(),
+      buildStandardOrderConfirmedTemplate: jest.fn().mockReturnValue({
+        templateName: 'orden_express_confirmada',
+        languageCode: 'es_PE',
+        documentUrl:
+          'https://stsperu.online/api/service-orders/temp-documents/express',
+        documentFileName: 'orden-express.pdf',
+        bodyParameters: ['María Torres', 'SO-EXP-001', '1 equipo', 'S/ 200.00'],
+        quickReplyPayloads: ['CONSULTA'],
+      }),
+    } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+    );
+    const expressOrder = createServiceOrder({
+      code: 'SO-EXP-001',
+      clientSnapshotName: 'María Torres',
+      serviceType: ServiceType.STANDARD_SERVICE,
+      montoComprometidoVigente: 200,
+    });
+
+    await service.dispatchOrderIntakeTemplate({
+      serviceOrders: [expressOrder],
+      equipmentCount: '1 equipo',
+      documentUrl:
+        'https://stsperu.online/api/service-orders/temp-documents/express',
+      documentFileName: 'orden-express.pdf',
+      tempDocumentToken: 'express',
+    });
+
+    expect(
+      whatsappTemplateService.buildStandardOrderConfirmedTemplate,
+    ).toHaveBeenCalledWith({
+      clientName: 'María Torres',
+      orderCode: 'SO-EXP-001',
+      equipmentCount: '1 equipo',
+      totalAmount: 'S/ 200.00',
+      documentUrl:
+        'https://stsperu.online/api/service-orders/temp-documents/express',
+      documentFileName: 'orden-express.pdf',
+      quickReplyPayloads: ['CONSULTA'],
+    });
+    expect(
+      whatsappTemplateService.buildOrderIntakeTemplate,
+    ).not.toHaveBeenCalled();
+  });
+
   it('envía un resumen de cancelación consolidado con documento e idempotencia por solicitudes', async () => {
     const notificationRepository = createMockRepo();
     notificationRepository.findOne.mockResolvedValue(null);
     const attemptRepository = createMockRepo();
-    const inboxService = { getThreadForServiceOrder: jest.fn().mockResolvedValue({ clientPhone: '+51932998578', contextToken: 'ctx-201' }) } as unknown as jest.Mocked<ServiceOrderInboxService>;
-    const inboxChannelService = { dispatchTemplateMessage: jest.fn().mockResolvedValue({ status: 'SENT', externalMessageId: 'wamid.cancel' }) } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
-    const whatsappTemplateService = { buildCancellationSummaryTemplate: jest.fn().mockReturnValue({ templateName: 'resumen_cancelacion_equipos', languageCode: 'es_PE', bodyParameters: ['Juan Pérez', '2', 'SO-001'], quickReplyPayloads: ['CONSULTA'], documentUrl: 'https://api.example.com/doc', documentFileName: 'cancelacion.pdf' }) } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
-    const service = new ServiceOrderMessageMatrixService(notificationRepository as any, attemptRepository as any, inboxService, inboxChannelService, whatsappTemplateService);
+    const inboxService = {
+      getThreadForServiceOrder: jest
+        .fn()
+        .mockResolvedValue({
+          clientPhone: '+51932998578',
+          contextToken: 'ctx-201',
+        }),
+    } as unknown as jest.Mocked<ServiceOrderInboxService>;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest
+        .fn()
+        .mockResolvedValue({
+          status: 'SENT',
+          externalMessageId: 'wamid.cancel',
+        }),
+    } as unknown as jest.Mocked<ServiceOrderInboxChannelService>;
+    const whatsappTemplateService = {
+      buildCancellationSummaryTemplate: jest
+        .fn()
+        .mockReturnValue({
+          templateName: 'resumen_cancelacion_equipos',
+          languageCode: 'es_PE',
+          bodyParameters: ['Juan Pérez', '2', 'SO-001'],
+          quickReplyPayloads: ['CONSULTA'],
+          documentUrl: 'https://api.example.com/doc',
+          documentFileName: 'cancelacion.pdf',
+        }),
+    } as unknown as jest.Mocked<ServiceOrderWhatsAppTemplateService>;
+    const service = new ServiceOrderMessageMatrixService(
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+    );
 
     await service.dispatchCancellationSummaryTemplate({
       serviceOrder: createServiceOrder(),
@@ -226,16 +344,22 @@ describe('ServiceOrderMessageMatrixService', () => {
       tempDocumentToken: 'token',
     });
 
-    expect(notificationRepository.create).toHaveBeenCalledWith(expect.objectContaining({
-      idempotencyKey: 'service_order:201:cancellation:501-502',
-      messageType: 'cancellation.summary',
-      metadataJson: expect.stringContaining('"cancellationRequestIds":[501,502]'),
-    }));
-    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledWith(expect.objectContaining({
-      documentUrl: 'https://api.example.com/doc',
-      documentFileName: 'cancelacion.pdf',
-      bodyParameters: ['Juan Pérez', '2', 'SO-001'],
-    }));
+    expect(notificationRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: 'service_order:201:cancellation:501-502',
+        messageType: 'cancellation.summary',
+        metadataJson: expect.stringContaining(
+          '"cancellationRequestIds":[501,502]',
+        ),
+      }),
+    );
+    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentUrl: 'https://api.example.com/doc',
+        documentFileName: 'cancelacion.pdf',
+        bodyParameters: ['Juan Pérez', '2', 'SO-001'],
+      }),
+    );
   });
 
   it('envía una recotización con documento y acciones ligadas a la versión', async () => {
@@ -283,7 +407,9 @@ describe('ServiceOrderMessageMatrixService', () => {
       isRediagnosis: true,
     });
 
-    expect(whatsappTemplateService.buildRediagnosisAgreementTemplate).toHaveBeenCalledWith(
+    expect(
+      whatsappTemplateService.buildRediagnosisAgreementTemplate,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         documentUrl: 'https://api.example.com/recotizacion.pdf',
         quickReplyPayloads: ['ACEPTAR_COTIZACION:42', 'CONSULTA'],
@@ -350,9 +476,16 @@ describe('ServiceOrderMessageMatrixService', () => {
       isRediagnosis: false,
     });
 
-    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledTimes(1);
+    expect(inboxChannelService.dispatchTemplateMessage).toHaveBeenCalledTimes(
+      1,
+    );
     expect(notificationRepository.save).toHaveBeenLastCalledWith(
-      expect.objectContaining({ status: 'SENT', attemptCount: 2, nextAttemptAt: null, lastError: null }),
+      expect.objectContaining({
+        status: 'SENT',
+        attemptCount: 2,
+        nextAttemptAt: null,
+        lastError: null,
+      }),
     );
     expect(result).toBe('SENT');
   });
@@ -361,25 +494,66 @@ describe('ServiceOrderMessageMatrixService', () => {
     const notificationRepository = createMockRepo();
     notificationRepository.findOne.mockResolvedValue(null);
     const attemptRepository = createMockRepo();
-    const inboxService = { getThreadForServiceOrder: jest.fn().mockResolvedValue({ clientPhone: '+51932998578', contextToken: 'ctx-201' }) } as any;
-    const inboxChannelService = { dispatchTemplateMessage: jest.fn().mockRejectedValue(Object.assign(new Error('Meta temporalmente no disponible'), { status: 503 })) } as any;
-    const whatsappTemplateService = { buildPaymentReceiptTemplate: jest.fn().mockReturnValue({
-      templateName: 'comprobante_pago_orden_servicio', languageCode: 'es_PE', bodyParameters: ['Juan', 'SO-1', 'B001-1', 'S/ 20.00'],
-      quickReplyPayloads: ['CONSULTA'], documentUrl: 'https://api.example.com/receipt.pdf', documentFileName: 'receipt.pdf',
-    }) } as any;
-    const configService = { get: jest.fn((key: string) => key === 'WHATSAPP_NOTIFICATION_RETRY_DELAYS_MINUTES' ? '1,5,30' : undefined) } as any;
+    const inboxService = {
+      getThreadForServiceOrder: jest
+        .fn()
+        .mockResolvedValue({
+          clientPhone: '+51932998578',
+          contextToken: 'ctx-201',
+        }),
+    } as any;
+    const inboxChannelService = {
+      dispatchTemplateMessage: jest
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error('Meta temporalmente no disponible'), {
+            status: 503,
+          }),
+        ),
+    } as any;
+    const whatsappTemplateService = {
+      buildPaymentReceiptTemplate: jest.fn().mockReturnValue({
+        templateName: 'comprobante_pago_orden_servicio',
+        languageCode: 'es_PE',
+        bodyParameters: ['Juan', 'SO-1', 'B001-1', 'S/ 20.00'],
+        quickReplyPayloads: ['CONSULTA'],
+        documentUrl: 'https://api.example.com/receipt.pdf',
+        documentFileName: 'receipt.pdf',
+      }),
+    } as any;
+    const configService = {
+      get: jest.fn((key: string) =>
+        key === 'WHATSAPP_NOTIFICATION_RETRY_DELAYS_MINUTES'
+          ? '1,5,30'
+          : undefined,
+      ),
+    } as any;
     const service = new ServiceOrderMessageMatrixService(
-      notificationRepository as any, attemptRepository as any, inboxService, inboxChannelService,
-      whatsappTemplateService, undefined, configService,
+      notificationRepository as any,
+      attemptRepository as any,
+      inboxService,
+      inboxChannelService,
+      whatsappTemplateService,
+      undefined,
+      configService,
     );
 
     await service.dispatchPaymentReceiptTemplate({
-      serviceOrder: createServiceOrder(), electronicDocumentId: 9, documentNumber: 'B001-1', totalAmount: 20,
-      documentUrl: 'https://api.example.com/receipt.pdf', documentFileName: 'receipt.pdf', tempDocumentToken: 'token',
+      serviceOrder: createServiceOrder(),
+      electronicDocumentId: 9,
+      documentNumber: 'B001-1',
+      totalAmount: 20,
+      documentUrl: 'https://api.example.com/receipt.pdf',
+      documentFileName: 'receipt.pdf',
+      tempDocumentToken: 'token',
     });
 
-    expect(notificationRepository.save).toHaveBeenLastCalledWith(expect.objectContaining({
-      status: 'RETRY_SCHEDULED', attemptCount: 1, nextAttemptAt: expect.any(Date),
-    }));
+    expect(notificationRepository.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: 'RETRY_SCHEDULED',
+        attemptCount: 1,
+        nextAttemptAt: expect.any(Date),
+      }),
+    );
   });
 });

@@ -124,7 +124,13 @@ export class WarrantiesService {
       const startsAt = sale.createdAt
         ? new Date(sale.createdAt)
         : new Date(`${sale.issueDate}T00:00:00-05:00`);
-      const serialQueue = serialsByProduct.get(Number(product.id)) ?? [];
+      // Service sales inherit the exact serials from their material guides.
+      // Keep sources per sale item so repeated products cannot exchange serials.
+      const serialQueue = item.materialSources
+        ? item.materialSources
+            .filter((source) => source.serialId != null)
+            .map((source) => ({ id: Number(source.serialId), serialCode: source.serialCode }))
+        : (serialsByProduct.get(Number(product.id)) ?? []);
 
       for (let unit = 1; unit <= quantity; unit += 1) {
         const serial = product.isSerialized ? serialQueue.shift() : undefined;

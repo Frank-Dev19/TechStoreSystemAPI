@@ -840,7 +840,7 @@ export class ServiceOrderIntakePdfService {
   private formatServiceType(value: string): string {
     switch (value) {
       case ServiceType.STANDARD_SERVICE:
-        return 'Servicio estándar';
+        return 'Servicio express';
       case ServiceType.DIAGNOSIS:
         return 'Diagnóstico';
       case ServiceType.WARRANTY_SERVICE:

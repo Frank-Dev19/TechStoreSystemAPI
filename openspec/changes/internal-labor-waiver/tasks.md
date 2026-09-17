@@ -1,0 +1,11 @@
+# Implementation tasks
+- [x] Remove origin selection and clientless intake behavior; preserve normal customer identification.
+- [x] Add validated INTERNAL_SERVICE labor waiver to initial commercial and revision contracts.
+- [x] Reuse discount history for base, waived amount, reason, author and timestamp with permission checks.
+- [x] Add explicit waiver controls to initial quotation, technician revision and discount modal.
+- [x] Preserve waiver when loading a commercial version; keep products billable and mutually exclude ordinary discounts.
+- [x] Correct intake summary to show actual net labor and identify waiver in confirmation.
+- [x] Verify initial 80 + 150 -> 150, revision snapshots, rejection rules and sale net zero labor.
+- [x] Run 28 API and 106 frontend targeted tests, both production builds; final 68 reception tests after visual correction.
+- [x] Inspect wizard and quotation in browser with mocked API; no real business data modified.
+- [x] Record architecture, permissions, UX, compatibility and validation in Obsidian note 10 and decision log.

@@ -1,3 +1,4 @@
+import { LaborWaiverReason } from '../labor-waiver';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -18,6 +19,10 @@ import { ServiceOrderCommercialLineType } from '../service-order-commercial-line
 import { WarrantyDurationUnit } from '../../../common/enums/warranty-duration-unit.enum';
 
 export class CreateServiceOrderCommercialRevisionLineDto {
+  @IsOptional()
+  @IsEnum(LaborWaiverReason)
+  laborWaiverReason?: LaborWaiverReason;
+
   @IsEnum(ServiceOrderCommercialLineType)
   type: ServiceOrderCommercialLineType;
 

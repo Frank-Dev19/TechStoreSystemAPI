@@ -1,3 +1,4 @@
+import { LaborWaiverReason } from '../service-agreements/labor-waiver';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -28,6 +29,10 @@ const trimOptionalText = ({ value }: { value: unknown }): unknown => {
 };
 
 export class CreateServiceOrderInitialCommercialLineDto {
+  @IsOptional()
+  @IsEnum(LaborWaiverReason)
+  laborWaiverReason?: LaborWaiverReason;
+
   @IsEnum(ServiceOrderCommercialLineType)
   type: ServiceOrderCommercialLineType;
 

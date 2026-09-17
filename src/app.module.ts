@@ -32,6 +32,9 @@ import { BusinessProfileModule } from './business-profile/business-profile.modul
 import { ElectronicBillingModule } from './electronic-billing/electronic-billing.module';
 import { MailSettingsModule } from './mail-settings/mail-settings.module';
 import { WarrantiesModule } from './warranties/warranties.module';
+import { MaterialsModule } from './service-orders/materials/materials.module';
+import { PrintingModule } from './printing/printing.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -57,6 +60,7 @@ import { WarrantiesModule } from './warranties/warranties.module';
     ClientModule,
     SupplierModule,
     InventoryModule,
+    MaterialsModule,
     ServiceOrdersModule,
     ServiceOrderAgreementsModule,
     PricingModule,
@@ -65,6 +69,7 @@ import { WarrantiesModule } from './warranties/warranties.module';
     BusinessProfileModule,
     ElectronicBillingModule,
     WarrantiesModule,
+    PrintingModule,
   ],
 })
 export class AppModule {}

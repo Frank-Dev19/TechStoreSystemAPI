@@ -187,7 +187,7 @@ export class SalesInventoryService {
                 where: {
                     id: In(params.serialIds),
                     productId: product.id,
-                    status: 'IN_STOCK',
+                    status: 'IN_STOCK', condition: 'USABLE',
                 },
             });
 
@@ -218,7 +218,7 @@ export class SalesInventoryService {
         const availableSerials = await this.serialRepo.find({
             where: {
                 productId: product.id,
-                status: 'IN_STOCK',
+                status: 'IN_STOCK', condition: 'USABLE',
             },
             take: params.quantity + 10, // Traer algunos extras
         });

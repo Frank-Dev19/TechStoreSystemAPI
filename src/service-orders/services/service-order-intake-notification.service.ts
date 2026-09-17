@@ -5,10 +5,13 @@ import { ServiceOrderTempDocumentsService } from '../documents/service-order-tem
 import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
+import { ServiceType } from '../enums';
 
 @Injectable()
 export class ServiceOrderIntakeNotificationService {
-  private readonly logger = new Logger(ServiceOrderIntakeNotificationService.name);
+  private readonly logger = new Logger(
+    ServiceOrderIntakeNotificationService.name,
+  );
 
   constructor(
     private readonly intakePdfService: ServiceOrderIntakePdfService,
@@ -25,37 +28,53 @@ export class ServiceOrderIntakeNotificationService {
 
   private async notifyOrder(serviceOrder: ServiceOrder): Promise<void> {
     if (!serviceOrder.clientSnapshotPhone?.trim()) {
-      this.logger.warn(`Intake summary skipped for order ${serviceOrder.id}: customer phone is missing`);
+      this.logger.warn(
+        `Intake summary skipped for order ${serviceOrder.id}: customer phone is missing`,
+      );
       return;
     }
 
     try {
       const items = this.resolveItems(serviceOrder);
-      const generatedPdf = await this.intakePdfService.generateSingleOrderSummary({
-        code: serviceOrder.code,
-        createdAt: serviceOrder.createdAt ?? new Date(),
-        operativeStatus: serviceOrder.operativeStatus,
-        serviceType: serviceOrder.serviceType,
-        clientName: serviceOrder.clientSnapshotName ?? serviceOrder.client?.name ?? null,
-        clientDocument:
-          [serviceOrder.clientSnapshotDocumentTypeName, serviceOrder.clientSnapshotDocumentNumber]
-            .filter(Boolean)
-            .join(': ') || null,
-        clientPhone: serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null,
-        clientEmail: serviceOrder.clientSnapshotEmail ?? serviceOrder.client?.email ?? null,
-        items: items.map((item) => ({
-          position: item.position,
-          code: item.code,
-          priority: item.priority,
-          equipmentType: item.equipmentTypeOther?.trim() || item.equipmentType,
-          brand: item.brand ?? null,
-          model: item.model ?? null,
-          serialNumber: item.serialNumber ?? null,
-          accessories: item.accessories ?? null,
-          notes: item.notes ?? null,
-          initialIssue: item.initialIssue,
-        })),
-      });
+      const generatedPdf =
+        await this.intakePdfService.generateSingleOrderSummary({
+          code: serviceOrder.code,
+          createdAt: serviceOrder.createdAt ?? new Date(),
+          operativeStatus: serviceOrder.operativeStatus,
+          serviceType: serviceOrder.serviceType,
+          clientName:
+            serviceOrder.clientSnapshotName ??
+            serviceOrder.client?.name ??
+            null,
+          clientDocument:
+            [
+              serviceOrder.clientSnapshotDocumentTypeName,
+              serviceOrder.clientSnapshotDocumentNumber,
+            ]
+              .filter(Boolean)
+              .join(': ') || null,
+          clientPhone:
+            serviceOrder.clientSnapshotPhone ??
+            serviceOrder.client?.phone ??
+            null,
+          clientEmail:
+            serviceOrder.clientSnapshotEmail ??
+            serviceOrder.client?.email ??
+            null,
+          items: items.map((item) => ({
+            position: item.position,
+            code: item.code,
+            priority: item.priority,
+            equipmentType:
+              item.equipmentTypeOther?.trim() || item.equipmentType,
+            brand: item.brand ?? null,
+            model: item.model ?? null,
+            serialNumber: item.serialNumber ?? null,
+            accessories: item.accessories ?? null,
+            notes: item.notes ?? null,
+            initialIssue: item.initialIssue,
+          })),
+        });
 
       const tempDocument = await this.tempDocumentsService.createRecord({
         sourceType: 'ORDER_INTAKE_SUMMARY',
@@ -66,15 +85,20 @@ export class ServiceOrderIntakeNotificationService {
           orderIds: [serviceOrder.id],
           recipient: serviceOrder.clientSnapshotPhone,
           templateName:
-            this.configService.get<string>('WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME') ||
-            'resumen_de_orden_de_servicio',
+            serviceOrder.serviceType === ServiceType.STANDARD_SERVICE
+              ? this.configService.get<string>(
+                  'WHATSAPP_TEMPLATE_STANDARD_ORDER_NAME',
+                ) || 'orden_express_confirmada'
+              : this.configService.get<string>(
+                  'WHATSAPP_TEMPLATE_ORDER_INTAKE_NAME',
+                ) || 'resumen_de_orden_de_servicio',
         },
       });
 
-      const baseUrl = (this.configService.get<string>('APP_PUBLIC_BASE_URL') || 'http://localhost:3000').replace(
-        /\/+$/,
-        '',
-      );
+      const baseUrl = (
+        this.configService.get<string>('APP_PUBLIC_BASE_URL') ||
+        'http://localhost:3000'
+      ).replace(/\/+$/, '');
       await this.messageMatrixService.dispatchOrderIntakeTemplate({
         serviceOrders: [serviceOrder],
         equipmentCount: this.formatEquipmentCount(items.length),
@@ -83,14 +107,20 @@ export class ServiceOrderIntakeNotificationService {
         tempDocumentToken: tempDocument.token,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown intake notification error';
-      this.logger.error(`Intake summary preparation failed for order ${serviceOrder.id}: ${message}`);
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unknown intake notification error';
+      this.logger.error(
+        `Intake summary preparation failed for order ${serviceOrder.id}: ${message}`,
+      );
     }
   }
 
   private resolveItems(serviceOrder: ServiceOrder): ServiceOrderItem[] {
     return [...(serviceOrder.items ?? [])].sort(
-      (left, right) => left.position - right.position || left.code.localeCompare(right.code),
+      (left, right) =>
+        left.position - right.position || left.code.localeCompare(right.code),
     );
   }
 

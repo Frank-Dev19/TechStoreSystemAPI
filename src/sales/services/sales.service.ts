@@ -1,3 +1,5 @@
+import { prepareMaterialSale, claimMaterialSale } from '../../service-orders/materials/material-sale';
+import { MaterialDeliveryLine } from '../../service-orders/materials/material.entity';
 // src/sales/services/sales.service.ts
 import {
   Injectable,
@@ -60,6 +62,7 @@ export interface ValidationMessage {
 
 type ServiceOrderSaleDraftItem = {
   itemType: SaleItemKindDto.PRODUCT;
+  commercialLineId?: number;
   productId: number | null;
   quantity: number;
   baseUnitPrice: number;
@@ -336,12 +339,13 @@ export class SalesService {
     }
 
     // Si ya se especificó lote y seriales específicos, usarlos
-    if (existingLotId && existingSerialIds && existingSerialIds.length > 0) {
-      return [{
-        lotId: existingLotId,
-        quantityFromThisLot: quantity,
-        serialIds: existingSerialIds
-      }];
+    if (existingSerialIds?.length) {
+      if (!product.isSerialized || new Set(existingSerialIds).size !== quantity) throw new BadRequestException('Seleccione la cantidad exacta de series');
+      const selected = await this.serialRepo.find({ where: { id: In(existingSerialIds), productId, status: 'IN_STOCK', condition: 'USABLE' } });
+      if (selected.length !== quantity || (existingLotId && selected.some(serial => Number(serial.lotId) !== existingLotId))) throw new BadRequestException('Series no disponibles o de otro lote');
+      const groups = new Map<number | null, number[]>();
+      for (const serial of selected) groups.set(serial.lotId ?? null, [...(groups.get(serial.lotId ?? null) ?? []), serial.id]);
+      return [...groups].map(([lotId, serialIds]) => ({ lotId, quantityFromThisLot: serialIds.length, serialIds }));
     }
 
     const result: Array<{
@@ -384,7 +388,7 @@ export class SalesService {
             where: {
               productId,
               lotId: stock.lotId!,
-              status: 'IN_STOCK',
+              status: 'IN_STOCK', condition: 'USABLE',
             },
             order: { id: 'ASC' },
             take: qtyToTake,
@@ -404,7 +408,7 @@ export class SalesService {
                 where: {
                   productId,
                   lotId: otherStock.lotId!,
-                  status: 'IN_STOCK',
+                  status: 'IN_STOCK', condition: 'USABLE',
                 },
                 order: { id: 'ASC' },
                 take: remainingSerialsNeeded,
@@ -423,7 +427,7 @@ export class SalesService {
               where: {
                 productId,
                 lotId: IsNull(),
-                status: 'IN_STOCK',
+                status: 'IN_STOCK', condition: 'USABLE',
               },
               order: { id: 'ASC' },
               take: remainingSerialsNeeded,
@@ -464,7 +468,7 @@ export class SalesService {
       const availableSerials = await this.serialRepo.find({
         where: {
           productId,
-          status: 'IN_STOCK',
+          status: 'IN_STOCK', condition: 'USABLE',
         },
         order: { id: 'ASC' },
         take: quantity,
@@ -969,6 +973,7 @@ export class SalesService {
     await queryRunner.startTransaction();
 
     try {
+      const materialSources = await prepareMaterialSale(queryRunner.manager, agreement);
       const existingLink = await queryRunner.manager.findOne(ServiceOrderSaleLink, {
         where: {
           serviceOrderId: Number(serviceOrder.id),
@@ -1024,7 +1029,6 @@ export class SalesService {
         }),
       );
 
-      const itemsWithAutoData: Array<{ productId: number; quantity: number; lotId: number | null; serialIds: number[] }> = [];
 
       for (const item of items) {
         if (isServiceOrderSaleDraftServiceItem(item)) {
@@ -1056,17 +1060,8 @@ export class SalesService {
           throw new BadRequestException('Cada línea de producto requiere productId');
         }
 
-        const lotsData = await this.getAutoLotAndSerials(item.productId, item.quantity);
-        for (const lotData of lotsData) {
-          itemsWithAutoData.push({
-            productId: item.productId,
-            quantity: lotData.quantityFromThisLot,
-            lotId: lotData.lotId,
-            serialIds: lotData.serialIds,
-          });
-        }
-
-        const firstLotData = lotsData[0];
+        const sources = materialSources.get(Number(item.commercialLineId));
+        if (!sources?.length) throw new BadRequestException('Falta la entrega conciliada del producto');
         await queryRunner.manager.save(
           this.saleItemRepo.create({
             saleId: sale.id,
@@ -1076,14 +1071,15 @@ export class SalesService {
             serviceCodeSnapshot: null,
             serviceNameSnapshot: null,
             descriptionSnapshot: item.description,
-            lotId: firstLotData?.lotId ?? null,
+            lotId: sources[0].lotId,
+            materialSources: sources,
             baseUnitPrice: item.baseUnitPrice,
             finalUnitPrice: item.finalUnitPrice,
             quantity: item.quantity,
             discountAmount: 0,
             taxAmount: 0,
             lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
-            serialCount: firstLotData?.serialIds?.length || 0,
+            serialCount: sources.filter(source => source.serialId).length,
             isComboItem: false,
             comboId: null,
           }),
@@ -1165,14 +1161,8 @@ export class SalesService {
         }),
       );
 
-      if (itemsWithAutoData.length) {
-        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
-      }
-      await this.warrantiesService.issueProductCoveragesForSale(
-        queryRunner.manager,
-        sale.id,
-        { name: user },
-      );
+      await claimMaterialSale(queryRunner.manager, materialSources, sale.id);
+      await this.warrantiesService.issueProductCoveragesForSale(queryRunner.manager, sale.id, { name: user });
 
       await queryRunner.commitTransaction();
       return this.findOne(sale.id);
@@ -1289,6 +1279,10 @@ export class SalesService {
     await queryRunner.startTransaction();
 
     try {
+      const materialSources = new Map<number, import('../../service-orders/materials/material-sale').MaterialSaleSource[]>();
+      for (const draft of orderDrafts) {
+        for (const [id, sources] of await prepareMaterialSale(queryRunner.manager, draft.agreement)) materialSources.set(id, sources);
+      }
       for (const draft of orderDrafts) {
         const existingLink = await queryRunner.manager.findOne(ServiceOrderSaleLink, {
           where: {
@@ -1354,7 +1348,6 @@ export class SalesService {
         }),
       );
 
-      const itemsWithAutoData: Array<{ productId: number; quantity: number; lotId: number | null; serialIds: number[] }> = [];
       for (const draft of orderDrafts) {
         for (const item of draft.items) {
           if (isServiceOrderSaleDraftServiceItem(item)) {
@@ -1386,17 +1379,8 @@ export class SalesService {
             throw new BadRequestException('Cada línea de producto requiere productId');
           }
 
-          const lotsData = await this.getAutoLotAndSerials(item.productId, item.quantity);
-          for (const lotData of lotsData) {
-            itemsWithAutoData.push({
-              productId: item.productId,
-              quantity: lotData.quantityFromThisLot,
-              lotId: lotData.lotId,
-              serialIds: lotData.serialIds,
-            });
-          }
-
-          const firstLotData = lotsData[0];
+          const sources = materialSources.get(Number(item.commercialLineId));
+          if (!sources?.length) throw new BadRequestException('Falta la entrega conciliada del producto');
           await queryRunner.manager.save(
             this.saleItemRepo.create({
               saleId: sale.id,
@@ -1406,14 +1390,15 @@ export class SalesService {
               serviceCodeSnapshot: null,
               serviceNameSnapshot: null,
               descriptionSnapshot: item.description,
-              lotId: firstLotData?.lotId ?? null,
+              lotId: sources[0].lotId,
+              materialSources: sources,
               baseUnitPrice: item.baseUnitPrice,
               finalUnitPrice: item.finalUnitPrice,
               quantity: item.quantity,
               discountAmount: 0,
               taxAmount: 0,
               lineTotal: Number((Number(item.quantity ?? 1) * Number(item.finalUnitPrice ?? 0)).toFixed(2)),
-              serialCount: firstLotData?.serialIds?.length || 0,
+              serialCount: sources.filter(source => source.serialId).length,
               isComboItem: false,
               comboId: null,
             }),
@@ -1499,14 +1484,8 @@ export class SalesService {
         );
       }
 
-      if (itemsWithAutoData.length) {
-        await this.salesInventory.registerSaleMovement(sale.id, itemsWithAutoData, user, queryRunner.manager);
-      }
-      await this.warrantiesService.issueProductCoveragesForSale(
-        queryRunner.manager,
-        sale.id,
-        { name: user },
-      );
+      await claimMaterialSale(queryRunner.manager, materialSources, sale.id);
+      await this.warrantiesService.issueProductCoveragesForSale(queryRunner.manager, sale.id, { name: user });
 
       await queryRunner.commitTransaction();
       return this.findOne(sale.id);
@@ -1636,6 +1615,7 @@ export class SalesService {
                   {
                     itemType: SaleItemKindDto.PRODUCT,
                     productId: line.productId,
+                    commercialLineId: Number(line.id),
                     quantity,
                     baseUnitPrice,
                     finalUnitPrice,
@@ -1757,7 +1737,9 @@ export class SalesService {
     // Agregar los seriales a cada item
     for (const item of sale.items) {
       const key = `${item.productId}`;
-      const itemSerials = serialsByItem.get(key) || [];
+      const itemSerials = item.materialSources?.length
+        ? item.materialSources.filter(source => source.serialId).map(source => ({ serialId: source.serialId!, serialCode: source.serialCode! }))
+        : serialsByItem.get(key) || [];
       (item as any).serials = itemSerials;
     }
 
@@ -1840,6 +1822,10 @@ export class SalesService {
         where: { saleId: sale.id, deletedAt: IsNull() },
       });
       if (activeLinks.length) {
+        for (const orderId of [...new Set(activeLinks.map(link => Number(link.serviceOrderId)))].sort((a, b) => a - b)) {
+          await queryRunner.manager.findOne(ServiceOrder, { where: { id: orderId }, lock: { mode: 'pessimistic_write' } });
+        }
+        await queryRunner.manager.update(MaterialDeliveryLine, { saleId: sale.id }, { saleId: null });
         await queryRunner.manager.softDelete(ServiceOrderSaleLink, {
           id: In(activeLinks.map((link) => link.id)),
         });

@@ -1,4 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { prepareLaborWaiver } from '../service-agreements/labor-waiver';
+import { User } from '../../users/entities/user.entity';
+import { ServiceOrderLineDiscount } from '../service-agreements/entities/service-order-line-discount.entity';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { EntityManager, In } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
 import { PricingEngineService } from '../../pricing/services/pricing-engine.service';
@@ -10,7 +17,7 @@ import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-c
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { ServiceType } from '../enums';
+import { ServiceOrderEconomicStatus, ServiceType } from '../enums';
 import { ServiceOrderAgreementItem } from '../service-agreements/entities/service-agreement-item.entity';
 import { ServiceOrderAgreement } from '../service-agreements/entities/service-agreement.entity';
 import { ServiceOrderAgreementSource } from '../service-agreements/service-agreement-source.enum';
@@ -34,13 +41,23 @@ export class ServiceOrderInitialCommercialService {
     itemInputs: CreateServiceOrderItemDto[],
     creatorId: number,
   ): Promise<ServiceOrderAgreement> {
-    if (![ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(order.serviceType)) {
-      throw new BadRequestException('Initial commercial content is only valid for direct services');
+    if (
+      ![ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(
+        order.serviceType,
+      )
+    ) {
+      throw new BadRequestException(
+        'Initial commercial content is only valid for direct services',
+      );
     }
     if (savedItems.length !== itemInputs.length) {
-      throw new BadRequestException('Saved items do not match the initial commercial payload');
+      throw new BadRequestException(
+        'Saved items do not match the initial commercial payload',
+      );
     }
-    const missingCommercialIndex = itemInputs.findIndex((item) => !item.initialCommercial?.lines?.length);
+    const missingCommercialIndex = itemInputs.findIndex(
+      (item) => !item.initialCommercial?.lines?.length,
+    );
     if (missingCommercialIndex >= 0) {
       throw new BadRequestException(
         `Initial commercial lines are required for service-order item ${missingCommercialIndex + 1}`,
@@ -53,16 +70,39 @@ export class ServiceOrderInitialCommercialService {
         .map((line) => Number(line.productId)),
     );
     const products = productIds.length
-      ? await manager.getRepository(Product).find({ where: { id: In([...new Set(productIds)]) } })
+      ? await manager
+          .getRepository(Product)
+          .find({ where: { id: In([...new Set(productIds)]) } })
       : [];
-    const productMap = new Map(products.map((product) => [Number(product.id), product]));
-    const missingProductId = productIds.find((productId) => !productMap.has(productId));
+    const productMap = new Map(
+      products.map((product) => [Number(product.id), product]),
+    );
+    const missingProductId = productIds.find(
+      (productId) => !productMap.has(productId),
+    );
     if (missingProductId) {
-      throw new NotFoundException(`Product with id ${missingProductId} not found`);
+      throw new NotFoundException(
+        `Product with id ${missingProductId} not found`,
+      );
     }
 
-    const versionRepository = manager.getRepository(ServiceOrderItemCommercialVersion);
-    const lineRepository = manager.getRepository(ServiceOrderItemCommercialLine);
+    const needsWaiver = itemInputs.some((item) =>
+      item.initialCommercial?.lines.some((line) => line.laborWaiverReason),
+    );
+    const author = needsWaiver
+      ? await manager
+          .getRepository(User)
+          .findOne({
+            where: { id: creatorId },
+            relations: ['roles', 'roles.permissions'],
+          })
+      : null;
+    const versionRepository = manager.getRepository(
+      ServiceOrderItemCommercialVersion,
+    );
+    const lineRepository = manager.getRepository(
+      ServiceOrderItemCommercialLine,
+    );
     const acceptedAt = new Date();
     const versions: ServiceOrderItemCommercialVersion[] = [];
     const versionTotals: number[] = [];
@@ -74,6 +114,18 @@ export class ServiceOrderInitialCommercialService {
       const lines = await Promise.all(
         commercial.lines.map((line) => this.buildLine(line, productMap)),
       );
+      const waivers = commercial.lines.map((input, i) => {
+        if (!input.laborWaiverReason) return null;
+        const discount = prepareLaborWaiver(
+          input.type,
+          lines[i].grossAmount,
+          input.laborWaiverReason,
+          author ? { sub: creatorId, roles: author.roles } : undefined,
+        );
+        lines[i].discountAmount = lines[i].grossAmount;
+        lines[i].netAmount = 0;
+        return discount;
+      });
       const totalAmount = this.calculateTotal(lines);
       const version = await versionRepository.save(
         versionRepository.create({
@@ -81,22 +133,36 @@ export class ServiceOrderInitialCommercialService {
           versionNumber: 1,
           status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
           totalAmount,
-          warrantyDurationValue: input.warrantyDurationValue ?? DEFAULT_SERVICE_WARRANTY_DURATION,
-          warrantyDurationUnit: input.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
+          warrantyDurationValue:
+            input.warrantyDurationValue ?? DEFAULT_SERVICE_WARRANTY_DURATION,
+          warrantyDurationUnit:
+            input.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
           notes: commercial.notes ?? input.notes ?? null,
           createdByUserId: creatorId,
           acceptedAt,
           acceptedByUserId: creatorId,
         }),
       );
-      await lineRepository.save(
-        lines.map((line) => lineRepository.create({ ...line, commercialVersionId: version.id })),
+      const savedLines = await lineRepository.save(
+        lines.map((line) =>
+          lineRepository.create({ ...line, commercialVersionId: version.id }),
+        ),
       );
+      for (let i = 0; i < savedLines.length; i++) {
+        if (waivers[i])
+          await manager
+            .getRepository(ServiceOrderLineDiscount)
+            .save({ ...waivers[i], commercialLineId: savedLines[i].id });
+      }
       versions.push(version);
       versionTotals.push(totalAmount);
     }
 
-    const totalAmount = Number(versionTotals.reduce((sum, versionTotal) => sum + versionTotal, 0).toFixed(2));
+    const totalAmount = Number(
+      versionTotals
+        .reduce((sum, versionTotal) => sum + versionTotal, 0)
+        .toFixed(2),
+    );
     const agreementRepository = manager.getRepository(ServiceOrderAgreement);
     const agreement = await agreementRepository.save(
       agreementRepository.create({
@@ -112,7 +178,9 @@ export class ServiceOrderInitialCommercialService {
         agreedByUserId: creatorId,
       }),
     );
-    const agreementItemRepository = manager.getRepository(ServiceOrderAgreementItem);
+    const agreementItemRepository = manager.getRepository(
+      ServiceOrderAgreementItem,
+    );
     await agreementItemRepository.save(
       savedItems.map((item, index) =>
         agreementItemRepository.create({
@@ -122,20 +190,40 @@ export class ServiceOrderInitialCommercialService {
         }),
       ),
     );
+    order.montoComprometidoVigente = totalAmount;
+    order.economicStatus =
+      totalAmount > 0
+        ? ServiceOrderEconomicStatus.PENDIENTE
+        : ServiceOrderEconomicStatus.NO_APLICA;
+    await manager.getRepository(ServiceOrder).save(order);
     return agreement;
   }
 
   private async buildLine(
     input: CreateServiceOrderInitialCommercialLineDto,
     productMap: Map<number, Product>,
-  ): Promise<Omit<ServiceOrderItemCommercialLine, 'id' | 'commercialVersionId' | 'commercialVersion' | 'product' | 'createdAt'>> {
+  ): Promise<
+    Omit<
+      ServiceOrderItemCommercialLine,
+      | 'id'
+      | 'commercialVersionId'
+      | 'commercialVersion'
+      | 'product'
+      | 'createdAt'
+    >
+  > {
     const quantity = Number(input.quantity);
     const unitPrice = Number(input.unitPrice);
     const grossAmount = Number((quantity * unitPrice).toFixed(2));
     if (input.type === ServiceOrderCommercialLineType.PRODUCT) {
       const product = productMap.get(Number(input.productId));
-      if (!product) throw new NotFoundException(`Product with id ${input.productId} not found`);
-      const pricing = await this.pricingEngineService.calculatePrice(product.id);
+      if (!product)
+        throw new NotFoundException(
+          `Product with id ${input.productId} not found`,
+        );
+      const pricing = await this.pricingEngineService.calculatePrice(
+        product.id,
+      );
       if (unitPrice < pricing.minAllowedPrice) {
         throw new BadRequestException(
           `El precio de ${product.name} no puede ser menor a S/ ${pricing.minAllowedPrice.toFixed(2)}`,
@@ -162,7 +250,9 @@ export class ServiceOrderInitialCommercialService {
       };
     }
     if (input.type !== ServiceOrderCommercialLineType.SERVICE) {
-      throw new BadRequestException('Adjustment lines are not allowed during service-order intake');
+      throw new BadRequestException(
+        'Adjustment lines are not allowed during service-order intake',
+      );
     }
     return {
       type: input.type,
@@ -188,6 +278,8 @@ export class ServiceOrderInitialCommercialService {
   private calculateTotal(
     lines: Array<Pick<ServiceOrderItemCommercialLine, 'netAmount'>>,
   ): number {
-    return Number(lines.reduce((sum, line) => sum + Number(line.netAmount), 0).toFixed(2));
+    return Number(
+      lines.reduce((sum, line) => sum + Number(line.netAmount), 0).toFixed(2),
+    );
   }
 }

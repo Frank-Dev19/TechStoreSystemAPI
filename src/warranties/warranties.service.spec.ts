@@ -105,3 +105,23 @@ describe('WarrantiesService', () => {
     }));
   });
 });
+
+
+describe('Warranty and material guide integration', () => {
+  it('uses the serial of each sale line even when multiple lines share a product', async () => {
+    const service = new WarrantiesService(repository() as any, repository() as any, repository() as any);
+    const product = { id: 7, isSerialized: true, warrantyDurationValue: 12, name: 'RAM' };
+    const items = [
+      { id: 2, itemType: 'PRODUCT', product, quantity: 1, materialSources: [{ serialId: 11, serialCode: 'RAM-B', quantity: 1 }] },
+      { id: 1, itemType: 'PRODUCT', product, quantity: 1, materialSources: [{ serialId: 10, serialCode: 'RAM-A', quantity: 1 }] },
+    ];
+    const manager = { getRepository: (entity: any) => ({
+      findOne: async () => entity.name === 'Sale' ? { id: 1, status: 'CONFIRMED', items, customerId: 1, createdAt: new Date() } : null,
+      find: async () => [],
+    }) };
+    const create = jest.spyOn(service as any, 'createCoverageIfMissing').mockResolvedValue(null);
+    await service.issueProductCoveragesForSale(manager as any, 1);
+    expect(create).toHaveBeenNthCalledWith(1, manager, expect.objectContaining({ saleItemId: 1, serialId: 10, serialSnapshot: 'RAM-A' }));
+    expect(create).toHaveBeenNthCalledWith(2, manager, expect.objectContaining({ saleItemId: 2, serialId: 11, serialSnapshot: 'RAM-B' }));
+  });
+});

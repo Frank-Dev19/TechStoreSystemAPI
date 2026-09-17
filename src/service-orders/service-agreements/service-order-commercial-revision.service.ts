@@ -1,3 +1,4 @@
+import { LaborWaiverReason, prepareLaborWaiver } from './labor-waiver';
 import {
   BadRequestException,
   ForbiddenException,
@@ -268,8 +269,12 @@ export class ServiceOrderCommercialRevisionService {
         versionNumber,
         status: ServiceOrderItemCommercialVersionStatus.DRAFT,
         totalAmount,
-        warrantyDurationValue: edit.warrantyDurationValue ?? baseVersion?.warrantyDurationValue ?? 30,
-        warrantyDurationUnit: edit.warrantyDurationUnit ?? baseVersion?.warrantyDurationUnit,
+        warrantyDurationValue:
+          edit.warrantyDurationValue ??
+          baseVersion?.warrantyDurationValue ??
+          30,
+        warrantyDurationUnit:
+          edit.warrantyDurationUnit ?? baseVersion?.warrantyDurationUnit,
         notes: edit.notes?.trim() || null,
         createdByUserId: creatorId,
         acceptedAt: null,
@@ -359,6 +364,15 @@ export class ServiceOrderCommercialRevisionService {
         'Las líneas de ajuste se habilitarán con el flujo de descuentos',
       );
     }
+    if (
+      line.laborWaiverReason &&
+      (line.type !== ServiceOrderCommercialLineType.SERVICE ||
+        Number(line.discountPct ?? 0) !== 0)
+    ) {
+      throw new BadRequestException(
+        'La exoneración solo aplica a mano de obra y no se combina con otros descuentos',
+      );
+    }
     const quantity = Number(line.quantity);
     const unitPrice = Number(line.unitPrice);
     const grossAmount = Number((quantity * unitPrice).toFixed(2));
@@ -381,7 +395,9 @@ export class ServiceOrderCommercialRevisionService {
         throw new NotFoundException(
           `Product with id ${line.productId} not found`,
         );
-      const pricing = await this.pricingEngineService.calculatePrice(product.id);
+      const pricing = await this.pricingEngineService.calculatePrice(
+        product.id,
+      );
       if (unitPrice < pricing.minAllowedPrice) {
         throw new BadRequestException(
           `El precio de ${product.name} no puede ser menor a S/ ${pricing.minAllowedPrice.toFixed(2)}`,
@@ -437,6 +453,7 @@ export class ServiceOrderCommercialRevisionService {
       line.discountOverrideReason,
       viewer,
       null,
+      line.laborWaiverReason,
     );
   }
 
@@ -446,7 +463,24 @@ export class ServiceOrderCommercialRevisionService {
     overrideReason: string | undefined,
     viewer: RevisionViewer,
     productId: number | null,
+    laborWaiverReason?: LaborWaiverReason,
   ): Promise<PreparedCommercialLine> {
+    if (laborWaiverReason) {
+      const discount = prepareLaborWaiver(
+        commercialLine.type,
+        commercialLine.grossAmount,
+        laborWaiverReason,
+        viewer,
+      );
+      return {
+        line: {
+          ...commercialLine,
+          discountAmount: commercialLine.grossAmount,
+          netAmount: 0,
+        },
+        discount: discount as DiscountSnapshotInput,
+      };
+    }
     if (!discountPct) {
       return { line: commercialLine, discount: null };
     }

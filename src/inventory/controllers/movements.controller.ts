@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { MovementsService } from '../services/movements.service';
 import { MovementDto } from '../dto/movement.dto';
 import { Req } from '@nestjs/common';
@@ -14,6 +14,7 @@ export class MovementsController {
     @Post()
     @Permissions('inventory-manage.manage')
     create(@Body() dto: MovementDto, @Req() req: any) {
+        if (dto.source_doc_type?.startsWith('MATERIAL_') || dto.reason_code?.startsWith('MATERIAL_')) throw new BadRequestException('Use el flujo de guías internas para movimientos de reparación');
         const user =
             req.user?.name || dto.user_created || req.headers['x-user-name'] || 'Usuario Front';
         return this.svc.createMovement(dto, user);

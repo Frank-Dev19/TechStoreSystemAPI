@@ -15,6 +15,7 @@ export class SerialsService {
         const where: any = { productId: params.product_id };
         if (params.lot_id !== undefined) where.lotId = params.lot_id ?? null;
         if (params.status) where.status = params.status;
+        if (params.status === 'IN_STOCK') where.condition = 'USABLE';
         return this.serialRepo.find({ where, relations: ['supplier', 'lot'], order: { createdAt: 'DESC' } });
     }
 

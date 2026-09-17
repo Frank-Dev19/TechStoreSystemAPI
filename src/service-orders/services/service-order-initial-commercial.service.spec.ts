@@ -1,3 +1,6 @@
+import { User } from '../../users/entities/user.entity';
+import { ServiceOrderLineDiscount } from '../service-agreements/entities/service-order-line-discount.entity';
+import { LaborWaiverReason } from '../service-agreements/labor-waiver';
 import { BadRequestException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { Product } from '../../inventory/entities/product.entity';
@@ -7,7 +10,11 @@ import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-c
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { EquipmentType, ServiceType } from '../enums';
+import {
+  EquipmentType,
+  ServiceOrderEconomicStatus,
+  ServiceType,
+} from '../enums';
 import { ServiceOrderAgreementItem } from '../service-agreements/entities/service-agreement-item.entity';
 import { ServiceOrderAgreement } from '../service-agreements/entities/service-agreement.entity';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
@@ -33,9 +40,13 @@ describe('ServiceOrderInitialCommercialService', () => {
   let agreementRepo: MockRepo;
   let agreementItemRepo: MockRepo;
   let productRepo: MockRepo;
+  let waiverRepo: MockRepo;
+  let orderRepo: MockRepo;
   let pricingEngine: jest.Mocked<PricingEngineService>;
 
   beforeEach(() => {
+    waiverRepo = createRepo();
+    orderRepo = createRepo();
     versionRepo = createRepo();
     lineRepo = createRepo();
     agreementRepo = createRepo();
@@ -47,6 +58,25 @@ describe('ServiceOrderInitialCommercialService', () => {
         if (entity === ServiceOrderItemCommercialLine) return lineRepo;
         if (entity === ServiceOrderAgreement) return agreementRepo;
         if (entity === ServiceOrderAgreementItem) return agreementItemRepo;
+        if (entity === ServiceOrderLineDiscount) return waiverRepo;
+        if (entity === ServiceOrder) return orderRepo;
+        if (entity === User)
+          return {
+            findOne: jest
+              .fn()
+              .mockResolvedValue({
+                roles: [
+                  {
+                    permissions: [
+                      { code: 'service-order-agreement.apply-discount' },
+                      {
+                        code: 'service-order-agreement.override-discount-limit',
+                      },
+                    ],
+                  },
+                ],
+              }),
+          };
         if (entity === Product) return productRepo;
         throw new Error(`Repositorio inesperado: ${entity?.name}`);
       }),
@@ -63,7 +93,9 @@ describe('ServiceOrderInitialCommercialService', () => {
   });
 
   it('crea versiones aceptadas por equipo y un consolidado confirmado', async () => {
-    productRepo.find.mockResolvedValue([{ id: 12, sku: 'RAM-16', name: 'Memoria 16 GB', description: 'DDR4' }]);
+    productRepo.find.mockResolvedValue([
+      { id: 12, sku: 'RAM-16', name: 'Memoria 16 GB', description: 'DDR4' },
+    ]);
     versionRepo.save
       .mockResolvedValueOnce({ id: 201, serviceOrderItemId: 11 })
       .mockResolvedValueOnce({ id: 202, serviceOrderItemId: 12 });
@@ -75,8 +107,17 @@ describe('ServiceOrderInitialCommercialService', () => {
         initialIssue: 'No enciende',
         initialCommercial: {
           lines: [
-            { type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 80 },
-            { type: ServiceOrderCommercialLineType.PRODUCT, productId: 12, quantity: 2, unitPrice: 25 },
+            {
+              type: ServiceOrderCommercialLineType.SERVICE,
+              quantity: 1,
+              unitPrice: 80,
+            },
+            {
+              type: ServiceOrderCommercialLineType.PRODUCT,
+              productId: 12,
+              quantity: 2,
+              unitPrice: 25,
+            },
           ],
         },
       },
@@ -84,7 +125,13 @@ describe('ServiceOrderInitialCommercialService', () => {
         equipmentType: EquipmentType.PRINTER,
         initialIssue: 'Atasca papel',
         initialCommercial: {
-          lines: [{ type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 60 }],
+          lines: [
+            {
+              type: ServiceOrderCommercialLineType.SERVICE,
+              quantity: 1,
+              unitPrice: 60,
+            },
+          ],
         },
       },
     ];
@@ -100,17 +147,100 @@ describe('ServiceOrderInitialCommercialService', () => {
     expect(versionRepo.save).toHaveBeenCalledTimes(2);
     expect(lineRepo.save).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ catalogCodeSnapshot: 'RAM-16', netAmount: 50 }),
-        expect.objectContaining({ catalogCodeSnapshot: 'TECHNICAL_SERVICE', netAmount: 80 }),
+        expect.objectContaining({
+          catalogCodeSnapshot: 'RAM-16',
+          netAmount: 50,
+        }),
+        expect.objectContaining({
+          catalogCodeSnapshot: 'TECHNICAL_SERVICE',
+          netAmount: 80,
+        }),
       ]),
     );
     expect(agreementRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ serviceOrderId: 100, totalAmount: 190, agreedByUserId: 5 }),
+      expect.objectContaining({
+        serviceOrderId: 100,
+        totalAmount: 190,
+        agreedByUserId: 5,
+      }),
     );
     expect(agreementItemRepo.save).toHaveBeenCalledWith([
-      expect.objectContaining({ serviceOrderItemId: 11, commercialVersionId: 201 }),
-      expect.objectContaining({ serviceOrderItemId: 12, commercialVersionId: 202 }),
+      expect.objectContaining({
+        serviceOrderItemId: 11,
+        commercialVersionId: 201,
+      }),
+      expect.objectContaining({
+        serviceOrderItemId: 12,
+        commercialVersionId: 202,
+      }),
     ]);
+    expect(orderRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 100,
+        montoComprometidoVigente: 190,
+        economicStatus: ServiceOrderEconomicStatus.PENDIENTE,
+      }),
+    );
+  });
+
+  it('exonera 80 de mano de obra y mantiene 150 de repuestos con autor y motivo', async () => {
+    productRepo.find.mockResolvedValue([{ id: 12, sku: 'RAM', name: 'RAM' }]);
+    versionRepo.save.mockResolvedValue({ id: 201 });
+    agreementRepo.save.mockResolvedValue({ id: 301 });
+    lineRepo.save.mockImplementation(async (lines) =>
+      lines.map((line, i) => ({ ...line, id: 401 + i })),
+    );
+    await service.createForDirectService(
+      manager,
+      { id: 100, serviceType: ServiceType.STANDARD_SERVICE } as ServiceOrder,
+      [{ id: 11 }] as ServiceOrderItem[],
+      [
+        {
+          equipmentType: EquipmentType.LAPTOP,
+          initialIssue: 'Instalar RAM',
+          initialCommercial: {
+            lines: [
+              {
+                type: ServiceOrderCommercialLineType.SERVICE,
+                quantity: 1,
+                unitPrice: 80,
+                laborWaiverReason: LaborWaiverReason.INTERNAL_SERVICE,
+              },
+              {
+                type: ServiceOrderCommercialLineType.PRODUCT,
+                productId: 12,
+                quantity: 1,
+                unitPrice: 150,
+              },
+            ],
+          },
+        },
+      ],
+      5,
+    );
+    expect(lineRepo.save).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          unitPrice: 80,
+          grossAmount: 80,
+          discountAmount: 80,
+          netAmount: 0,
+        }),
+        expect.objectContaining({ grossAmount: 150, netAmount: 150 }),
+      ]),
+    );
+    expect(agreementRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 150 }),
+    );
+    expect(waiverRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commercialLineId: 401,
+        amount: 80,
+        appliedByUserId: 5,
+        authorizedByUserId: 5,
+        overrideReason: 'Servicio interno',
+      }),
+    );
   });
 
   it('rechaza un servicio directo si algún equipo no tiene comercial inicial', async () => {

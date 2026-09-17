@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -6,11 +11,18 @@ import { LessThanOrEqual, Repository } from 'typeorm';
 import { NotificationDeliveryAttempt } from '../entities/notification-delivery-attempt.entity';
 import { NotificationMessage } from '../entities/notification-message.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { ServiceOrderOperativeStatus, ServiceOrderTechnicalStatus } from '../enums';
+import {
+  ServiceOrderOperativeStatus,
+  ServiceOrderTechnicalStatus,
+  ServiceType,
+} from '../enums';
 import { ServiceOrderDiagnosis } from '../diagnoses/entities/service-order-diagnosis.entity';
 import { ServiceOrderInboxChannelService } from '../inbox/service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from '../inbox/service-order-inbox.service';
-import { ServiceOrderWhatsAppTemplateService, WhatsAppTemplateDispatch } from './service-order-whatsapp-template.service';
+import {
+  ServiceOrderWhatsAppTemplateService,
+  WhatsAppTemplateDispatch,
+} from './service-order-whatsapp-template.service';
 import { ServiceOrderSurveyService } from '../surveys/service-order-survey.service';
 
 type DispatchOrderIntakeTemplateInput = {
@@ -74,18 +86,24 @@ export class ServiceOrderMessageMatrixService {
     @Optional() private readonly configService?: ConfigService,
   ) {}
 
-  async dispatchOrderIntakeTemplate(input: DispatchOrderIntakeTemplateInput): Promise<void> {
+  async dispatchOrderIntakeTemplate(
+    input: DispatchOrderIntakeTemplateInput,
+  ): Promise<void> {
     const serviceOrders = input.serviceOrders.filter(Boolean);
     if (!serviceOrders.length) {
       return;
     }
 
-    const thread = await this.inboxService.getThreadForServiceOrder(serviceOrders[0].id, {
-      role: 'SUPERVISOR',
-      userId: null,
-      displayName: 'Sistema',
-    });
-    const recipient = thread.clientPhone ?? serviceOrders[0].clientSnapshotPhone ?? null;
+    const thread = await this.inboxService.getThreadForServiceOrder(
+      serviceOrders[0].id,
+      {
+        role: 'SUPERVISOR',
+        userId: null,
+        displayName: 'Sistema',
+      },
+    );
+    const recipient =
+      thread.clientPhone ?? serviceOrders[0].clientSnapshotPhone ?? null;
     if (!recipient) {
       return;
     }
@@ -98,14 +116,24 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
 
-    const template = this.whatsappTemplateService.buildOrderIntakeTemplate({
+    const templateInput = {
       clientName: serviceOrders[0].clientSnapshotName?.trim() || 'cliente',
       orderCode: serviceOrders[0].code,
       equipmentCount: input.equipmentCount,
       documentUrl: input.documentUrl,
       documentFileName: input.documentFileName,
       quickReplyPayloads: ['CONSULTA'],
-    });
+    };
+    const template =
+      serviceOrders.length === 1 &&
+      serviceOrders[0].serviceType === ServiceType.STANDARD_SERVICE
+        ? this.whatsappTemplateService.buildStandardOrderConfirmedTemplate({
+            ...templateInput,
+            totalAmount: this.formatCurrency(
+              serviceOrders[0].montoComprometidoVigente,
+            ),
+          })
+        : this.whatsappTemplateService.buildOrderIntakeTemplate(templateInput);
 
     const notification = await this.notificationRepository.save(
       this.notificationRepository.create({
@@ -158,32 +186,54 @@ export class ServiceOrderMessageMatrixService {
       attempt.status = result.status;
       attempt.responsePayload = JSON.stringify(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
+      const message =
+        error instanceof Error ? error.message : 'Unknown dispatch error';
       this.scheduleRetry(notification, message, error);
       attempt.status = 'FAILED';
       attempt.responsePayload = JSON.stringify({ error: message });
-      this.logger.error(`Batch intake template dispatch failed for orders ${serviceOrders.map((order) => order.id).join(', ')}: ${message}`);
+      this.logger.error(
+        `Batch intake template dispatch failed for orders ${serviceOrders.map((order) => order.id).join(', ')}: ${message}`,
+      );
     }
 
     await this.notificationRepository.save(notification);
     await this.attemptRepository.save(attempt);
   }
 
-  async dispatchDiagnosisQuoteTemplate(input: DispatchDiagnosisQuoteInput): Promise<string> {
-    const thread = await this.inboxService.getThreadForServiceOrder(input.serviceOrder.id, {
-      role: 'SUPERVISOR', userId: null, displayName: 'Sistema',
-    });
-    const recipient = thread.clientPhone ?? input.serviceOrder.clientSnapshotPhone ?? null;
+  async dispatchDiagnosisQuoteTemplate(
+    input: DispatchDiagnosisQuoteInput,
+  ): Promise<string> {
+    const thread = await this.inboxService.getThreadForServiceOrder(
+      input.serviceOrder.id,
+      {
+        role: 'SUPERVISOR',
+        userId: null,
+        displayName: 'Sistema',
+      },
+    );
+    const recipient =
+      thread.clientPhone ?? input.serviceOrder.clientSnapshotPhone ?? null;
     if (!recipient) return 'SKIPPED_NO_RECIPIENT';
-    const notificationKind = input.isRediagnosis ? 'rediagnosis-quote' : 'diagnosis-quote';
+    const notificationKind = input.isRediagnosis
+      ? 'rediagnosis-quote'
+      : 'diagnosis-quote';
     const idempotencyKey = `commercial_version:${input.commercialVersionId}:${notificationKind}-template`;
-    let notification = await this.notificationRepository.findOne({ where: { idempotencyKey } });
-    if (notification && ['SENT', 'DELIVERED', 'READ'].includes(notification.status)) {
+    let notification = await this.notificationRepository.findOne({
+      where: { idempotencyKey },
+    });
+    if (
+      notification &&
+      ['SENT', 'DELIVERED', 'READ'].includes(notification.status)
+    ) {
       return notification.status;
     }
     const templateBuilder = input.isRediagnosis
-      ? this.whatsappTemplateService.buildRediagnosisAgreementTemplate.bind(this.whatsappTemplateService)
-      : this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate.bind(this.whatsappTemplateService);
+      ? this.whatsappTemplateService.buildRediagnosisAgreementTemplate.bind(
+          this.whatsappTemplateService,
+        )
+      : this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate.bind(
+          this.whatsappTemplateService,
+        );
     const template = templateBuilder({
       clientName: input.serviceOrder.clientSnapshotName?.trim() || 'cliente',
       equipmentLabel: input.equipmentLabel,
@@ -191,37 +241,46 @@ export class ServiceOrderMessageMatrixService {
       totalAmount: Number(input.totalAmount).toFixed(2),
       documentUrl: input.documentUrl,
       documentFileName: input.documentFileName,
-      quickReplyPayloads: [`ACEPTAR_COTIZACION:${input.commercialVersionId}`, 'CONSULTA'],
+      quickReplyPayloads: [
+        `ACEPTAR_COTIZACION:${input.commercialVersionId}`,
+        'CONSULTA',
+      ],
     });
     if (!notification) {
-      notification = await this.notificationRepository.save(this.notificationRepository.create({
-        serviceOrderId: input.serviceOrder.id,
-        channel: 'WHATSAPP_TEMPLATE',
-        messageType: input.isRediagnosis
-          ? 'rediagnosis.quote.issued'
-          : 'diagnosis.quote.issued',
-        recipient,
-        body: null,
-        idempotencyKey,
-        status: 'QUEUED',
-        scope: 'ORDER_ITEM',
-        metadataJson: JSON.stringify({
-          commercialVersionId: input.commercialVersionId,
-          tempDocumentToken: input.tempDocumentToken,
-          templateName: template.templateName,
-          languageCode: template.languageCode,
-          bodyParameters: template.bodyParameters,
-          documentUrl: template.documentUrl ?? null,
-          documentFileName: template.documentFileName ?? null,
-          quickReplyPayloads: template.quickReplyPayloads,
-          urlButtonParameters: template.urlButtonParameters,
-          contextToken: thread.contextToken,
+      notification = await this.notificationRepository.save(
+        this.notificationRepository.create({
+          serviceOrderId: input.serviceOrder.id,
+          channel: 'WHATSAPP_TEMPLATE',
+          messageType: input.isRediagnosis
+            ? 'rediagnosis.quote.issued'
+            : 'diagnosis.quote.issued',
+          recipient,
+          body: null,
+          idempotencyKey,
+          status: 'QUEUED',
+          scope: 'ORDER_ITEM',
+          metadataJson: JSON.stringify({
+            commercialVersionId: input.commercialVersionId,
+            tempDocumentToken: input.tempDocumentToken,
+            templateName: template.templateName,
+            languageCode: template.languageCode,
+            bodyParameters: template.bodyParameters,
+            documentUrl: template.documentUrl ?? null,
+            documentFileName: template.documentFileName ?? null,
+            quickReplyPayloads: template.quickReplyPayloads,
+            urlButtonParameters: template.urlButtonParameters,
+            contextToken: thread.contextToken,
+          }),
         }),
-      }));
+      );
     }
-    const attempt = await this.attemptRepository.save(this.attemptRepository.create({
-      notificationMessageId: notification.id, status: 'QUEUED', responsePayload: null,
-    }));
+    const attempt = await this.attemptRepository.save(
+      this.attemptRepository.create({
+        notificationMessageId: notification.id,
+        status: 'QUEUED',
+        responsePayload: null,
+      }),
+    );
     try {
       const result = await this.inboxChannelService.dispatchTemplateMessage({
         clientPhone: recipient,
@@ -240,9 +299,16 @@ export class ServiceOrderMessageMatrixService {
       attempt.status = result.status;
       attempt.responsePayload = JSON.stringify(result);
     } catch (error) {
-      this.scheduleRetry(notification, error instanceof Error ? error.message : 'Unknown dispatch error', error);
+      this.scheduleRetry(
+        notification,
+        error instanceof Error ? error.message : 'Unknown dispatch error',
+        error,
+      );
       attempt.status = 'FAILED';
-      attempt.responsePayload = JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown dispatch error' });
+      attempt.responsePayload = JSON.stringify({
+        error:
+          error instanceof Error ? error.message : 'Unknown dispatch error',
+      });
     }
     await this.notificationRepository.save(notification);
     await this.attemptRepository.save(attempt);
@@ -275,7 +341,15 @@ export class ServiceOrderMessageMatrixService {
     return;
   }
 
-  async notifyAgreementConfirmed(_serviceOrder: ServiceOrder, _agreementId: number): Promise<void> {
+  private formatCurrency(value: number | string | null | undefined): string {
+    const amount = Number(value ?? 0);
+    return `S/ ${Number.isFinite(amount) ? amount.toFixed(2) : '0.00'}`;
+  }
+
+  async notifyAgreementConfirmed(
+    _serviceOrder: ServiceOrder,
+    _agreementId: number,
+  ): Promise<void> {
     return;
   }
 
@@ -287,7 +361,9 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
     if (!this.surveyService) {
-      this.logger.error(`Automatic survey notification skipped for order ${serviceOrder.id}: survey service unavailable`);
+      this.logger.error(
+        `Automatic survey notification skipped for order ${serviceOrder.id}: survey service unavailable`,
+      );
       return;
     }
     const survey = await this.surveyService.issueForOrder(serviceOrder.id);
@@ -321,12 +397,13 @@ export class ServiceOrderMessageMatrixService {
       serviceOrder,
       messageType: 'agreement.available',
       idempotencyKey: `service_order:${serviceOrder.id}:agreement:${agreementId}:available`,
-      template: this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate({
-        clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
-        equipmentLabel: this.buildEquipmentLabel(serviceOrder),
-        orderCode: serviceOrder.code,
-        totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
-      }),
+      template:
+        this.whatsappTemplateService.buildDiagnosisAgreementAvailableTemplate({
+          clientName: serviceOrder.clientSnapshotName?.trim() || 'cliente',
+          equipmentLabel: this.buildEquipmentLabel(serviceOrder),
+          orderCode: serviceOrder.code,
+          totalAmount: `S/${Number(totalAmount).toFixed(2)}`,
+        }),
     });
   }
 
@@ -348,26 +425,36 @@ export class ServiceOrderMessageMatrixService {
     });
   }
 
-  async dispatchCancellationSummaryTemplate(input: DispatchCancellationSummaryInput): Promise<void> {
-    const requestIds = [...new Set(input.cancellationRequestIds.map(Number))].sort((a, b) => a - b);
-    const template = this.whatsappTemplateService.buildCancellationSummaryTemplate({
-      clientName: input.serviceOrder.clientSnapshotName?.trim() || 'cliente',
-      itemCount: String(input.itemCount),
-      orderCode: input.serviceOrder.code,
-      documentUrl: input.documentUrl,
-      documentFileName: input.documentFileName,
-      quickReplyPayloads: ['CONSULTA'],
-    });
+  async dispatchCancellationSummaryTemplate(
+    input: DispatchCancellationSummaryInput,
+  ): Promise<void> {
+    const requestIds = [
+      ...new Set(input.cancellationRequestIds.map(Number)),
+    ].sort((a, b) => a - b);
+    const template =
+      this.whatsappTemplateService.buildCancellationSummaryTemplate({
+        clientName: input.serviceOrder.clientSnapshotName?.trim() || 'cliente',
+        itemCount: String(input.itemCount),
+        orderCode: input.serviceOrder.code,
+        documentUrl: input.documentUrl,
+        documentFileName: input.documentFileName,
+        quickReplyPayloads: ['CONSULTA'],
+      });
     await this.dispatchTemplateNotification(
       input.serviceOrder,
       `service_order:${input.serviceOrder.id}:cancellation:${requestIds.join('-')}`,
       'cancellation.summary',
       template,
-      { cancellationRequestIds: requestIds, tempDocumentToken: input.tempDocumentToken },
+      {
+        cancellationRequestIds: requestIds,
+        tempDocumentToken: input.tempDocumentToken,
+      },
     );
   }
 
-  async dispatchFinalServiceReportTemplate(input: DispatchFinalServiceReportInput): Promise<void> {
+  async dispatchFinalServiceReportTemplate(
+    input: DispatchFinalServiceReportInput,
+  ): Promise<void> {
     const template = this.whatsappTemplateService.buildFinalServiceTemplate({
       clientName: input.serviceOrder.clientSnapshotName?.trim() || 'cliente',
       equipmentLabel: input.equipmentLabel,
@@ -389,7 +476,9 @@ export class ServiceOrderMessageMatrixService {
     );
   }
 
-  async dispatchQuoteReminderTemplate(input: DispatchDiagnosisQuoteInput): Promise<void> {
+  async dispatchQuoteReminderTemplate(
+    input: DispatchDiagnosisQuoteInput,
+  ): Promise<void> {
     const template = this.whatsappTemplateService.buildQuoteReminderTemplate({
       clientName: input.serviceOrder.clientSnapshotName?.trim() || 'cliente',
       equipmentLabel: input.equipmentLabel,
@@ -397,14 +486,20 @@ export class ServiceOrderMessageMatrixService {
       totalAmount: Number(input.totalAmount).toFixed(2),
       documentUrl: input.documentUrl,
       documentFileName: input.documentFileName,
-      quickReplyPayloads: [`ACEPTAR_COTIZACION:${input.commercialVersionId}`, 'CONSULTA'],
+      quickReplyPayloads: [
+        `ACEPTAR_COTIZACION:${input.commercialVersionId}`,
+        'CONSULTA',
+      ],
     });
     await this.dispatchTemplateNotification(
       input.serviceOrder,
       `commercial_version:${input.commercialVersionId}:quote-reminder`,
       'quote.reminder',
       template,
-      { commercialVersionId: input.commercialVersionId, tempDocumentToken: input.tempDocumentToken },
+      {
+        commercialVersionId: input.commercialVersionId,
+        tempDocumentToken: input.tempDocumentToken,
+      },
       'ORDER_ITEM',
     );
   }
@@ -431,7 +526,10 @@ export class ServiceOrderMessageMatrixService {
         documentFileName: input.documentFileName,
         quickReplyPayloads: ['CONSULTA'],
       }),
-      { electronicDocumentId: input.electronicDocumentId, tempDocumentToken: input.tempDocumentToken },
+      {
+        electronicDocumentId: input.electronicDocumentId,
+        tempDocumentToken: input.tempDocumentToken,
+      },
     );
   }
 
@@ -444,8 +542,12 @@ export class ServiceOrderMessageMatrixService {
     tempDocumentToken: string;
     automatic: boolean;
   }): Promise<void> {
-    const itemIds = [...new Set(input.itemIds.map(Number))].sort((a, b) => a - b);
-    const suffix = input.automatic ? 'automatic' : `manual:${itemIds.join('-')}`;
+    const itemIds = [...new Set(input.itemIds.map(Number))].sort(
+      (a, b) => a - b,
+    );
+    const suffix = input.automatic
+      ? 'automatic'
+      : `manual:${itemIds.join('-')}`;
     await this.dispatchTemplateNotification(
       input.serviceOrder,
       `service_order:${input.serviceOrder.id}:pickup-reminder:${suffix}`,
@@ -458,7 +560,11 @@ export class ServiceOrderMessageMatrixService {
         documentFileName: input.documentFileName,
         quickReplyPayloads: ['CONSULTA'],
       }),
-      { itemIds, automatic: input.automatic, tempDocumentToken: input.tempDocumentToken },
+      {
+        itemIds,
+        automatic: input.automatic,
+        tempDocumentToken: input.tempDocumentToken,
+      },
     );
   }
 
@@ -471,11 +577,15 @@ export class ServiceOrderMessageMatrixService {
   }
 
   async hasNotification(idempotencyKey: string): Promise<boolean> {
-    return Boolean(await this.notificationRepository.findOne({ where: { idempotencyKey } }));
+    return Boolean(
+      await this.notificationRepository.findOne({ where: { idempotencyKey } }),
+    );
   }
 
   async retryFinalFailure(id: number): Promise<NotificationMessage> {
-    const notification = await this.notificationRepository.findOne({ where: { id } });
+    const notification = await this.notificationRepository.findOne({
+      where: { id },
+    });
     if (!notification || notification.status !== 'FAILED_FINAL') {
       throw new NotFoundException('Notificación final fallida no encontrada');
     }
@@ -487,19 +597,36 @@ export class ServiceOrderMessageMatrixService {
     return this.notificationRepository.findOneOrFail({ where: { id } });
   }
 
-  @Cron(process.env.SERVICE_ORDER_NOTIFICATION_SCHEDULER_CRON || '0 */15 * * * *')
+  @Cron(
+    process.env.SERVICE_ORDER_NOTIFICATION_SCHEDULER_CRON || '0 */15 * * * *',
+  )
   async retryScheduledNotifications(): Promise<void> {
-    if (this.configService?.get<string>('WHATSAPP_NOTIFICATION_RETRY_ENABLED') === 'false') return;
+    if (
+      this.configService?.get<string>('WHATSAPP_NOTIFICATION_RETRY_ENABLED') ===
+      'false'
+    )
+      return;
     const pending = await this.notificationRepository.find({
-      where: { status: 'RETRY_SCHEDULED', nextAttemptAt: LessThanOrEqual(new Date()) },
+      where: {
+        status: 'RETRY_SCHEDULED',
+        nextAttemptAt: LessThanOrEqual(new Date()),
+      },
       order: { nextAttemptAt: 'ASC' },
       take: 50,
     });
-    for (const notification of pending) await this.retryNotification(notification);
+    for (const notification of pending)
+      await this.retryNotification(notification);
   }
 
-  private async dispatchBusinessNotification(input: DispatchBusinessNotificationInput): Promise<void> {
-    await this.dispatchTemplateNotification(input.serviceOrder, input.idempotencyKey, input.messageType, input.template);
+  private async dispatchBusinessNotification(
+    input: DispatchBusinessNotificationInput,
+  ): Promise<void> {
+    await this.dispatchTemplateNotification(
+      input.serviceOrder,
+      input.idempotencyKey,
+      input.messageType,
+      input.template,
+    );
   }
 
   private async dispatchTemplateNotification(
@@ -517,12 +644,16 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
 
-    const thread = await this.inboxService.getThreadForServiceOrder(serviceOrder.id, {
-      role: 'SUPERVISOR',
-      userId: null,
-      displayName: 'Sistema',
-    });
-    const recipient = thread.clientPhone ?? serviceOrder.clientSnapshotPhone ?? null;
+    const thread = await this.inboxService.getThreadForServiceOrder(
+      serviceOrder.id,
+      {
+        role: 'SUPERVISOR',
+        userId: null,
+        displayName: 'Sistema',
+      },
+    );
+    const recipient =
+      thread.clientPhone ?? serviceOrder.clientSnapshotPhone ?? null;
     if (!recipient) {
       return;
     }
@@ -578,24 +709,31 @@ export class ServiceOrderMessageMatrixService {
       attempt.status = result.status;
       attempt.responsePayload = JSON.stringify(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
+      const message =
+        error instanceof Error ? error.message : 'Unknown dispatch error';
       this.scheduleRetry(notification, message, error);
       attempt.status = 'FAILED';
       attempt.responsePayload = JSON.stringify({ error: message });
-      this.logger.error(`Template dispatch failed for order ${serviceOrder.id}: ${message}`);
+      this.logger.error(
+        `Template dispatch failed for order ${serviceOrder.id}: ${message}`,
+      );
     }
 
     await this.notificationRepository.save(notification);
     await this.attemptRepository.save(attempt);
   }
 
-  private async retryNotification(notification: NotificationMessage): Promise<void> {
+  private async retryNotification(
+    notification: NotificationMessage,
+  ): Promise<void> {
     const metadata = this.parseMetadata(notification.metadataJson);
-    const attempt = await this.attemptRepository.save(this.attemptRepository.create({
-      notificationMessageId: notification.id,
-      status: 'QUEUED',
-      responsePayload: null,
-    }));
+    const attempt = await this.attemptRepository.save(
+      this.attemptRepository.create({
+        notificationMessageId: notification.id,
+        status: 'QUEUED',
+        responsePayload: null,
+      }),
+    );
     try {
       const result = await this.inboxChannelService.dispatchTemplateMessage({
         clientPhone: String(notification.recipient ?? ''),
@@ -615,7 +753,8 @@ export class ServiceOrderMessageMatrixService {
       attempt.status = result.status;
       attempt.responsePayload = JSON.stringify(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown dispatch error';
+      const message =
+        error instanceof Error ? error.message : 'Unknown dispatch error';
       this.scheduleRetry(notification, message, error);
       attempt.status = 'FAILED';
       attempt.responsePayload = JSON.stringify({ error: message });
@@ -624,14 +763,19 @@ export class ServiceOrderMessageMatrixService {
     await this.attemptRepository.save(attempt);
   }
 
-  private scheduleRetry(notification: NotificationMessage, message: string, error?: unknown): void {
+  private scheduleRetry(
+    notification: NotificationMessage,
+    message: string,
+    error?: unknown,
+  ): void {
     const attemptCount = Number(notification.attemptCount ?? 0) + 1;
     const delays = this.retryDelays();
     notification.attemptCount = attemptCount;
     notification.lastError = message;
     if (
       attemptCount > delays.length ||
-      this.configService?.get<string>('WHATSAPP_NOTIFICATION_RETRY_ENABLED') === 'false' ||
+      this.configService?.get<string>('WHATSAPP_NOTIFICATION_RETRY_ENABLED') ===
+        'false' ||
       this.isPermanentError(error)
     ) {
       notification.status = 'FAILED_FINAL';
@@ -639,20 +783,34 @@ export class ServiceOrderMessageMatrixService {
       return;
     }
     notification.status = 'RETRY_SCHEDULED';
-    notification.nextAttemptAt = new Date(Date.now() + delays[attemptCount - 1] * 60_000);
+    notification.nextAttemptAt = new Date(
+      Date.now() + delays[attemptCount - 1] * 60_000,
+    );
   }
 
   private isPermanentError(error: unknown): boolean {
     const status = Number(
-      (error as { status?: number; statusCode?: number; response?: { status?: number } } | null)?.status ??
-      (error as { statusCode?: number } | null)?.statusCode ??
-      (error as { response?: { status?: number } } | null)?.response?.status,
+      (
+        error as {
+          status?: number;
+          statusCode?: number;
+          response?: { status?: number };
+        } | null
+      )?.status ??
+        (error as { statusCode?: number } | null)?.statusCode ??
+        (error as { response?: { status?: number } } | null)?.response?.status,
     );
-    return Number.isFinite(status) && status >= 400 && status < 500 && status !== 429;
+    return (
+      Number.isFinite(status) && status >= 400 && status < 500 && status !== 429
+    );
   }
 
   private retryDelays(): number[] {
-    const configured = String(this.configService?.get<string>('WHATSAPP_NOTIFICATION_RETRY_DELAYS_MINUTES') ?? '1,5,30')
+    const configured = String(
+      this.configService?.get<string>(
+        'WHATSAPP_NOTIFICATION_RETRY_DELAYS_MINUTES',
+      ) ?? '1,5,30',
+    )
       .split(',')
       .map((value) => Number(value.trim()))
       .filter((value) => Number.isFinite(value) && value > 0);
@@ -660,7 +818,11 @@ export class ServiceOrderMessageMatrixService {
   }
 
   private parseMetadata(value: string | null): Record<string, unknown> {
-    try { return value ? JSON.parse(value) as Record<string, unknown> : {}; } catch { return {}; }
+    try {
+      return value ? (JSON.parse(value) as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
   }
 
   private stringArray(value: unknown): string[] {
@@ -674,7 +836,9 @@ export class ServiceOrderMessageMatrixService {
 
   private buildEquipmentLabel(serviceOrder: ServiceOrder): string {
     const parts = [
-      serviceOrder.equipmentType === 'OTHER' ? serviceOrder.equipmentTypeOther : serviceOrder.equipmentType,
+      serviceOrder.equipmentType === 'OTHER'
+        ? serviceOrder.equipmentTypeOther
+        : serviceOrder.equipmentType,
       serviceOrder.brand,
       serviceOrder.model,
     ]
@@ -708,5 +872,4 @@ export class ServiceOrderMessageMatrixService {
     }
     return this.buildEquipmentLabel(serviceOrder);
   }
-
 }

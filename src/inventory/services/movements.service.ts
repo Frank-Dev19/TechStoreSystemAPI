@@ -8,6 +8,7 @@ import { Lot } from '../entities/lot.entity';
 import { Serial } from '../entities/serial.entity';
 import { MovementDto } from '../dto/movement.dto';
 import { MovementSerial } from '../entities/movement-serial.entity';
+import { MaterialDeliveryLine } from '../../service-orders/materials/material.entity';
 
 @Injectable()
 export class MovementsService {
@@ -52,13 +53,15 @@ export class MovementsService {
         }
 
         const execute = async (em: EntityManager) => {
+            // Serialize stock changes for the whole product, including separate lots.
+            await em.getRepository(Product).findOne({ where: { id: product.id }, lock: { mode: 'pessimistic_write' } });
             let lotId: number | null = dto.lot_id ?? null;
             if (dto.type === 'IN' && product.managesExpiration && !lotId) {
                 throw new BadRequestException('Entrada de producto con vencimiento requiere lote existente');
             }
 
             // CPP global
-            const prodStocks = await em.getRepository(Stock).find({ where: { productId: product.id } });
+            const prodStocks = await em.getRepository(Stock).find({ where: { productId: product.id }, lock: { mode: 'pessimistic_write' } });
             const totalQty = prodStocks.reduce((a, s) => a + Number(s.qtyOnHand), 0);
             const totalCost = prodStocks.reduce((a, s) => a + Number(s.totalCost), 0);
             const cpp = totalQty > 0 ? totalCost / totalQty : 0;
@@ -77,7 +80,7 @@ export class MovementsService {
             const where: any = { productId: product.id };
             where.lotId = (lotId == null) ? IsNull() : lotId;
 
-            let stockLine = await em.getRepository(Stock).findOne({ where });
+            let stockLine = await em.getRepository(Stock).findOne({ where, lock: { mode: 'pessimistic_write' } });
             if (!stockLine) {
                 stockLine = em.getRepository(Stock).create({
                     productId: product.id,
@@ -88,18 +91,29 @@ export class MovementsService {
                 });
             }
 
+            if ((dto.type === 'OUT' || isAdjNeg) && Number(stockLine.qtyOnHand) < qtyAbs) {
+                throw new BadRequestException('Stock insuficiente en el lote seleccionado');
+            }
             // --- NEW: Pre-procesamiento de seriales (con reactivación) ---
             let serialsToLink: Serial[] = [];
 
             if (product.isSerialized) {
                 if (dto.type === 'IN' || (dto.type === 'ADJ' && dto.qty > 0)) {
                     const codes = (dto.serial_codes ?? []).map(c => c.trim()).filter(Boolean);
+                    if (new Set(codes).size !== qtyAbs) throw new BadRequestException('Series duplicadas o cantidad incorrecta');
                     if (!codes.length) {
                         throw new BadRequestException(`Debe enviar serial_codes con cantidad exacta (${Math.abs(Number(dto.qty))})`);
                     }
 
                     const serialRepo = em.getRepository(Serial);
                     const existing = await serialRepo.find({ where: { serialCode: In(codes) } });
+                    if (dto.source_doc_type !== 'MATERIAL_RETURN' && existing.length) {
+                        const materialLines = await em.find(MaterialDeliveryLine, { where: { serialId: In(existing.map(s => s.id)) } });
+                        if (materialLines.some(line => Number(line.quantity) > Number(line.returnedQuantity))) throw new BadRequestException('Registre la devolución desde la guía interna de origen');
+                    }
+                    if (existing.some(s => s.status !== 'ISSUED' || s.condition !== 'USABLE')) {
+                        throw new BadRequestException('La serie no admite una entrada general; revise su condición y procedencia');
+                    }
 
                     // 1) No permitir seriales existentes de OTRO producto
                     const existingOtherProduct = existing
@@ -149,7 +163,8 @@ export class MovementsService {
                         throw new BadRequestException('Alguno(s) serial(es) no existen o no corresponden al producto');
                     }
                     // Deben estar disponibles para salir
-                    const notAvail = serialsToLink.filter(s => s.status !== 'IN_STOCK');
+                    const notAvail = serialsToLink.filter(s => s.status !== 'IN_STOCK' || (dto.type === 'OUT' && s.condition !== 'USABLE'));
+                    if (serialsToLink.some(s => Number(s.lotId ?? 0) !== Number(lotId ?? 0))) throw new BadRequestException('Serie de otro lote');
                     if (notAvail.length) {
                         const codes = notAvail.map(s => s.serialCode).join(', ');
                         throw new BadRequestException(`Serial(es) no disponible(s): ${codes}`);
@@ -182,7 +197,7 @@ export class MovementsService {
             await em.getRepository(Stock).save(stockLine);
 
             // Saldos post
-            const postLines = await em.getRepository(Stock).find({ where: { productId: product.id } });
+            const postLines = await em.getRepository(Stock).find({ where: { productId: product.id }, lock: { mode: 'pessimistic_write' } });
             const postQty = postLines.reduce((a, s) => a + Number(s.qtyOnHand), 0);
             const postCost = postLines.reduce((a, s) => a + Number(s.totalCost), 0);
             const postAvg = postQty > 0 ? postCost / postQty : 0;

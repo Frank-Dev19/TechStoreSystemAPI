@@ -4,6 +4,7 @@ import { Lot } from './lot.entity';
 import { Supplier } from '../../suppliers/entities/supplier.entity';
 
 export type SerialStatus = 'IN_STOCK' | 'ISSUED' | 'DAMAGED' | 'LOST';
+export type SerialCondition = 'USABLE' | 'UNDER_REVIEW' | 'UNUSABLE';
 
 @Entity('serials')
 @Unique(['serialCode'])
@@ -25,5 +26,6 @@ export class Serial {
     supplierId?: number | null;
 
     @Column({ type: 'varchar', length: 16, default: 'IN_STOCK' }) status: SerialStatus;
+    @Column({ type: 'enum', enum: ['USABLE', 'UNDER_REVIEW', 'UNUSABLE'], default: 'USABLE' }) condition: SerialCondition;
     @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' }) createdAt: Date;
 }

@@ -4,6 +4,7 @@ import { Repository, MoreThan } from 'typeorm';
 import { Stock } from '../entities/stock.entity';
 import { Product } from '../entities/product.entity';
 import { Lot } from '../entities/lot.entity';
+import { Serial } from '../entities/serial.entity';
 
 @Injectable()
 export class StockService {
@@ -114,10 +115,26 @@ export class StockService {
             return g;
         });
 
+        // Physical stock includes returns under review; availability excludes them.
+        const blocked: { productId: number; lotId: number | null; qty: string }[] = await this.stockRepo.manager.getRepository(Serial)
+            .createQueryBuilder('serial').select('serial.productId', 'productId').addSelect('serial.lotId', 'lotId')
+            .addSelect('COUNT(*)', 'qty').where('serial.status = :status', { status: 'IN_STOCK' })
+            .andWhere('serial.condition <> :condition', { condition: 'USABLE' })
+            .groupBy('serial.productId').addGroupBy('serial.lotId').getRawMany();
+        for (const group of aggregatedArray) {
+            const blockedRows = blocked.filter(row => Number(row.productId) === Number(group.product_id));
+            group.blocked_qty = blockedRows.reduce((sum, row) => sum + Number(row.qty), 0);
+            group.available_qty = Math.max(0, group.total_qty - group.blocked_qty);
+            for (const lot of group.lots) {
+                lot.blocked_qty = Number(blockedRows.find(row => Number(row.lotId ?? 0) === Number(lot.lot_id ?? 0))?.qty ?? 0);
+                lot.available_qty = Math.max(0, lot.qty_on_hand - lot.blocked_qty);
+            }
+        }
+
         if (filters.low_stock === 'true') {
             aggregatedArray = aggregatedArray.filter(g => {
                 const min = g.product ? Number(g.product.reorderPoint || 0) : 0;
-                return g.total_qty <= min;
+                return g.available_qty <= min;
             });
         }
 

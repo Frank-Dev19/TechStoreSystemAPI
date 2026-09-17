@@ -156,6 +156,22 @@ describe('ServiceOrderCommercialRevisionService', () => {
     );
   });
 
+  it('rechaza mezclar exoneración con descuento ordinario', async () => {
+    await expect(
+      (service as any).buildLine(
+        {
+          type: ServiceOrderCommercialLineType.SERVICE,
+          quantity: 1,
+          unitPrice: 80,
+          laborWaiverReason: 'INTERNAL_SERVICE',
+          discountPct: 5,
+        },
+        new Map(),
+        undefined,
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
   it('rechaza una linea de producto por debajo del 90% del precio recomendado', async () => {
     pricingEngine.calculatePrice.mockResolvedValue({
       cpp: 50,
@@ -478,7 +494,10 @@ describe('ServiceOrderCommercialRevisionService', () => {
       serviceOrderId: order.id,
       totalAmount: 190,
     });
-    pricingConfig.resolveGlobal.mockResolvedValue({ id: 44, maxDiscountPct: 7 } as any);
+    pricingConfig.resolveGlobal.mockResolvedValue({
+      id: 44,
+      maxDiscountPct: 7,
+    } as any);
     projection.recalculateLocked.mockResolvedValue(order);
 
     await service.createRevision(
@@ -523,6 +542,82 @@ describe('ServiceOrderCommercialRevisionService', () => {
         amount: 10,
         maxAllowedPct: 7,
         appliedByUserId: 9,
+        wasLimitOverridden: false,
+      }),
+    ]);
+  });
+
+  it('persiste la exoneración interna como nueva versión manteniendo el valor base', async () => {
+    const order = createOrder();
+    const item = createItem(order, 701, 1);
+    orderRepo.findOne.mockResolvedValue(order);
+    itemRepo.find.mockResolvedValue([item]);
+    versionRepo.findOne.mockResolvedValue(null);
+    versionRepo.createQueryBuilder.mockReturnValue(sequenceQueryBuilder('0'));
+    versionRepo.save.mockImplementation(async (value) => ({
+      ...value,
+      id: 801,
+    }));
+    agreementRepo.findOne.mockResolvedValue(null);
+    agreementRepo.createQueryBuilder.mockReturnValue(updateQueryBuilder());
+    agreementRepo.save.mockResolvedValue({
+      id: 901,
+      serviceOrderId: order.id,
+      totalAmount: 190,
+    });
+    pricingConfig.resolveGlobal.mockResolvedValue({
+      id: 44,
+      maxDiscountPct: 7,
+    } as any);
+    projection.recalculateLocked.mockResolvedValue(order);
+
+    await service.createRevision(
+      {
+        serviceOrderId: order.id,
+        items: [
+          {
+            serviceOrderItemId: item.id,
+            lines: [
+              {
+                type: ServiceOrderCommercialLineType.SERVICE,
+                quantity: 2,
+                unitPrice: 100,
+                laborWaiverReason: 'INTERNAL_SERVICE' as any,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        sub: 9,
+        roles: [
+          {
+            name: 'technician',
+            permissions: [
+              { code: 'service-order-agreement.apply-discount' },
+              { code: 'service-order-agreement.override-discount-limit' },
+            ],
+          },
+        ],
+      } as any,
+    );
+
+    expect(lineRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grossAmount: 200,
+        discountAmount: 200,
+        netAmount: 0,
+      }),
+    );
+    expect(discountRepo.save).toHaveBeenCalledWith([
+      expect.objectContaining({
+        pricingConfigId: null,
+        percentage: 100,
+        amount: 200,
+        maxAllowedPct: 100,
+        appliedByUserId: 9,
+        authorizedByUserId: 9,
+        overrideReason: 'Servicio interno',
         wasLimitOverridden: false,
       }),
     ]);
