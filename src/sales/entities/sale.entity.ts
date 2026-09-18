@@ -21,6 +21,7 @@ import { SaleType } from '../enums/sale-type.enum';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { CashRegister } from './cash-register.entity';
+import { PaymentMethod } from '../enums/payment-method.enum';
 
 // export type SaleStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED' | 'REFUNDED';
 // export type SaleType = 'PRODUCT' | 'COMBO' | 'MIXED';
@@ -28,12 +29,16 @@ import { CashRegister } from './cash-register.entity';
 
 @Entity({ name: 'sales' })
 @Index(['companyId', 'series', 'number'], { unique: true })
+@Index('UQ_sales_company_idempotency_key', ['companyId', 'idempotencyKey'], { unique: true })
 export class Sale {
     @PrimaryGeneratedColumn()
     id: number;
 
     @Column({ name: 'company_id' })
     companyId: number;
+
+    @Column({ name: 'idempotency_key', type: 'varchar', length: 36, nullable: true })
+    idempotencyKey?: string | null;
 
     @Column({ name: 'customer_id', type: 'bigint', unsigned: true })
     customerId: number;
@@ -184,6 +189,18 @@ export class Sale {
 
     @Column({ name: 'cancelled_at', type: 'datetime', nullable: true })
     cancelledAt?: Date | null;
+
+    @Column({ name: 'refunded_by', type: 'varchar', length: 100, nullable: true })
+    refundedBy?: string | null;
+
+    @Column({ name: 'refunded_reason', type: 'text', nullable: true })
+    refundedReason?: string | null;
+
+    @Column({ name: 'refunded_at', type: 'datetime', nullable: true })
+    refundedAt?: Date | null;
+
+    @Column({ name: 'refund_method', type: 'varchar', length: 20, nullable: true })
+    refundMethod?: PaymentMethod | null;
 
     @CreateDateColumn({ name: 'created_at', type: 'datetime' })
     createdAt: Date;

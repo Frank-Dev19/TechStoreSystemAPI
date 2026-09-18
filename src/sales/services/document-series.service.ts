@@ -26,6 +26,45 @@ export class DocumentSeriesService implements OnModuleInit {
         setDocumentSeriesService(this);
     }
 
+    async ensureDefaultSeries(companyId: number, createdBy = 'SYSTEM_BOOTSTRAP'): Promise<number> {
+        const defaults: Array<Pick<DocumentSeries, 'documentType' | 'code' | 'name'>> = [
+            { documentType: DocumentType.BOLETA, code: 'B001', name: 'Boleta Principal' },
+            { documentType: DocumentType.FACTURA, code: 'F001', name: 'Factura Principal' },
+            { documentType: DocumentType.NOTA_CREDITO, code: 'BC01', name: 'Nota de Credito para Boletas' },
+            { documentType: DocumentType.NOTA_CREDITO, code: 'FC01', name: 'Nota de Credito para Facturas' },
+        ];
+        const configuredSeries = await this.documentSeriesRepo.find({
+            where: { companyId },
+            withDeleted: true,
+        });
+        const missingDefaults = defaults.filter((seed) => {
+            const familyPrefix = seed.documentType === DocumentType.NOTA_CREDITO
+                ? seed.code.slice(0, 2)
+                : seed.code.slice(0, 1);
+
+            return !configuredSeries.some((series) =>
+                series.documentType === seed.documentType
+                && series.code.toUpperCase().startsWith(familyPrefix),
+            );
+        });
+        if (!missingDefaults.length) {
+            return 0;
+        }
+
+        const entities = missingDefaults.map((seed) => this.documentSeriesRepo.create({
+            companyId,
+            documentType: seed.documentType,
+            code: assertValidSeriesCode(seed.documentType, seed.code),
+            name: seed.name,
+            isActive: true,
+            startingNumber: 1,
+            currentNumber: 1,
+            createdBy,
+        }));
+        await this.documentSeriesRepo.save(entities);
+        return entities.length;
+    }
+
     async getAll(companyId: number): Promise<DocumentSeries[]> {
         return this.documentSeriesRepo.find({
             where: { companyId },
@@ -69,7 +108,11 @@ export class DocumentSeriesService implements OnModuleInit {
 
         // Verificar que no haya otra serie activa para el mismo tipo de documento
         if (isActive) {
-            const existingActive = await this.getActiveByType(createDto.companyId, createDto.documentType);
+            const existingActive = await this.findActiveForSeriesFamily(
+                createDto.companyId,
+                createDto.documentType,
+                normalizedCode,
+            );
             if (existingActive) {
                 throw new BadRequestException(
                     `Ya existe una serie activa (${existingActive.code}) para el tipo de documento ${createDto.documentType}. Desactívela primero.`
@@ -92,7 +135,11 @@ export class DocumentSeriesService implements OnModuleInit {
 
         // Si se está activando, verificar que no haya otra serie activa para el mismo tipo
         if (updateDto.isActive && !series.isActive) {
-            const existingActive = await this.getActiveByType(series.companyId, series.documentType);
+            const existingActive = await this.findActiveForSeriesFamily(
+                series.companyId,
+                series.documentType,
+                series.code,
+            );
             if (existingActive && existingActive.id !== id) {
                 throw new BadRequestException(
                     `Ya existe una serie activa (${existingActive.code}) para el tipo de documento ${series.documentType}. Desactívela primero.`
@@ -173,6 +220,52 @@ async delete(id: number): Promise<void> {
             series: activeSeries.code,
             number: this.formatNumber(nextNumber),
         };
+    }
+
+    async reserveNextCreditNoteNumber(
+        manager: EntityManager,
+        companyId: number,
+        affectedDocumentType: DocumentType.BOLETA | DocumentType.FACTURA,
+    ): Promise<{ documentSeriesId: number; series: string; number: string }> {
+        const prefix = affectedDocumentType === DocumentType.FACTURA ? 'FC' : 'BC';
+        const series = await manager
+            .createQueryBuilder(DocumentSeries, 'series')
+            .setLock('pessimistic_write')
+            .where('series.companyId = :companyId', { companyId })
+            .andWhere('series.documentType = :documentType', { documentType: DocumentType.NOTA_CREDITO })
+            .andWhere('series.isActive = :isActive', { isActive: true })
+            .andWhere('series.code LIKE :prefix', { prefix: `${prefix}%` })
+            .getOne();
+        if (!series) {
+            throw new BadRequestException(
+                `No hay una serie activa ${prefix}xx para notas de crédito de ${affectedDocumentType.toLowerCase()}.`,
+            );
+        }
+        const nextNumber = series.currentNumber;
+        await manager.increment(DocumentSeries, { id: series.id }, 'currentNumber', 1);
+        return {
+            documentSeriesId: series.id,
+            series: series.code,
+            number: this.formatNumber(nextNumber),
+        };
+    }
+
+    private async findActiveForSeriesFamily(
+        companyId: number,
+        documentType: DocumentType,
+        code: string,
+    ): Promise<DocumentSeries | null> {
+        if (![DocumentType.NOTA_CREDITO, DocumentType.NOTA_DEBITO].includes(documentType)) {
+            return this.getActiveByType(companyId, documentType);
+        }
+        const prefix = code.slice(0, 2);
+        return this.documentSeriesRepo
+            .createQueryBuilder('series')
+            .where('series.companyId = :companyId', { companyId })
+            .andWhere('series.documentType = :documentType', { documentType })
+            .andWhere('series.isActive = :isActive', { isActive: true })
+            .andWhere('series.code LIKE :prefix', { prefix: `${prefix}%` })
+            .getOne();
     }
 
     // Compatibilidad con consumidores antiguos: consultar el siguiente número nunca debe consumirlo.

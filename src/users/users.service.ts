@@ -45,6 +45,10 @@ export class UsersService {
         if (exists && exists.id !== ignoreId) throw new ConflictException('Email ya esta en uso');
     }
 
+    private normalizeEmail(email: string) {
+        return email.trim().toLowerCase();
+    }
+
     private async ensureDocNumberUnique(documentNumber: string, ignoreId?: number) {
         const exists = await this.usersRepo.findOne({ where: { documentNumber }, select: ['id'] });
         if (exists && exists.id !== ignoreId) throw new ConflictException('Numero de Documento ya esta en uso');
@@ -54,12 +58,13 @@ export class UsersService {
     async create(dto: CreateUserDto) {
         const documentType = await this.ensureDocumentType(dto.documentTypeId);
         const normalizedDocumentNumber = this.normalizeAndValidateDocumentNumber(dto.documentNumber, documentType);
+        const normalizedEmail = this.normalizeEmail(dto.email);
 
-        await this.ensureEmailUnique(dto.email);
+        await this.ensureEmailUnique(normalizedEmail);
         await this.ensureDocNumberUnique(normalizedDocumentNumber);
 
         const user = new User();
-        user.email = dto.email;
+        user.email = normalizedEmail;
         user.name = dto.name;
         user.phone = dto.phone ?? null;
         user.documentType = documentType;
@@ -101,7 +106,12 @@ export class UsersService {
     async update(id: number, dto: UpdateUserDto) {
         const u = await this.findOne(id);
 
-        if (dto.email) await this.ensureEmailUnique(dto.email, id);
+        const normalizedEmail = dto.email !== undefined
+            ? this.normalizeEmail(dto.email)
+            : undefined;
+        if (normalizedEmail !== undefined) {
+            await this.ensureEmailUnique(normalizedEmail, id);
+        }
         let documentType = u.documentType;
 
         if (dto.documentTypeId !== undefined) {
@@ -116,6 +126,7 @@ export class UsersService {
         }
 
         if (dto.name !== undefined) u.name = dto.name;
+        if (normalizedEmail !== undefined) u.email = normalizedEmail;
         if (dto.phone !== undefined) u.phone = dto.phone ?? null;
         if (dto.documentTypeId !== undefined) {
             u.documentType = documentType;
@@ -164,7 +175,7 @@ export class UsersService {
 
     // usado por AuthService
     async findByEmail(email: string) {
-        return this.usersRepo.findOne({ where: { email } });
+        return this.usersRepo.findOne({ where: { email: this.normalizeEmail(email) } });
     }
 
     async validateCredentials(email: string, password: string) {

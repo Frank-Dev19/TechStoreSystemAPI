@@ -9,6 +9,8 @@ import { Permission } from 'src/roles/entities/permission.entity';
 import { PermissionModule } from 'src/roles/entities/permission-module.entity';
 import { DocumentType } from 'src/catalogs/document-types/entities/document-type.entity';
 import { DocumentTypeKind } from 'src/catalogs/document-types/entities/document-type-kind.enum';
+import { DocumentSeriesService } from 'src/sales/services/document-series.service';
+import { CatalogsService } from 'src/inventory/services/catalogs.service';
 
 type ModuleSeed = {
   moduleKey: string;
@@ -36,11 +38,14 @@ export class BootstrapService implements OnModuleInit {
     private readonly permModulesRepo: Repository<PermissionModule>,
     @InjectRepository(DocumentType)
     private readonly docTypesRepo: Repository<DocumentType>,
+    private readonly documentSeriesService: DocumentSeriesService,
+    private readonly catalogsService: CatalogsService,
   ) {}
 
   async onModuleInit() {
     // 0) Asegurar tipos de documento por defecto con soft delete considerado
     await this.ensureDefaultDocumentTypes();
+    await this.ensureDefaultOperationalCatalogs();
 
     // 1) Catalogo de modulos (fuente de verdad)
     const MODULES: ModuleSeed[] = [
@@ -618,7 +623,9 @@ export class BootstrapService implements OnModuleInit {
     for (const action of ['read', 'simulate', 'create', 'update', 'cancel']) add('sales', action, `${action} ventas`);
     for (const action of ['read', 'manage', 'reports']) add('cashflow', action, `${action} caja`);
     for (const action of ['read', 'manage']) add('document-series', action, `${action} series`);
-    for (const action of ['read', 'send', 'download', 'email']) add('electronic-billing', action, `${action} comprobantes electronicos`);
+    for (const action of ['read', 'send', 'download', 'email', 'cancel', 'refund', 'batch-send']) {
+      add('electronic-billing', action, `${action} comprobantes electronicos`);
+    }
     add('mail-settings', 'read', 'Ver configuracion de correo', 10);
     add('mail-settings', 'update', 'Actualizar configuracion de correo', 20);
     add('mail-settings', 'test', 'Probar configuracion de correo', 30);
@@ -654,6 +661,20 @@ export class BootstrapService implements OnModuleInit {
   }
 
   // ---------- helpers ----------
+
+  private async ensureDefaultOperationalCatalogs() {
+    const createdSeries = await this.documentSeriesService.ensureDefaultSeries(1);
+    if (createdSeries > 0) {
+      this.log.log(`Series de comprobante predeterminadas creadas: ${createdSeries}.`);
+    }
+
+    const unitResult = await this.catalogsService.ensureDefaultUnit();
+    if (unitResult === 'created') {
+      this.log.log('Unidad de medida predeterminada creada: Unidad (NIU).');
+    } else if (unitResult === 'updated') {
+      this.log.log('Unidad de medida Unidad actualizada con abreviacion NIU.');
+    }
+  }
 
   private async ensureDefaultDocumentTypes() {
     await this.ensureDocumentType(
@@ -961,6 +982,8 @@ export class BootstrapService implements OnModuleInit {
           'document-series.read', 'document-series.manage',
           'electronic-billing.read', 'electronic-billing.send',
           'electronic-billing.download', 'electronic-billing.email',
+          'electronic-billing.cancel', 'electronic-billing.batch-send',
+          'electronic-billing.refund',
           'inventory-kardex.read',
           'inventory-products.read', 'inventory-products.manage',
           'inventory-stock.read',
@@ -1140,7 +1163,10 @@ export class BootstrapService implements OnModuleInit {
 
     for (const seed of userSeeds) {
       const existingUser = await this.usersRepo.findOne({
-        where: { email: seed.email },
+        where: [
+          { documentNumber: seed.documentNumber },
+          { email: seed.email },
+        ],
         withDeleted: true,
       });
 

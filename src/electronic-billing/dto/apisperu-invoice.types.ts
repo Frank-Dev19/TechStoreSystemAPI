@@ -86,3 +86,37 @@ export type ApisPeruDocumentResponse = {
   };
   [key: string]: unknown;
 };
+
+export type ApisPeruCancellationPayload = {
+  correlativo: string;
+  fecGeneracion: string;
+  company: ApisPeruCompanyPayload;
+  fecComunicacion?: string;
+  fecResumen?: string;
+  moneda?: string;
+  details: Array<Record<string, unknown>>;
+};
+
+export type ApisPeruTicketResponse = {
+  xml?: string;
+  hash?: string;
+  sunatResponse?: {
+    success?: boolean;
+    ticket?: string;
+    error?: unknown;
+  };
+  [key: string]: unknown;
+};
+
+export type ApisPeruTicketStatusResponse = {
+  success?: boolean;
+  cdrZip?: string;
+  cdrResponse?: {
+    code?: string;
+    description?: string;
+    notes?: string[];
+  };
+  error?: unknown;
+  code?: string;
+  [key: string]: unknown;
+};

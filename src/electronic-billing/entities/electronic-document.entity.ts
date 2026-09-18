@@ -11,6 +11,7 @@ import {
 import { Sale } from '../../sales/entities/sale.entity';
 import { DocumentType } from '../../sales/enums/document-type.enum';
 import { ElectronicDocumentStatus } from '../enums/electronic-document-status.enum';
+import { ElectronicCancellationStatus } from '../enums/electronic-cancellation-status.enum';
 
 @Entity({ name: 'electronic_documents' })
 @Index(['saleId'])
@@ -85,6 +86,39 @@ export class ElectronicDocument {
 
   @Column({ name: 'rejected_at', type: 'datetime', nullable: true })
   rejectedAt?: Date | null;
+
+  @Column({ name: 'cancellation_status', type: 'varchar', length: 20, nullable: true })
+  cancellationStatus?: ElectronicCancellationStatus | null;
+
+  @Column({ name: 'cancellation_endpoint', type: 'varchar', length: 40, nullable: true })
+  cancellationEndpoint?: string | null;
+
+  @Column({ name: 'cancellation_ticket', type: 'varchar', length: 100, nullable: true })
+  cancellationTicket?: string | null;
+
+  @Column({ name: 'cancellation_reason', type: 'varchar', length: 250, nullable: true })
+  cancellationReason?: string | null;
+
+  @Column({ name: 'cancellation_observations', type: 'text', nullable: true })
+  cancellationObservations?: string | null;
+
+  @Column({ name: 'cancellation_requested_by', type: 'varchar', length: 100, nullable: true })
+  cancellationRequestedBy?: string | null;
+
+  @Column({ name: 'cancellation_payload_json', type: 'json', nullable: true })
+  cancellationPayloadJson?: unknown | null;
+
+  @Column({ name: 'cancellation_response_json', type: 'json', nullable: true })
+  cancellationResponseJson?: unknown | null;
+
+  @Column({ name: 'cancellation_error_message', type: 'text', nullable: true })
+  cancellationErrorMessage?: string | null;
+
+  @Column({ name: 'cancellation_requested_at', type: 'datetime', nullable: true })
+  cancellationRequestedAt?: Date | null;
+
+  @Column({ name: 'cancellation_resolved_at', type: 'datetime', nullable: true })
+  cancellationResolvedAt?: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;

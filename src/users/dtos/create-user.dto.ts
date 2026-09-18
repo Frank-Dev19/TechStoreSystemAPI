@@ -1,6 +1,8 @@
+import { Transform } from 'class-transformer';
 import { IsArray, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, MaxLength, IsInt } from 'class-validator';
 
 export class CreateUserDto {
+    @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
     @IsEmail()
     email: string;
 

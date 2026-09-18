@@ -37,7 +37,7 @@ export class CashFlowService {
             order: { createdAt: 'DESC' },
         });
 
-        return register;
+        return this.withCalculatedReturnTotal(register);
     }
 
     // Admin: list all registers for a company
@@ -65,7 +65,23 @@ export class CashFlowService {
     // Admin: get the currently open register for a company
     async getOpenRegister(companyId: number) {
         const register = await this.cashRegisterRepo.findOne({ where: { companyId, status: 'OPEN' } });
-        return register ?? null;
+        return this.withCalculatedReturnTotal(register);
+    }
+
+    private async withCalculatedReturnTotal(register: CashRegister | null): Promise<CashRegister | null> {
+        if (!register) return null;
+
+        const result = await this.transactionRepo
+            .createQueryBuilder('t')
+            .select('COALESCE(SUM(ABS(t.amount)), 0)', 'total')
+            .where('t.cashRegisterId = :cashRegisterId', { cashRegisterId: register.id })
+            .andWhere('t.type = :type', { type: 'RETURN' })
+            .getRawOne<{ total: string | number }>();
+
+        return {
+            ...register,
+            totalReturns: Number(result?.total ?? 0),
+        } as CashRegister;
     }
 
     async openCashRegister(
@@ -117,6 +133,7 @@ export class CashFlowService {
         register.totalTransfer = 0;
         register.totalYape = 0;
         register.totalPlin = 0;
+        register.totalReturns = 0;
 
         register.status = 'OPEN';
         register.openedBy = user;
@@ -278,13 +295,16 @@ export class CashFlowService {
             }
         }
 
+        const transactionAmount = params.type === 'RETURN'
+            ? -Math.abs(params.amount)
+            : params.amount;
         const transaction = this.transactionRepo.create({
             cashRegisterId: params.cashRegisterId,
             saleId: params.saleId,
             type: params.type as any,
             subtype: params.subtype as any,
             description: params.description,
-            amount: params.amount,
+            amount: transactionAmount,
             balanceAfter: params.balanceAfter,
             currency: 'PEN',
             exchangeRate: 1,
@@ -511,32 +531,49 @@ export class CashFlowService {
         };
 
         for (const t of transactions) {
+            const amount = Number(t.amount);
             if (t.type === 'SALE' || t.type === 'INCOME') {
-                metrics.total += Number(t.amount);
+                metrics.total += amount;
 
                 switch (t.subtype) {
                     case 'CASH':
-                        metrics.cash += Number(t.amount);
+                        metrics.cash += amount;
                         break;
                     case 'CARD':
-                        metrics.card += Number(t.amount);
+                        metrics.card += amount;
                         break;
                     case 'TRANSFER':
-                        metrics.transfer += Number(t.amount);
+                        metrics.transfer += amount;
                         break;
                     case 'YAPE':
-                        metrics.yape += Number(t.amount);
+                        metrics.yape += amount;
                         break;
                     case 'PLIN':
-                        metrics.plin += Number(t.amount);
+                        metrics.plin += amount;
                         break;
                 }
             } else if (t.type === 'RETURN') {
-                metrics.returns += Number(t.amount);
-                metrics.total -= Number(t.amount);
-                
-                if (t.subtype === 'CASH') {
-                    metrics.cash -= Number(t.amount);
+                // RETURN is an outflow. Math.abs also keeps older positive records compatible.
+                const outflow = -Math.abs(amount);
+                metrics.returns += Math.abs(amount);
+                metrics.total += outflow;
+
+                switch (t.subtype) {
+                    case 'CASH':
+                        metrics.cash += outflow;
+                        break;
+                    case 'CARD':
+                        metrics.card += outflow;
+                        break;
+                    case 'TRANSFER':
+                        metrics.transfer += outflow;
+                        break;
+                    case 'YAPE':
+                        metrics.yape += outflow;
+                        break;
+                    case 'PLIN':
+                        metrics.plin += outflow;
+                        break;
                 }
             }
         }

@@ -1,10 +1,13 @@
-import { IsDateString, IsEnum, IsInt, IsOptional, IsPositive, ValidateNested, ArrayMinSize, IsArray, IsString } from 'class-validator';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsPositive, ValidateNested, ArrayMinSize, IsArray, IsString, IsUUID } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DocumentType } from '../enums/document-type.enum';
 import { SaleType } from '../enums/sale-type.enum';
 import { SalePaymentDto } from './create-sale.dto';
 
 export class CreateSaleFromServiceOrderDto {
+  @IsUUID('4')
+  idempotencyKey: string;
+
   @Type(() => Number)
   @IsInt()
   @IsPositive()

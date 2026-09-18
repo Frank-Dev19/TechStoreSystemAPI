@@ -18,6 +18,9 @@ import { Sale } from '../entities/sale.entity';
 import { SaleStatus } from '../enums/sale-status.enum';
 import { EquipmentType } from 'src/service-orders/enums/equipment-type.enum';
 import { ServiceOrderCommercialLineType } from 'src/service-orders/service-agreements/service-order-commercial-line-type.enum';
+import { SalePayment } from '../entities/sale-payment.entity';
+import { CashRegister } from '../entities/cash-register.entity';
+import { CashFlowTransaction } from '../entities/cash-flow-transaction.entity';
 
 type MockRepo = {
   findOne: jest.Mock;
@@ -232,6 +235,41 @@ describe('SalesService', () => {
     ).rejects.toThrow('Las ventas manuales solo admiten productos');
   });
 
+  it('devuelve la venta existente al repetir la misma clave de idempotencia', async () => {
+    const existingSale = {
+      id: 501,
+      companyId: 1,
+      idempotencyKey: '2f90ed5f-6839-4777-8c93-483ff01ad727',
+      status: SaleStatus.CONFIRMED,
+    } as Sale;
+    saleRepo.findOne.mockResolvedValue(existingSale);
+    jest.spyOn(service, 'findOne').mockResolvedValue(existingSale as any);
+
+    const result = await service.create({
+      idempotencyKey: existingSale.idempotencyKey,
+      companyId: 1,
+    } as any, 'tester');
+
+    expect(result).toBe(existingSale);
+    expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
+    expect(pricingEngine.calculatePrice).not.toHaveBeenCalled();
+  });
+
+  it('bloquea la caja abierta antes de leer y actualizar sus acumulados', async () => {
+    const cashRegister = { id: 3, companyId: 1, status: 'OPEN' } as CashRegister;
+    const manager = {
+      findOne: jest.fn().mockResolvedValue(cashRegister),
+    };
+
+    const result = await (service as any).findOpenCashRegisterForUpdate(manager, 1);
+
+    expect(result).toBe(cashRegister);
+    expect(manager.findOne).toHaveBeenCalledWith(CashRegister, {
+      where: { companyId: 1, status: 'OPEN' },
+      lock: { mode: 'pessimistic_write' },
+    });
+  });
+
   it('cancela una venta y revierte inventario, caja y vínculos en una sola transacción', async () => {
     const sale = {
       id: 77,
@@ -299,6 +337,178 @@ describe('SalesService', () => {
     expect(salesInventory.registerSaleCancellationMovement).not.toHaveBeenCalled();
     expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
     expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+  });
+
+  it('registra una devolución total en una sola transacción', async () => {
+    const sale = {
+      id: 78,
+      status: SaleStatus.CONFIRMED,
+      cashRegisterId: 3,
+      series: 'B001',
+      number: '000078',
+      total: 120,
+    } as Sale;
+    const manager = {
+      findOne: jest.fn().mockImplementation(async (entity) => entity === Sale ? sale : null),
+      find: jest.fn().mockResolvedValue([]),
+      softDelete: jest.fn(),
+      save: jest.fn().mockImplementation(async (_entity, value) => value),
+    };
+    const queryRunner = {
+      connect: jest.fn(), startTransaction: jest.fn(), commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(), release: jest.fn(), isTransactionActive: true, manager,
+    };
+    dataSource.createQueryRunner.mockReturnValue(queryRunner as any);
+    salesInventory.registerSaleCancellationMovement = jest.fn().mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'reverseSaleCashEffects').mockResolvedValue(undefined);
+
+    const result = await service.refundFull(78, 'Producto devuelto', PaymentMethod.CASH, 'tester');
+
+    expect(result.status).toBe(SaleStatus.REFUNDED);
+    expect(result.refundMethod).toBe(PaymentMethod.CASH);
+    expect(salesInventory.registerSaleCancellationMovement).toHaveBeenCalledWith(78, 'tester', manager);
+    expect(queryRunner.commitTransaction).toHaveBeenCalled();
+  });
+
+  it('valida el saldo del medio de devolución antes de iniciar el proceso fiscal', async () => {
+    saleRepo.findOne.mockResolvedValue({
+      id: 78,
+      status: SaleStatus.CONFIRMED,
+      cashRegisterId: 3,
+      total: 108.56,
+    } as Sale);
+    salePaymentRepo.find.mockResolvedValue([
+      { saleId: 78, method: PaymentMethod.PLIN, amount: 108.56 } as SalePayment,
+    ]);
+    cashRegisterRepo.findOne.mockResolvedValue({
+      id: 3,
+      currentBalance: 20,
+      totalCash: 20,
+      totalCard: 0,
+      totalTransfer: 0,
+      totalYape: 0,
+      totalPlin: 108.56,
+    } as CashRegister);
+
+    await expect(
+      service.validateFullRefundAvailability(78, PaymentMethod.CASH),
+    ).rejects.toThrow('saldo suficiente en efectivo');
+    await expect(
+      service.validateFullRefundAvailability(78, PaymentMethod.PLIN),
+    ).resolves.toBeUndefined();
+  });
+
+  it('valida todos los medios originales antes de solicitar una baja fiscal', async () => {
+    saleRepo.findOne.mockResolvedValue({
+      id: 79,
+      status: SaleStatus.CONFIRMED,
+      cashRegisterId: 3,
+    } as Sale);
+    salePaymentRepo.find.mockResolvedValue([
+      { saleId: 79, method: PaymentMethod.CASH, amount: 30 } as SalePayment,
+      { saleId: 79, method: PaymentMethod.YAPE, amount: 50 } as SalePayment,
+    ]);
+    cashRegisterRepo.findOne.mockResolvedValue({
+      id: 3,
+      currentBalance: 20,
+      totalCash: 20,
+      totalCard: 0,
+      totalTransfer: 0,
+      totalYape: 50,
+      totalPlin: 0,
+    } as CashRegister);
+
+    await expect(
+      service.validateCancellationAvailability(79),
+    ).rejects.toThrow('saldo suficiente en efectivo');
+  });
+
+  it('impide que la reversión de una baja deje un medio de pago en negativo', async () => {
+    const sale = {
+      id: 80,
+      cashRegisterId: 3,
+      series: 'B001',
+      number: '000080',
+    } as Sale;
+    const cashRegister = {
+      id: 3,
+      currentBalance: 10,
+      expectedBalance: 10,
+      totalCash: 10,
+      totalCard: 0,
+      totalTransfer: 0,
+      totalYape: 0,
+      totalPlin: 0,
+      totalReturns: 0,
+    } as CashRegister;
+    const manager = {
+      find: jest.fn().mockResolvedValue([
+        { method: PaymentMethod.CASH, amount: 20 },
+      ]),
+      findOne: jest.fn().mockImplementation(async (entity) => {
+        if (entity === CashFlowTransaction) return null;
+        if (entity === CashRegister) return cashRegister;
+        return null;
+      }),
+      create: jest.fn((_entity, value) => value),
+      save: jest.fn(async (_entity, value) => value),
+    };
+
+    await expect(
+      (service as any).reverseSaleCashEffects(sale, 'tester', manager),
+    ).rejects.toThrow('saldo suficiente en efectivo');
+
+    expect(cashRegister.currentBalance).toBe(10);
+    expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  it('revierte todos los medios de pago y acumula las devoluciones en la caja', async () => {
+    const sale = {
+      id: 79,
+      cashRegisterId: 3,
+      series: 'B001',
+      number: '000079',
+      total: 60,
+    } as Sale;
+    const cashRegister = {
+      id: 3,
+      currentBalance: 100,
+      expectedBalance: 100,
+      totalCash: 50,
+      totalCard: 70,
+      totalTransfer: 0,
+      totalYape: 0,
+      totalPlin: 0,
+      totalReturns: 10,
+    } as CashRegister;
+    const manager = {
+      find: jest.fn().mockResolvedValue([
+        { method: PaymentMethod.CASH, amount: 20 },
+        { method: PaymentMethod.CARD, amount: 40 },
+      ]),
+      findOne: jest.fn().mockImplementation(async (entity) => {
+        if (entity === CashFlowTransaction) return null;
+        if (entity === CashRegister) return cashRegister;
+        return null;
+      }),
+      create: jest.fn((_entity, value) => value),
+      save: jest.fn(async (_entity, value) => value),
+    };
+
+    await (service as any).reverseSaleCashEffects(sale, 'tester', manager);
+
+    expect(cashRegister.currentBalance).toBe(80);
+    expect(cashRegister.expectedBalance).toBe(80);
+    expect(cashRegister.totalCash).toBe(30);
+    expect(cashRegister.totalCard).toBe(30);
+    expect(cashRegister.totalReturns).toBe(70);
+    const savedMovements = manager.save.mock.calls
+      .filter(([entity]) => entity === CashFlowTransaction)
+      .map(([, value]) => value);
+    expect(savedMovements).toEqual([
+      expect.objectContaining({ subtype: PaymentMethod.CASH, amount: -20 }),
+      expect.objectContaining({ subtype: PaymentMethod.CARD, amount: -40 }),
+    ]);
   });
 
   it('crea ventas desde orden usando el último acuerdo confirmado y autoliga el comprobante', async () => {

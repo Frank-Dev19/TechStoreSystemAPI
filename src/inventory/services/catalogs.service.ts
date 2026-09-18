@@ -21,6 +21,25 @@ export class CatalogsService {
         @InjectRepository(Product) private prodRepo: Repository<Product>,
     ) { }
 
+    async ensureDefaultUnit(): Promise<'created' | 'updated' | 'unchanged'> {
+        const units = await this.unitRepo.find();
+        const normalized = (value?: string | null) => String(value ?? '').trim().toUpperCase();
+        const unitByAbbreviation = units.find((unit) => normalized(unit.abbreviation) === 'NIU');
+        if (unitByAbbreviation) {
+            return 'unchanged';
+        }
+
+        const unitByName = units.find((unit) => normalized(unit.name) === 'UNIDAD');
+        if (unitByName) {
+            unitByName.abbreviation = 'NIU';
+            await this.unitRepo.save(unitByName);
+            return 'updated';
+        }
+
+        await this.unitRepo.save(this.unitRepo.create({ name: 'Unidad', abbreviation: 'NIU' }));
+        return 'created';
+    }
+
     // CATEGORIES
     createCategory(dto: CreateCategoryDto) { return this.catRepo.save(this.catRepo.create(dto)); }
 

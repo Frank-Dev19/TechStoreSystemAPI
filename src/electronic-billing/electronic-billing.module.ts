@@ -11,6 +11,8 @@ import { ApisPeruBillingClient } from './services/apisperu-billing.client';
 import { ServiceOrdersModule } from '../service-orders/service-orders.module';
 import { ServiceOrderSaleLink } from '../service-orders/entities/service-order-sale-link.entity';
 import { ServiceOrder } from '../service-orders/entities/service-order.entity';
+import { SalesModule } from '../sales/sales.module';
+import { ElectronicCreditNote } from './entities/electronic-credit-note.entity';
 
 @Module({
   imports: [
@@ -18,7 +20,8 @@ import { ServiceOrder } from '../service-orders/entities/service-order.entity';
     BusinessProfileModule,
     MailerModule,
     ServiceOrdersModule,
-    TypeOrmModule.forFeature([Sale, ElectronicDocument, ServiceOrderSaleLink, ServiceOrder]),
+    SalesModule,
+    TypeOrmModule.forFeature([Sale, ElectronicDocument, ElectronicCreditNote, ServiceOrderSaleLink, ServiceOrder]),
   ],
   controllers: [ElectronicBillingController],
   providers: [ElectronicBillingService, ApisPeruBillingClient],

@@ -10,9 +10,53 @@ describe('DocumentSeriesService', () => {
 
   beforeEach(() => {
     repository = {
+      find: jest.fn(),
       findOne: jest.fn(),
+      create: jest.fn((value) => value),
+      save: jest.fn(),
     } as unknown as jest.Mocked<Repository<DocumentSeries>>;
     service = new DocumentSeriesService(repository);
+  });
+
+  it('crea las cuatro series predeterminadas cuando no hay familias configuradas', async () => {
+    repository.find.mockResolvedValue([]);
+    repository.save.mockImplementation(async (entities) => entities as any);
+
+    await expect(service.ensureDefaultSeries(1)).resolves.toBe(4);
+
+    expect(repository.save).toHaveBeenCalledWith([
+      expect.objectContaining({ companyId: 1, documentType: DocumentType.BOLETA, code: 'B001', currentNumber: 1 }),
+      expect.objectContaining({ companyId: 1, documentType: DocumentType.FACTURA, code: 'F001', currentNumber: 1 }),
+      expect.objectContaining({ companyId: 1, documentType: DocumentType.NOTA_CREDITO, code: 'BC01', currentNumber: 1 }),
+      expect.objectContaining({ companyId: 1, documentType: DocumentType.NOTA_CREDITO, code: 'FC01', currentNumber: 1 }),
+    ]);
+  });
+
+  it('respeta familias existentes y crea solamente las que faltan', async () => {
+    repository.find.mockResolvedValue([
+      { documentType: DocumentType.BOLETA, code: 'B002', currentNumber: 25, isActive: true },
+      { documentType: DocumentType.FACTURA, code: 'F001', currentNumber: 9, isActive: false },
+      { documentType: DocumentType.NOTA_CREDITO, code: 'BC02', deletedAt: new Date() },
+    ] as DocumentSeries[]);
+    repository.save.mockImplementation(async (entities) => entities as any);
+
+    await expect(service.ensureDefaultSeries(1)).resolves.toBe(1);
+
+    expect(repository.save).toHaveBeenCalledWith([
+      expect.objectContaining({ code: 'FC01', documentType: DocumentType.NOTA_CREDITO }),
+    ]);
+  });
+
+  it('no duplica ni reinicia series en arranques posteriores', async () => {
+    repository.find.mockResolvedValue([
+      { documentType: DocumentType.BOLETA, code: 'B001', currentNumber: 25 },
+      { documentType: DocumentType.FACTURA, code: 'F001', currentNumber: 9 },
+      { documentType: DocumentType.NOTA_CREDITO, code: 'BC01', currentNumber: 3 },
+      { documentType: DocumentType.NOTA_CREDITO, code: 'FC01', currentNumber: 7 },
+    ] as DocumentSeries[]);
+
+    await expect(service.ensureDefaultSeries(1)).resolves.toBe(0);
+    expect(repository.save).not.toHaveBeenCalled();
   });
 
   it('consulta el siguiente correlativo sin consumirlo', async () => {

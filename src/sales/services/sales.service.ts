@@ -54,6 +54,8 @@ import { ClientKind } from 'src/clients/entities/client-kind.enum';
 import { ServiceOrderItem } from 'src/service-orders/entities/service-order-item.entity';
 import { ServiceOrderCommercialLineType } from 'src/service-orders/service-agreements/service-order-commercial-line-type.enum';
 import { WarrantiesService } from 'src/warranties/warranties.service';
+import { ElectronicDocument } from 'src/electronic-billing/entities/electronic-document.entity';
+import { ElectronicDocumentStatus } from 'src/electronic-billing/enums/electronic-document-status.enum';
 
 export interface ValidationMessage {
   type: 'ERROR' | 'WARNING' | 'INFO';
@@ -514,8 +516,58 @@ export class SalesService {
   // =========================
   // CREAR VENTA
   // =========================
+  private async findByIdempotencyKey(
+    companyId: number,
+    idempotencyKey?: string,
+    manager?: EntityManager,
+  ): Promise<Sale | null> {
+    if (!idempotencyKey) return null;
+    const repository = manager ? manager.getRepository(Sale) : this.saleRepo;
+    return repository.findOne({
+      where: { companyId, idempotencyKey },
+    });
+  }
+
+  private async recoverIdempotentSale(
+    error: unknown,
+    companyId: number,
+    idempotencyKey?: string,
+  ): Promise<Sale | null> {
+    const databaseError = error as { code?: string; errno?: number };
+    if (
+      !idempotencyKey
+      || (databaseError?.code !== 'ER_DUP_ENTRY' && databaseError?.errno !== 1062)
+    ) {
+      return null;
+    }
+    const existing = await this.findByIdempotencyKey(companyId, idempotencyKey);
+    return existing ? this.findOne(existing.id) : null;
+  }
+
+  private async findOpenCashRegisterForUpdate(
+    manager: EntityManager,
+    companyId: number,
+  ): Promise<CashRegister> {
+    const cashRegister = await manager.findOne(CashRegister, {
+      where: { companyId, status: 'OPEN' },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!cashRegister) {
+      throw new BadRequestException(
+        'No hay caja abierta. Debe abrir una caja antes de crear ventas.',
+      );
+    }
+    return cashRegister;
+  }
+
   async create(createSaleDto: CreateSaleDto, user: string) {
     const allowServiceItems = Boolean((createSaleDto as any).allowServiceItems);
+    const previousSale = await this.findByIdempotencyKey(
+      createSaleDto.companyId,
+      createSaleDto.idempotencyKey,
+    );
+    if (previousSale) return this.findOne(previousSale.id);
+
     // Validar cliente
     const customer = await this.clientRepo.findOne({
       where: { id: createSaleDto.customerId },
@@ -601,17 +653,18 @@ export class SalesService {
 
     try {
       // ✅ Obtener la caja DENTRO de la transacción
-      const cashRegister = await queryRunner.manager.findOne(CashRegister, {
-        where: {
-          companyId: createSaleDto.companyId,
-          status: 'OPEN'
-        },
-      });
-
-      if (!cashRegister) {
-        throw new BadRequestException(
-          'No hay caja abierta. Debe abrir una caja antes de crear ventas.'
-        );
+      const cashRegister = await this.findOpenCashRegisterForUpdate(
+        queryRunner.manager,
+        createSaleDto.companyId,
+      );
+      const concurrentSale = await this.findByIdempotencyKey(
+        createSaleDto.companyId,
+        createSaleDto.idempotencyKey,
+        queryRunner.manager,
+      );
+      if (concurrentSale) {
+        await queryRunner.commitTransaction();
+        return this.findOne(concurrentSale.id);
       }
 
       const {
@@ -627,6 +680,7 @@ export class SalesService {
       // Crear venta con valores CORRECTOS
       const sale = this.saleRepo.create({
         companyId: createSaleDto.companyId,
+        idempotencyKey: createSaleDto.idempotencyKey,
         customerId: createSaleDto.customerId,
         cashRegisterId: cashRegister.id,
         saleType: createSaleDto.saleType as SaleType,
@@ -869,6 +923,12 @@ export class SalesService {
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      const recoveredSale = await this.recoverIdempotentSale(
+        error,
+        createSaleDto.companyId,
+        createSaleDto.idempotencyKey,
+      );
+      if (recoveredSale) return recoveredSale;
       throw error;
     } finally {
       await queryRunner.release();
@@ -928,6 +988,9 @@ export class SalesService {
   }
 
   async createFromServiceOrder(dto: any, user: string) {
+    const previousSale = await this.findByIdempotencyKey(dto.companyId, dto.idempotencyKey);
+    if (previousSale) return this.findOne(previousSale.id);
+
     const serviceOrder = await this.serviceOrderRepo.findOne({ where: { id: Number(dto.serviceOrderId) } });
     if (!serviceOrder) {
       throw new NotFoundException('Orden de servicio no encontrada');
@@ -985,11 +1048,18 @@ export class SalesService {
         throw new BadRequestException('La orden ya tiene un comprobante autoligado para la cotización vigente');
       }
 
-      const cashRegister = await queryRunner.manager.findOne(CashRegister, {
-        where: { companyId: dto.companyId, status: 'OPEN' },
-      });
-      if (!cashRegister) {
-        throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
+      const cashRegister = await this.findOpenCashRegisterForUpdate(
+        queryRunner.manager,
+        dto.companyId,
+      );
+      const concurrentSale = await this.findByIdempotencyKey(
+        dto.companyId,
+        dto.idempotencyKey,
+        queryRunner.manager,
+      );
+      if (concurrentSale) {
+        await queryRunner.commitTransaction();
+        return this.findOne(concurrentSale.id);
       }
 
       const {
@@ -1005,6 +1075,7 @@ export class SalesService {
       const sale = await queryRunner.manager.save(
         this.saleRepo.create({
           companyId: dto.companyId,
+          idempotencyKey: dto.idempotencyKey,
           customerId: Number(serviceOrder.clientId),
           cashRegisterId: cashRegister.id,
           saleType: dto.saleType ?? SaleType.SERVICE,
@@ -1168,6 +1239,12 @@ export class SalesService {
       return this.findOne(sale.id);
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      const recoveredSale = await this.recoverIdempotentSale(
+        error,
+        dto.companyId,
+        dto.idempotencyKey,
+      );
+      if (recoveredSale) return recoveredSale;
       throw error;
     } finally {
       await queryRunner.release();
@@ -1175,6 +1252,9 @@ export class SalesService {
   }
 
   async createFromServiceAgreements(dto: CreateSaleFromServiceAgreementsDto, user: string) {
+    const previousSale = await this.findByIdempotencyKey(dto.companyId, dto.idempotencyKey);
+    if (previousSale) return this.findOne(previousSale.id);
+
     const uniqueServiceOrderIds = Array.from(
       new Set((dto.serviceOrderIds ?? []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)),
     );
@@ -1298,11 +1378,18 @@ export class SalesService {
         }
       }
 
-      const cashRegister = await queryRunner.manager.findOne(CashRegister, {
-        where: { companyId: dto.companyId, status: 'OPEN' },
-      });
-      if (!cashRegister) {
-        throw new BadRequestException('No hay caja abierta. Debe abrir una caja antes de crear ventas.');
+      const cashRegister = await this.findOpenCashRegisterForUpdate(
+        queryRunner.manager,
+        dto.companyId,
+      );
+      const concurrentSale = await this.findByIdempotencyKey(
+        dto.companyId,
+        dto.idempotencyKey,
+        queryRunner.manager,
+      );
+      if (concurrentSale) {
+        await queryRunner.commitTransaction();
+        return this.findOne(concurrentSale.id);
       }
 
       const {
@@ -1318,6 +1405,7 @@ export class SalesService {
       const sale = await queryRunner.manager.save(
         this.saleRepo.create({
           companyId: dto.companyId,
+          idempotencyKey: dto.idempotencyKey,
           customerId: Number(taxpayer.id),
           cashRegisterId: cashRegister.id,
           saleType: dto.saleType ?? SaleType.SERVICE,
@@ -1491,6 +1579,12 @@ export class SalesService {
       return this.findOne(sale.id);
     } catch (error) {
       await queryRunner.rollbackTransaction();
+      const recoveredSale = await this.recoverIdempotentSale(
+        error,
+        dto.companyId,
+        dto.idempotencyKey,
+      );
+      if (recoveredSale) return recoveredSale;
       throw error;
     } finally {
       await queryRunner.release();
@@ -1789,7 +1883,12 @@ export class SalesService {
   // =========================
   // ANULAR VENTA
   // =========================
-  async cancel(id: number, cancelDto: CancelSaleDto, user: string) {
+  async cancel(
+    id: number,
+    cancelDto: CancelSaleDto,
+    user: string,
+    options: { electronicCancellationAccepted?: boolean } = {},
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1808,6 +1907,19 @@ export class SalesService {
       }
       if (sale.status !== SaleStatus.CONFIRMED) {
         throw new BadRequestException('Solo se pueden anular ventas en estado CONFIRMED');
+      }
+
+      const electronicDocument = await queryRunner.manager.findOne(ElectronicDocument, {
+        where: { saleId: sale.id },
+        order: { id: 'DESC' },
+      });
+      if (
+        electronicDocument?.status === ElectronicDocumentStatus.ACCEPTED
+        && !options.electronicCancellationAccepted
+      ) {
+        throw new BadRequestException(
+          'El comprobante fue aceptado por SUNAT. Solicite su anulación electrónica antes de anular la venta local.',
+        );
       }
 
       await this.warrantiesService.revokeForSaleCancellation(
@@ -1855,10 +1967,133 @@ export class SalesService {
     }
   }
 
+  async refundFull(
+    id: number,
+    reason: string,
+    refundMethod: PaymentMethod,
+    user: string,
+    observations?: string,
+  ): Promise<Sale> {
+    if (refundMethod === PaymentMethod.CREDIT) {
+      throw new BadRequestException('Una devolución pagada no puede registrarse como crédito.');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const sale = await queryRunner.manager.findOne(Sale, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!sale) throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+      if (sale.status === SaleStatus.REFUNDED) {
+        await queryRunner.rollbackTransaction();
+        return sale;
+      }
+      if (sale.status !== SaleStatus.CONFIRMED) {
+        throw new BadRequestException('Solo se pueden devolver ventas en estado CONFIRMED');
+      }
+
+      await this.warrantiesService.revokeForSaleCancellation(
+        queryRunner.manager,
+        sale.id,
+        { name: user },
+      );
+      await this.salesInventory.registerSaleCancellationMovement(sale.id, user, queryRunner.manager);
+      await this.reverseSaleCashEffects(sale, user, queryRunner.manager, refundMethod);
+
+      const activeLinks = await queryRunner.manager.find(ServiceOrderSaleLink, {
+        where: { saleId: sale.id, deletedAt: IsNull() },
+      });
+      if (activeLinks.length) {
+        await queryRunner.manager.softDelete(ServiceOrderSaleLink, {
+          id: In(activeLinks.map((link) => link.id)),
+        });
+        for (const serviceOrderId of new Set(activeLinks.map((link) => Number(link.serviceOrderId)))) {
+          await this.recomputeServiceOrderEconomicState(serviceOrderId, queryRunner.manager);
+        }
+      }
+
+      sale.status = SaleStatus.REFUNDED;
+      sale.refundedBy = user;
+      sale.refundedReason = reason;
+      sale.refundedAt = new Date();
+      sale.refundMethod = refundMethod;
+      sale.observations = observations
+        ? `${sale.observations || ''}\nDEVOLUCIÓN: ${observations}`.trim()
+        : sale.observations;
+      const refundedSale = await queryRunner.manager.save(Sale, sale);
+      await queryRunner.commitTransaction();
+      return refundedSale;
+    } catch (error) {
+      if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async validateFullRefundAvailability(
+    id: number,
+    refundMethod: PaymentMethod,
+  ): Promise<void> {
+    if (refundMethod === PaymentMethod.CREDIT) {
+      throw new BadRequestException('Una devolución pagada no puede registrarse como crédito.');
+    }
+
+    const sale = await this.saleRepo.findOne({ where: { id } });
+    if (!sale) throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+    if (sale.status === SaleStatus.REFUNDED) return;
+    if (sale.status !== SaleStatus.CONFIRMED) {
+      throw new BadRequestException('Solo se pueden devolver ventas en estado CONFIRMED');
+    }
+
+    const payments = await this.salePaymentRepo.find({ where: { saleId: sale.id } });
+    if (!payments.length || !sale.cashRegisterId) return;
+
+    const cashRegister = await this.cashRegisterRepo.findOne({
+      where: { id: sale.cashRegisterId },
+    });
+    if (!cashRegister) {
+      throw new BadRequestException('No se encontró la caja asociada a la venta');
+    }
+
+    this.assertRefundMethodBalance(cashRegister, refundMethod, Number(sale.total));
+  }
+
+  async validateCancellationAvailability(id: number): Promise<void> {
+    const sale = await this.saleRepo.findOne({ where: { id } });
+    if (!sale) throw new NotFoundException(`Venta con ID ${id} no encontrada`);
+    if (sale.status === SaleStatus.CANCELLED) return;
+    if (sale.status !== SaleStatus.CONFIRMED) {
+      throw new BadRequestException('Solo se pueden anular ventas en estado CONFIRMED');
+    }
+
+    const payments = await this.salePaymentRepo.find({ where: { saleId: sale.id } });
+    if (!payments.length || !sale.cashRegisterId) return;
+
+    const cashRegister = await this.cashRegisterRepo.findOne({
+      where: { id: sale.cashRegisterId },
+    });
+    if (!cashRegister) {
+      throw new BadRequestException('No se encontró la caja asociada a la venta');
+    }
+
+    this.assertPaymentReversalBalances(
+      cashRegister,
+      payments.map((payment) => ({
+        method: payment.method as PaymentMethod,
+        amount: Number(payment.amount),
+      })),
+    );
+  }
+
   private async reverseSaleCashEffects(
     sale: Sale,
     user: string,
     manager: EntityManager,
+    refundMethod?: PaymentMethod,
   ): Promise<void> {
     const payments = await manager.find(SalePayment, { where: { saleId: sale.id } });
     if (!payments.length || !sale.cashRegisterId) {
@@ -1884,8 +2119,17 @@ export class SalesService {
     }
 
     let currentBalance = Number(cashRegister.currentBalance ?? 0);
-    for (const payment of payments) {
-      const amount = Number(payment.amount ?? 0);
+    let totalReversed = 0;
+    const reversals = refundMethod
+      ? [{ method: refundMethod, amount: Number(sale.total) }]
+      : payments.map((payment) => ({ method: payment.method as PaymentMethod, amount: Number(payment.amount) }));
+    this.assertPaymentReversalBalances(cashRegister, reversals);
+    for (const payment of reversals) {
+      const amount = Math.abs(Number(payment.amount ?? 0));
+      if (amount === 0) {
+        continue;
+      }
+      totalReversed += amount;
       if (payment.method === PaymentMethod.CASH) {
         currentBalance -= amount;
         cashRegister.currentBalance = currentBalance;
@@ -1910,14 +2154,67 @@ export class SalesService {
           subtype: payment.method as any,
           amount: -amount,
           balanceAfter: currentBalance,
-          description: `Reversión por anulación de venta ${sale.series}-${sale.number}`,
-          reference: `SALE-CANCELLATION:${sale.id}`,
+          description: `${refundMethod ? 'Devolución' : 'Reversión por anulación'} de venta ${sale.series}-${sale.number}`,
+          reference: `${refundMethod ? 'SALE-REFUND' : 'SALE-CANCELLATION'}:${sale.id}`,
           recordedBy: user,
           recordedAt: new Date(),
         }),
       );
     }
+    cashRegister.totalReturns = Number(cashRegister.totalReturns ?? 0) + totalReversed;
     await manager.save(CashRegister, cashRegister);
+  }
+
+  private assertPaymentReversalBalances(
+    cashRegister: CashRegister,
+    reversals: Array<{ method: PaymentMethod; amount: number }>,
+  ): void {
+    const totalsByMethod = new Map<PaymentMethod, number>();
+    for (const reversal of reversals) {
+      if (reversal.method === PaymentMethod.CREDIT) continue;
+      const amount = Math.abs(Number(reversal.amount ?? 0));
+      totalsByMethod.set(
+        reversal.method,
+        (totalsByMethod.get(reversal.method) ?? 0) + amount,
+      );
+    }
+
+    for (const [method, amount] of totalsByMethod) {
+      if (amount > 0) {
+        this.assertRefundMethodBalance(cashRegister, method, amount);
+      }
+    }
+  }
+
+  private assertRefundMethodBalance(
+    cashRegister: CashRegister,
+    refundMethod: PaymentMethod,
+    amount: number,
+  ): void {
+    const balances: Partial<Record<PaymentMethod, number>> = {
+      [PaymentMethod.CASH]: Number(cashRegister.currentBalance ?? 0),
+      [PaymentMethod.CARD]: Number(cashRegister.totalCard ?? 0),
+      [PaymentMethod.TRANSFER]: Number(cashRegister.totalTransfer ?? 0),
+      [PaymentMethod.YAPE]: Number(cashRegister.totalYape ?? 0),
+      [PaymentMethod.PLIN]: Number(cashRegister.totalPlin ?? 0),
+    };
+    const labels: Partial<Record<PaymentMethod, string>> = {
+      [PaymentMethod.CASH]: 'efectivo',
+      [PaymentMethod.CARD]: 'tarjeta',
+      [PaymentMethod.TRANSFER]: 'transferencias',
+      [PaymentMethod.YAPE]: 'Yape',
+      [PaymentMethod.PLIN]: 'Plin',
+    };
+    const available = balances[refundMethod];
+    if (available === undefined) {
+      throw new BadRequestException('El medio seleccionado no admite devoluciones.');
+    }
+    if (available + 0.001 < amount) {
+      throw new BadRequestException(
+        `La caja no tiene saldo suficiente en ${labels[refundMethod]} para realizar la devolución. ` +
+        `Disponible: S/ ${available.toFixed(2)}; requerido: S/ ${amount.toFixed(2)}.`,
+      );
+    }
   }
 
   private async recomputeServiceOrderEconomicState(

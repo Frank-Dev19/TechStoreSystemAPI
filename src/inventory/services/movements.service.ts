@@ -10,6 +10,15 @@ import { MovementDto } from '../dto/movement.dto';
 import { MovementSerial } from '../entities/movement-serial.entity';
 import { MaterialDeliveryLine } from '../../service-orders/materials/material.entity';
 
+export interface KardexQueryFilters {
+    product_id?: number;
+    reason_code?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    limit?: number;
+}
+
 @Injectable()
 export class MovementsService {
     constructor(
@@ -248,7 +257,11 @@ export class MovementsService {
         return manager ? execute(manager) : this.ds.transaction(execute);
     }
 
-    async listKardex(filters: { product_id?: number; reason_code?: string; date_from?: string; date_to?: string; page?: number; limit?: number; }) {
+    private buildKardexQuery(filters: KardexQueryFilters) {
+        if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) {
+            throw new BadRequestException('La fecha inicial no puede ser posterior a la fecha final');
+        }
+
         const qb = this.movRepo.createQueryBuilder('m')
             .leftJoinAndSelect('m.product', 'p')
             .leftJoinAndSelect('p.category', 'cat')
@@ -261,6 +274,12 @@ export class MovementsService {
         if (filters.reason_code) qb.andWhere('m.reasonCode = :r', { r: filters.reason_code });
         if (filters.date_from) qb.andWhere('m.occurredAt >= :df', { df: filters.date_from + ' 00:00:00' });
         if (filters.date_to) qb.andWhere('m.occurredAt <= :dt', { dt: filters.date_to + ' 23:59:59' });
+
+        return qb;
+    }
+
+    async listKardex(filters: KardexQueryFilters) {
+        const qb = this.buildKardexQuery(filters);
 
         const page = filters.page || 1;
         const limit = filters.limit || 20;
@@ -275,4 +294,99 @@ export class MovementsService {
             limit
         };
     }
+
+    async exportKardexCsv(filters: Omit<KardexQueryFilters, 'page' | 'limit'>): Promise<string> {
+        const movements = await this.buildKardexQuery(filters).getMany();
+        return buildKardexCsv(movements);
+    }
+}
+
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+    IN: 'Entrada',
+    OUT: 'Salida',
+    ADJ: 'Ajuste',
+    TRANSFER: 'Transferencia',
+};
+
+const MOVEMENT_REASON_LABELS: Record<string, string> = {
+    COMPRA: 'Compra',
+    VENTA: 'Venta',
+    SALE: 'Venta',
+    SALE_CANCELLATION: 'Anulación de venta',
+    AJUSTE_INV: 'Ajuste de inventario',
+    DANO: 'Daño',
+    'DAÑO': 'Daño',
+    PERDIDA: 'Pérdida',
+    CONSUMO_INT: 'Consumo interno',
+};
+
+const SOURCE_DOCUMENT_LABELS: Record<string, string> = {
+    SALE: 'Venta',
+    SALE_CANCELLATION: 'Anulación de venta',
+    COUNT: 'Conteo de inventario',
+    MANUAL: 'Movimiento manual',
+    PURCHASE: 'Compra',
+};
+
+function csvCell(value: unknown): string {
+    return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function codeLabel(value: string | null | undefined, labels: Record<string, string>): string {
+    if (!value) return '-';
+    return labels[value.toUpperCase()] ?? value;
+}
+
+function formatDateTime(value: Date | string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value ?? '');
+    const pad = (part: number) => String(part).padStart(2, '0');
+    return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatDateOnly(value: string): string {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+function signedQuantity(movement: Movement): number {
+    const quantity = Math.abs(Number(movement.qty));
+    if (movement.type === 'OUT') return -quantity;
+    if (movement.type === 'ADJ' && Number(movement.totalCost) < 0) return -quantity;
+    return quantity;
+}
+
+export function buildKardexCsv(movements: Movement[]): string {
+    const headers = [
+        'Fecha/Hora', 'Tipo', 'Motivo', 'Documento', 'SKU', 'Producto', 'Categoría',
+        'Lote', 'Vencimiento', 'Proveedor', 'Cantidad', 'Costo Unitario', 'Costo Total',
+        'Saldo Cantidad', 'Saldo Costo', 'CPP', 'Usuario',
+    ];
+    const rows = movements.map((movement) => {
+        const lotSupplier = movement.lot?.supplier?.name;
+        const expirationDate = movement.lot?.expirationDate
+            ? formatDateOnly(movement.lot.expirationDate)
+            : '-';
+        return [
+            formatDateTime(movement.occurredAt),
+            codeLabel(movement.type, MOVEMENT_TYPE_LABELS),
+            codeLabel(movement.reasonCode, MOVEMENT_REASON_LABELS),
+            codeLabel(movement.sourceDocType, SOURCE_DOCUMENT_LABELS),
+            movement.product?.sku ?? '-',
+            movement.product?.name ?? '-',
+            movement.product?.category?.name ?? '-',
+            movement.lot?.lotCode ?? '-',
+            expirationDate,
+            lotSupplier ?? movement.supplier?.name ?? '-',
+            signedQuantity(movement),
+            Number(movement.unitCost).toFixed(2),
+            Number(movement.totalCost).toFixed(2),
+            Number(movement.balanceQtyPost),
+            Number(movement.balanceTotalCostPost).toFixed(2),
+            Number(movement.balanceAvgCostPost).toFixed(2),
+            movement.userCreated ?? '-',
+        ].map(csvCell).join(',');
+    });
+
+    return `\ufeff${headers.map(csvCell).join(',')}\r\n${rows.join('\r\n')}${rows.length ? '\r\n' : ''}`;
 }

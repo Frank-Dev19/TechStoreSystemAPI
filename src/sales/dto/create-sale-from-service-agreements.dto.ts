@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -16,6 +17,9 @@ import { SaleType } from '../enums/sale-type.enum';
 import { SalePaymentDto } from './create-sale.dto';
 
 export class CreateSaleFromServiceAgreementsDto {
+  @IsUUID('4')
+  idempotencyKey: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(1, { message: 'Cada comprobante de servicio debe corresponder a una sola orden' })

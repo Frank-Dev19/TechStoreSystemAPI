@@ -11,6 +11,7 @@ import {
     IsOptional,
     IsPositive,
     IsString,
+    IsUUID,
     MaxLength,
     Max,
     Min,
@@ -105,6 +106,9 @@ export class SalePaymentDto {
 }
 
 export class CreateSaleDto {
+    @IsUUID('4')
+    idempotencyKey: string;
+
     @IsInt()
     companyId: number;
 
