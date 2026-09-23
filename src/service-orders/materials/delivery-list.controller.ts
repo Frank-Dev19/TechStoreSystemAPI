@@ -12,8 +12,6 @@ import {
 import { JwtAccessGuard } from '../../auth/guards/jwt-access.guard';
 import { PermissionsGuard } from '../../rbac/guards/permissions.guard';
 import { Permissions } from '../../rbac/decorators/permissions.decorator';
-import { RolesGuard } from '../../rbac/guards/roles.guard';
-import { Roles } from '../../rbac/decorators/roles.decorator';
 import {
   DeliveryListQuery,
   DeliveryListService,
@@ -22,31 +20,29 @@ import { ManualDeliveryService } from './manual-delivery.service';
 import { CreateManualDeliveryDto } from './manual-delivery.dto';
 
 @Controller('service-order-material-deliveries')
-@UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+@UseGuards(JwtAccessGuard, PermissionsGuard)
 export class DeliveryListController {
   constructor(
     private readonly service: DeliveryListService,
     private readonly manual: ManualDeliveryService,
   ) {}
   @Get('technicians')
-  @Roles('admin', 'supervisor')
+  @Permissions('internal-deliveries.read')
   technicians() {
     return this.service.technicians();
   }
   @Get()
-  @Roles('admin', 'supervisor')
+  @Permissions('internal-deliveries.read')
   list(@Query() query: DeliveryListQuery) {
     return this.service.list(query);
   }
   @Get('manual/options/:productId')
-  @Roles('admin')
-  @Permissions('inventory-manage.manage')
+  @Permissions('internal-deliveries.create')
   options(@Param('productId', ParseIntPipe) productId: number) {
     return this.manual.options(productId);
   }
   @Post('manual')
-  @Roles('admin')
-  @Permissions('inventory-manage.manage')
+  @Permissions('internal-deliveries.create')
   createManual(
     @Body() dto: CreateManualDeliveryDto,
     @Req() req: { user: { sub: number } },

@@ -602,6 +602,7 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
       { moduleKey: 'inventory-serials', label: 'Seriales', sortOrder: 63, icon: 'fas fa-barcode' },
       { moduleKey: 'inventory-manage', label: 'Gestion de inventario', sortOrder: 64, icon: 'fas fa-warehouse' },
+      { moduleKey: 'internal-deliveries', label: 'Entregas internas', sortOrder: 65, icon: 'fas fa-dolly' },
       { moduleKey: 'pricing', label: 'Precios', sortOrder: 70, icon: 'fas fa-tags' },
     );
     const add = (moduleKey: string, actionKey: string, description: string, sortOrder = 10) =>
@@ -616,6 +617,7 @@ export class BootstrapService implements OnModuleInit {
     add('navigation', 'sales', 'Acceder a ventas');
     add('navigation', 'inventory-kardex', 'Acceder unicamente al Kardex');
     add('navigation', 'inventory-manage', 'Acceder a la gestion completa de inventario');
+    add('navigation', 'internal-deliveries', 'Acceder a entregas internas');
     add('navigation', 'reception', 'Acceder al panel de recepcion');
     add('navigation', 'technician', 'Acceder al panel tecnico');
     add('navigation', 'inbox', 'Acceder a mensajeria');
@@ -638,6 +640,8 @@ export class BootstrapService implements OnModuleInit {
     add('inventory-stock', 'read', 'Consultar stock');
     for (const action of ['read', 'manage']) add('inventory-serials', action, `${action} seriales`);
     for (const action of ['read', 'manage']) add('inventory-manage', action, `${action} inventario`);
+    add('internal-deliveries', 'read', 'Consultar entregas internas', 10);
+    add('internal-deliveries', 'create', 'Registrar entregas internas', 20);
     for (const action of ['read', 'manage']) add('pricing', action, `${action} precios`);
 
     const allCodes = await this.syncCatalog(MODULES, PERMS);
@@ -973,7 +977,8 @@ export class BootstrapService implements OnModuleInit {
         permissionCodes: [
           'app.home', 'profile.manage-own', 'navigation.clients',
           'navigation.document-types', 'navigation.suppliers', 'navigation.sales',
-          'navigation.inventory-manage', 'navigation.reception', 'navigation.inbox',
+          'navigation.inventory-manage', 'navigation.internal-deliveries',
+          'navigation.reception', 'navigation.inbox',
           'navigation.warranties',
           'document-type.create', 'document-type.read', 'document-type.update',
           'suppliers.create', 'suppliers.read', 'suppliers.update',
@@ -989,6 +994,7 @@ export class BootstrapService implements OnModuleInit {
           'inventory-stock.read',
           'inventory-serials.read', 'inventory-serials.manage',
           'inventory-manage.read', 'inventory-manage.manage',
+          'internal-deliveries.read', 'internal-deliveries.create',
           'pricing.read',
           'service-order.create',
           'service-order.read',
@@ -1052,6 +1058,8 @@ export class BootstrapService implements OnModuleInit {
       {
         name: 'supervisor',
         permissionCodes: [
+          'navigation.internal-deliveries',
+          'internal-deliveries.read',
           'service-order.read',
           'service-order.assign',
           'service-order.transition',

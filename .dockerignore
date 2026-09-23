@@ -12,3 +12,4 @@ coverage
 .playwright-mcp
 output
 tmp
+storage

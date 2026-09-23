@@ -45,7 +45,9 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
-/storage/temp/
+
+# Runtime-generated private files (PDFs, attachments and temporary documents)
+/storage/
 
 # agent infrastructure
 .atl/
