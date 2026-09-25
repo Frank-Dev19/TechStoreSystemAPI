@@ -24,8 +24,12 @@ export class MaterialDelivery {
   @JoinColumn({ name: 'versionId' })
   version: ServiceOrderItemCommercialVersion;
   @PrimaryGeneratedColumn() id: number;
-  @Column({ type: 'enum', enum: ['ORDER', 'MANUAL'], default: 'ORDER' })
-  type: 'ORDER' | 'MANUAL';
+  @Column({
+    type: 'enum',
+    enum: ['ORDER', 'MANUAL', 'INTERNAL_REQUEST', 'WARRANTY_REPLACEMENT'],
+    default: 'ORDER',
+  })
+  type: 'ORDER' | 'MANUAL' | 'INTERNAL_REQUEST' | 'WARRANTY_REPLACEMENT';
   @Index()
   @Column({ type: 'bigint', unsigned: true, nullable: true })
   serviceOrderId: number | null;
@@ -38,6 +42,9 @@ export class MaterialDelivery {
   @Column({ type: 'bigint', unsigned: true }) technicianId: number;
   @Column({ type: 'bigint', unsigned: true }) actorId: number;
   @Column({ type: 'text', nullable: true }) notes: string | null;
+  @Index()
+  @Column({ type: 'bigint', unsigned: true, nullable: true })
+  dispatchRequestId: number | null;
   @CreateDateColumn() createdAt: Date;
 }
 

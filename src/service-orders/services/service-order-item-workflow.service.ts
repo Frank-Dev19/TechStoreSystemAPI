@@ -58,6 +58,14 @@ export class ServiceOrderItemWorkflowService {
       if (nextStatus === ServiceOrderTechnicalStatus.EN_EJECUCION) {
         await this.assertGlobalCommercialGate(manager, serviceOrderId);
       }
+      if (nextStatus === ServiceOrderTechnicalStatus.RESUELTA) {
+        await this.warrantiesService.confirmDeliveredReplacementForResolution(
+          manager,
+          serviceOrderId,
+          itemId,
+          actorId,
+        );
+      }
 
       const previousStatus = item.technicalStatus;
       const now = new Date();

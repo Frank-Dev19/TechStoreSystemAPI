@@ -16,6 +16,7 @@ import { ServiceOrderDiagnosisOutcome } from './service-order-diagnosis-outcome.
 import { ServiceOrderDiagnosisStatus } from './service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisService } from './service-order-diagnosis.service';
 import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity';
+import { WarrantyResolutionType } from './warranty-resolution-type.enum';
 
 type MockRepo = {
   findOne: jest.Mock;
@@ -426,6 +427,7 @@ describe('ServiceOrderDiagnosisService', () => {
             serviceOrderItemId: item.id,
             sequenceNumber: 1,
             outcome,
+            warrantyResolutionType: WarrantyResolutionType.CONFIGURATION,
             summary: diagnosis.summary,
             details:
               'Se revisó físicamente el equipo y se documentó el resultado.',

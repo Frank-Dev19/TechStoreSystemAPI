@@ -11,6 +11,7 @@ import {
 import { ServiceOrderItem } from '../../entities/service-order-item.entity';
 import { ServiceOrderDiagnosisStatus } from '../service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisOutcome } from '../service-order-diagnosis-outcome.enum';
+import { WarrantyResolutionType } from '../warranty-resolution-type.enum';
 
 @Entity('service_order_diagnoses')
 export class ServiceOrderDiagnosis {
@@ -54,6 +55,14 @@ export class ServiceOrderDiagnosis {
 
   @Column({ name: 'recommended_action', type: 'text', nullable: true })
   recommendedAction: string | null;
+
+  @Column({
+    name: 'warranty_resolution_type',
+    type: 'enum',
+    enum: WarrantyResolutionType,
+    nullable: true,
+  })
+  warrantyResolutionType: WarrantyResolutionType | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

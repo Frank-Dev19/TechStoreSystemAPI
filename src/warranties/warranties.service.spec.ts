@@ -8,6 +8,11 @@ import { WarrantyClaimStatus } from './enums/warranty-claim-status.enum';
 import { WarrantyCoverageStatus } from './enums/warranty-coverage-status.enum';
 import { WarrantyMovementType } from './enums/warranty-movement-type.enum';
 import { WarrantySourceType } from './enums/warranty-source-type.enum';
+import { DispatchRequest } from '../service-orders/materials/dispatch-request.entity';
+import {
+  DispatchRequestStatus,
+  DispatchRequestType,
+} from '../service-orders/materials/dispatch-request.policy';
 import { WarrantiesService } from './warranties.service';
 
 const repository = () => ({
@@ -108,6 +113,80 @@ describe('WarrantiesService', () => {
 
 
 describe('Warranty and material guide integration', () => {
+  it('confirma de forma atómica un reemplazo entregado al resolver el servicio', async () => {
+    const claim = {
+      id: 17,
+      coverageId: 8,
+      serviceOrderId: 30,
+      serviceOrderItemId: 31,
+      status: WarrantyClaimStatus.REPLACEMENT_DELIVERED,
+      attendingTechnicianId: 9,
+      resolvedAt: null,
+    } as WarrantyClaim;
+    const coverage = {
+      id: 8,
+      status: WarrantyCoverageStatus.RESERVED,
+      coverageAmount: 50,
+      consumedAt: null,
+    } as WarrantyCoverage;
+    const request = {
+      id: 22,
+      warrantyClaimId: 17,
+      technicianId: 9,
+      type: DispatchRequestType.WARRANTY_REPLACEMENT,
+      status: DispatchRequestStatus.DELIVERED,
+      confirmedAt: null,
+    } as DispatchRequest;
+    const movementRepository = repository();
+    const saved: any[] = [];
+    const manager = {
+      findOne: jest.fn(async (entity) => {
+        if (entity === WarrantyClaim) return claim;
+        if (entity === WarrantyCoverage) return coverage;
+        if (entity === DispatchRequest) return request;
+        return null;
+      }),
+      save: jest.fn(async (value) => {
+        saved.push(value);
+        return value;
+      }),
+      getRepository: jest.fn((entity) => {
+        if (entity === WarrantyMovement) return movementRepository;
+        throw new Error(`Repositorio inesperado: ${entity?.name}`);
+      }),
+    } as any;
+    const service = new WarrantiesService(
+      repository() as any,
+      repository() as any,
+      movementRepository as any,
+    );
+
+    await service.confirmDeliveredReplacementForResolution(manager, 30, 31, 9);
+
+    expect(coverage.status).toBe(WarrantyCoverageStatus.CONSUMED);
+    expect(claim.status).toBe(WarrantyClaimStatus.RESOLVED_REPLACED);
+    expect(request.status).toBe(DispatchRequestStatus.CONFIRMED);
+    expect(request.confirmedAt).toBeInstanceOf(Date);
+    expect(saved).toEqual(expect.arrayContaining([coverage, claim, request]));
+  });
+
+  it('impide resolver la garantía mientras recepción no entregue el reemplazo', async () => {
+    const claim = {
+      id: 17,
+      serviceOrderId: 30,
+      serviceOrderItemId: 31,
+      status: WarrantyClaimStatus.WAITING_REPLACEMENT,
+    } as WarrantyClaim;
+    const manager = {
+      findOne: jest.fn().mockResolvedValue(claim),
+    } as any;
+    const service = new WarrantiesService(repository() as any, repository() as any, repository() as any);
+
+    await expect(
+      service.confirmDeliveredReplacementForResolution(manager, 30, 31, 9),
+    ).rejects.toThrow('recepción entregue el reemplazo');
+  });
+
   it('uses the serial of each sale line even when multiple lines share a product', async () => {
     const service = new WarrantiesService(repository() as any, repository() as any, repository() as any);
     const product = { id: 7, isSerialized: true, warrantyDurationValue: 12, name: 'RAM' };

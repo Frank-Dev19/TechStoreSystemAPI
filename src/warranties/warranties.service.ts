@@ -16,10 +16,22 @@ import { WarrantyDurationUnit } from '../common/enums/warranty-duration-unit.enu
 import { Movement } from '../inventory/entities/movement.entity';
 import { MovementSerial } from '../inventory/entities/movement-serial.entity';
 import { Serial } from '../inventory/entities/serial.entity';
+import { Product } from '../inventory/entities/product.entity';
 import { Sale } from '../sales/entities/sale.entity';
 import { SaleStatus } from '../sales/enums/sale-status.enum';
 import { ServiceOrderDiagnosisOutcome } from '../service-orders/diagnoses/service-order-diagnosis-outcome.enum';
 import { ServiceOrderDiagnosis } from '../service-orders/diagnoses/entities/service-order-diagnosis.entity';
+import { WarrantyResolutionType } from '../service-orders/diagnoses/warranty-resolution-type.enum';
+import { DispatchRequest } from '../service-orders/materials/dispatch-request.entity';
+import {
+  MaterialDelivery,
+  MaterialDeliveryLine,
+} from '../service-orders/materials/material.entity';
+import {
+  DispatchRequestStatus,
+  DispatchRequestType,
+} from '../service-orders/materials/dispatch-request.policy';
+import { SerialConditionEvent } from '../inventory/entities/serial-condition-event.entity';
 import { ServiceOrder } from '../service-orders/entities/service-order.entity';
 import { ServiceOrderItem } from '../service-orders/entities/service-order-item.entity';
 import { ServiceOrderItemCommercialVersion } from '../service-orders/entities/service-order-item-commercial-version.entity';
@@ -465,6 +477,77 @@ export class WarrantiesService {
       );
     }
 
+    if (
+      diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES &&
+      diagnosis.warrantyResolutionType === WarrantyResolutionType.FACTORY_REPLACEMENT
+    ) {
+      if (!coverage.productId) {
+        throw new BadRequestException(
+          'La cobertura no identifica un producto reemplazable',
+        );
+      }
+      const replacementTechnicianId =
+        actorId ?? claim.attendingTechnicianId ?? claim.originTechnicianId;
+      if (!replacementTechnicianId) {
+        throw new BadRequestException(
+          'El reclamo no tiene un técnico responsable para el reemplazo',
+        );
+      }
+      const existing = await manager.findOneBy(DispatchRequest, {
+        warrantyClaimId: claim.id,
+      });
+      if (!existing) {
+        await manager.save(
+          DispatchRequest,
+          manager.create(DispatchRequest, {
+            type: DispatchRequestType.WARRANTY_REPLACEMENT,
+            status: DispatchRequestStatus.PENDING,
+            technicianId: replacementTechnicianId,
+            requestedBy: replacementTechnicianId,
+            productId: coverage.productId,
+            quantity: 1,
+            reason: diagnosis.details || diagnosis.summary,
+            serviceOrderId,
+            serviceOrderItemId: claim.serviceOrderItemId,
+            warrantyClaimId: claim.id,
+            originalSerialId: coverage.serialId,
+            originalUnitCondition: 'UNDER_REVIEW',
+            deliveryId: null,
+            resolvedBy: null,
+            resolutionNote: null,
+            deliveredAt: null,
+            confirmedAt: null,
+            rejectedAt: null,
+          }),
+        );
+      }
+      if (coverage.serialId) {
+        const serial = await manager.findOneBy(Serial, { id: coverage.serialId });
+        if (serial && serial.condition !== 'UNDER_REVIEW') {
+          await manager.save(
+            SerialConditionEvent,
+            manager.create(SerialConditionEvent, {
+              serialId: serial.id,
+              previousCondition: serial.condition,
+              condition: 'UNDER_REVIEW',
+              reason: `Cuarentena por reclamo de garantía #${claim.id}`,
+              actorId: actorId ?? claim.attendingTechnicianId ?? 0,
+              returnId: null,
+            }),
+          );
+          serial.condition = 'UNDER_REVIEW';
+          await manager.save(serial);
+        }
+      }
+      claim.status = WarrantyClaimStatus.WAITING_REPLACEMENT;
+      claim.diagnosisId = diagnosis.id;
+      claim.outcome = diagnosis.outcome;
+      claim.reviewStartedAt ??= new Date();
+      claim.attendingTechnicianId = actorId ?? claim.attendingTechnicianId;
+      await claimRepository.save(claim);
+      return claim;
+    }
+
     const now = new Date();
     coverage.status = WarrantyCoverageStatus.CONSUMED;
     coverage.consumedAt = now;
@@ -489,6 +572,109 @@ export class WarrantiesService {
       { diagnosisId: diagnosis.id, outcome: diagnosis.outcome },
     );
     return claim;
+  }
+
+  async markReplacementDelivered(
+    manager: EntityManager,
+    claimId: number,
+    actorId: number,
+  ): Promise<void> {
+    const claim = await manager.findOne(WarrantyClaim, {
+      where: { id: claimId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+    if (claim.status !== WarrantyClaimStatus.WAITING_REPLACEMENT) {
+      throw new BadRequestException('El reclamo no espera un reemplazo');
+    }
+    claim.status = WarrantyClaimStatus.REPLACEMENT_DELIVERED;
+    claim.attendingTechnicianId ??= actorId;
+    await manager.save(claim);
+  }
+
+  async confirmReplacement(
+    manager: EntityManager,
+    claimId: number,
+    actorId: number,
+  ): Promise<void> {
+    const claim = await manager.findOne(WarrantyClaim, {
+      where: { id: claimId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+    if (claim.status === WarrantyClaimStatus.RESOLVED_REPLACED) return;
+    if (claim.status !== WarrantyClaimStatus.REPLACEMENT_DELIVERED) {
+      throw new BadRequestException('El reemplazo todavía no fue entregado');
+    }
+    const coverage = await manager.findOne(WarrantyCoverage, {
+      where: { id: claim.coverageId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!coverage) throw new NotFoundException('Cobertura no encontrada');
+    if (coverage.status !== WarrantyCoverageStatus.RESERVED) {
+      throw new BadRequestException(`La cobertura está en estado ${coverage.status}`);
+    }
+    const now = new Date();
+    coverage.status = WarrantyCoverageStatus.CONSUMED;
+    coverage.consumedAt = now;
+    claim.status = WarrantyClaimStatus.RESOLVED_REPLACED;
+    claim.resolvedAt = now;
+    await manager.save(coverage);
+    await manager.save(claim);
+    await this.recordMovement(
+      manager,
+      coverage,
+      WarrantyMovementType.CONSUMED,
+      actorId,
+      'Reemplazo por falla de fábrica confirmado',
+      claim.id,
+      { replacementConfirmed: true },
+    );
+  }
+
+  async confirmDeliveredReplacementForResolution(
+    manager: EntityManager,
+    serviceOrderId: number,
+    serviceOrderItemId: number,
+    actorId?: number,
+  ): Promise<void> {
+    const claim = await manager.findOne(WarrantyClaim, {
+      where: { serviceOrderId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!claim || (claim.serviceOrderItemId && Number(claim.serviceOrderItemId) !== serviceOrderItemId)) {
+      return;
+    }
+    if (
+      claim.status === WarrantyClaimStatus.RESOLVED_APPLIES ||
+      claim.status === WarrantyClaimStatus.RESOLVED_REJECTED ||
+      claim.status === WarrantyClaimStatus.RESOLVED_REPLACED
+    ) {
+      return;
+    }
+    if (claim.status !== WarrantyClaimStatus.REPLACEMENT_DELIVERED) {
+      if (claim.status === WarrantyClaimStatus.WAITING_REPLACEMENT) {
+        throw new BadRequestException(
+          'No se puede finalizar el servicio hasta que recepción entregue el reemplazo solicitado',
+        );
+      }
+      return;
+    }
+
+    const request = await manager.findOne(DispatchRequest, {
+      where: { warrantyClaimId: claim.id },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!request || request.status !== DispatchRequestStatus.DELIVERED) {
+      throw new BadRequestException(
+        'El reemplazo de garantía no está disponible para confirmación',
+      );
+    }
+    const confirmedBy = Number(actorId ?? claim.attendingTechnicianId ?? request.technicianId);
+    await this.confirmReplacement(manager, claim.id, confirmedBy);
+    request.status = DispatchRequestStatus.CONFIRMED;
+    request.confirmedAt = request.confirmedAt ?? new Date();
+    await manager.save(request);
   }
 
   async cancelClaim(
@@ -713,12 +899,94 @@ export class WarrantiesService {
         .setParameter('claimSearch', `%${filter.search.trim()}%`);
     }
 
-    const [data, total] = await query
+    const [claims, total] = await query
       .orderBy('claim.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit)
       .getManyAndCount();
+    const data = await this.attachReplacementTrace(claims);
     return { data, total, page, limit };
+  }
+
+  private async attachReplacementTrace(claims: WarrantyClaim[]) {
+    const claimIds = claims.map((claim) => Number(claim.id));
+    if (!claimIds.length) return claims;
+
+    const rows = await this.claimRepository.manager
+      .createQueryBuilder(DispatchRequest, 'request')
+      .leftJoin(MaterialDelivery, 'delivery', 'delivery.id = request.deliveryId')
+      .leftJoin(MaterialDeliveryLine, 'line', 'line.deliveryId = delivery.id')
+      .leftJoin(Product, 'replacementProduct', 'replacementProduct.id = line.productId')
+      .leftJoin(Serial, 'originalSerial', 'originalSerial.id = request.originalSerialId')
+      .leftJoin(User, 'resolvedBy', 'resolvedBy.id = request.resolvedBy')
+      .select([
+        'request.id AS requestId',
+        'request.warrantyClaimId AS warrantyClaimId',
+        'request.status AS requestStatus',
+        'request.reason AS reason',
+        'request.resolutionNote AS resolutionNote',
+        'request.createdAt AS requestedAt',
+        'request.deliveredAt AS deliveredAt',
+        'request.confirmedAt AS confirmedAt',
+        'request.originalSerialId AS originalSerialId',
+        'request.originalUnitCondition AS originalUnitCondition',
+        'originalSerial.serialCode AS originalSerialCode',
+        'originalSerial.condition AS originalSerialCondition',
+        'delivery.id AS deliveryId',
+        'line.id AS lineId',
+        'line.productId AS replacementProductId',
+        'line.productNameSnapshot AS replacementProductName',
+        'replacementProduct.sku AS replacementProductSku',
+        'line.serialId AS replacementSerialId',
+        'line.serialCode AS replacementSerialCode',
+        'line.quantity AS replacementQuantity',
+        'resolvedBy.id AS resolvedById',
+        'resolvedBy.name AS resolvedByName',
+      ])
+      .where('request.warrantyClaimId IN (:...claimIds)', { claimIds })
+      .orderBy('line.id', 'ASC')
+      .getRawMany();
+
+    const byClaim = new Map<number, any>();
+    for (const row of rows) {
+      const claimId = Number(row.warrantyClaimId);
+      let replacement = byClaim.get(claimId);
+      if (!replacement) {
+        replacement = {
+          requestId: Number(row.requestId),
+          status: row.requestStatus,
+          reason: row.reason,
+          resolutionNote: row.resolutionNote,
+          requestedAt: row.requestedAt,
+          deliveredAt: row.deliveredAt,
+          confirmedAt: row.confirmedAt,
+          originalSerialId: row.originalSerialId ? Number(row.originalSerialId) : null,
+          originalSerialCode: row.originalSerialCode ?? null,
+          originalSerialCondition: row.originalSerialCondition ?? row.originalUnitCondition ?? null,
+          deliveryId: row.deliveryId ? Number(row.deliveryId) : null,
+          deliveryCode: row.deliveryId ? `DP-${row.deliveryId}` : null,
+          resolvedBy: row.resolvedById
+            ? { id: Number(row.resolvedById), name: row.resolvedByName }
+            : null,
+          lines: [],
+        };
+        byClaim.set(claimId, replacement);
+      }
+      if (row.lineId) {
+        replacement.lines.push({
+          id: Number(row.lineId),
+          productId: Number(row.replacementProductId),
+          productName: row.replacementProductName,
+          productSku: row.replacementProductSku,
+          serialId: row.replacementSerialId ? Number(row.replacementSerialId) : null,
+          serialCode: row.replacementSerialCode ?? null,
+          quantity: Number(row.replacementQuantity),
+        });
+      }
+    }
+    return claims.map((claim) =>
+      Object.assign(claim, { replacement: byClaim.get(Number(claim.id)) ?? null }),
+    );
   }
 
   private createCoverageSearchQuery(

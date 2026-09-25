@@ -318,6 +318,9 @@ const MOVEMENT_REASON_LABELS: Record<string, string> = {
     'DAÑO': 'Daño',
     PERDIDA: 'Pérdida',
     CONSUMO_INT: 'Consumo interno',
+    MATERIAL_ISSUE: 'Material de orden de servicio',
+    TECHNICIAN_SUPPLY_ISSUE: 'Insumo interno',
+    WARRANTY_REPLACEMENT: 'Reemplazo por garantía',
 };
 
 const SOURCE_DOCUMENT_LABELS: Record<string, string> = {
@@ -326,6 +329,10 @@ const SOURCE_DOCUMENT_LABELS: Record<string, string> = {
     COUNT: 'Conteo de inventario',
     MANUAL: 'Movimiento manual',
     PURCHASE: 'Compra',
+    MATERIAL_DELIVERY: 'Despacho de orden de servicio',
+    INTERNAL_DELIVERY: 'Entrega interna',
+    INTERNAL_DISPATCH: 'Solicitud de insumo interno',
+    WARRANTY_DISPATCH: 'Solicitud de reemplazo por garantía',
 };
 
 function csvCell(value: unknown): string {

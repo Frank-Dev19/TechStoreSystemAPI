@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { ServiceOrderDiagnosisStatus } from '../service-order-diagnosis-status.enum';
 import { ServiceOrderDiagnosisOutcome } from '../service-order-diagnosis-outcome.enum';
+import { WarrantyResolutionType } from '../warranty-resolution-type.enum';
 
 export class CreateServiceOrderDiagnosisDto {
   @ValidateIf((dto: CreateServiceOrderDiagnosisDto) => dto.serviceOrderId == null)
@@ -52,4 +53,8 @@ export class CreateServiceOrderDiagnosisDto {
   @IsString()
   @IsOptional()
   recommendedAction?: string;
+
+  @IsEnum(WarrantyResolutionType)
+  @IsOptional()
+  warrantyResolutionType?: WarrantyResolutionType;
 }

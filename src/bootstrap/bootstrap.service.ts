@@ -602,7 +602,8 @@ export class BootstrapService implements OnModuleInit {
       { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
       { moduleKey: 'inventory-serials', label: 'Seriales', sortOrder: 63, icon: 'fas fa-barcode' },
       { moduleKey: 'inventory-manage', label: 'Gestion de inventario', sortOrder: 64, icon: 'fas fa-warehouse' },
-      { moduleKey: 'internal-deliveries', label: 'Entregas internas', sortOrder: 65, icon: 'fas fa-dolly' },
+      { moduleKey: 'internal-deliveries', label: 'Gestión de despachos', sortOrder: 65, icon: 'fas fa-dolly' },
+      { moduleKey: 'dispatches', label: 'Despachos de almacén', sortOrder: 66, icon: 'fas fa-truck-loading' },
       { moduleKey: 'pricing', label: 'Precios', sortOrder: 70, icon: 'fas fa-tags' },
     );
     const add = (moduleKey: string, actionKey: string, description: string, sortOrder = 10) =>
@@ -617,7 +618,7 @@ export class BootstrapService implements OnModuleInit {
     add('navigation', 'sales', 'Acceder a ventas');
     add('navigation', 'inventory-kardex', 'Acceder unicamente al Kardex');
     add('navigation', 'inventory-manage', 'Acceder a la gestion completa de inventario');
-    add('navigation', 'internal-deliveries', 'Acceder a entregas internas');
+    add('navigation', 'internal-deliveries', 'Acceder a gestión de despachos');
     add('navigation', 'reception', 'Acceder al panel de recepcion');
     add('navigation', 'technician', 'Acceder al panel tecnico');
     add('navigation', 'inbox', 'Acceder a mensajeria');
@@ -642,6 +643,12 @@ export class BootstrapService implements OnModuleInit {
     for (const action of ['read', 'manage']) add('inventory-manage', action, `${action} inventario`);
     add('internal-deliveries', 'read', 'Consultar entregas internas', 10);
     add('internal-deliveries', 'create', 'Registrar entregas internas', 20);
+    add('dispatches', 'read', 'Consultar solicitudes de despacho', 10);
+    add('dispatches', 'fulfill', 'Confirmar salidas de almacén', 20);
+    add('dispatches', 'reject', 'Rechazar solicitudes de insumos', 30);
+    add('dispatches', 'request-internal', 'Solicitar insumos internos', 40);
+    add('dispatches', 'confirm-replacement', 'Confirmar reemplazos por garantía', 50);
+    add('dispatches', 'read-own', 'Consultar solicitudes de despacho propias', 60);
     for (const action of ['read', 'manage']) add('pricing', action, `${action} precios`);
 
     const allCodes = await this.syncCatalog(MODULES, PERMS);
@@ -995,6 +1002,7 @@ export class BootstrapService implements OnModuleInit {
           'inventory-serials.read', 'inventory-serials.manage',
           'inventory-manage.read', 'inventory-manage.manage',
           'internal-deliveries.read', 'internal-deliveries.create',
+          'dispatches.read', 'dispatches.fulfill', 'dispatches.reject',
           'pricing.read',
           'service-order.create',
           'service-order.read',
@@ -1053,6 +1061,9 @@ export class BootstrapService implements OnModuleInit {
           'service-order-agreement.apply-discount',
           'service-order-inbox.read',
           'service-order-inbox.send',
+          'dispatches.request-internal',
+          'dispatches.confirm-replacement',
+          'dispatches.read-own',
         ],
       },
       {
@@ -1060,6 +1071,7 @@ export class BootstrapService implements OnModuleInit {
         permissionCodes: [
           'navigation.internal-deliveries',
           'internal-deliveries.read',
+          'dispatches.read',
           'service-order.read',
           'service-order.assign',
           'service-order.transition',

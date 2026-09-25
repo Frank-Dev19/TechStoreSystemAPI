@@ -21,6 +21,7 @@ describe('ServiceOrderItemWorkflowService', () => {
   let transitionPolicy: jest.Mocked<ServiceOrderTransitionPolicy>;
   let projectionService: jest.Mocked<ServiceOrderAggregateProjectionService>;
   let finalReportNotificationService: jest.Mocked<ServiceOrderFinalReportNotificationService>;
+  let warrantiesService: { markClaimInReview: jest.Mock; confirmDeliveredReplacementForResolution: jest.Mock };
   let order: ServiceOrder;
   let firstItem: ServiceOrderItem;
   let secondItem: ServiceOrderItem;
@@ -61,12 +62,16 @@ describe('ServiceOrderItemWorkflowService', () => {
     finalReportNotificationService = {
       notifyResolvedItem: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ServiceOrderFinalReportNotificationService>;
+    warrantiesService = {
+      markClaimInReview: jest.fn(),
+      confirmDeliveredReplacementForResolution: jest.fn().mockResolvedValue(undefined),
+    };
     service = new ServiceOrderItemWorkflowService(
       manager,
       transitionPolicy,
       projectionService,
       finalReportNotificationService,
-      { markClaimInReview: jest.fn() } as any,
+      warrantiesService as any,
     );
   });
 
@@ -90,8 +95,32 @@ describe('ServiceOrderItemWorkflowService', () => {
       }),
     );
     expect(projectionService.recalculateLocked).toHaveBeenCalledWith(manager, order.id);
+    expect(warrantiesService.confirmDeliveredReplacementForResolution).toHaveBeenCalledWith(
+      manager,
+      order.id,
+      firstItem.id,
+      7,
+    );
     expect(result.itemProgress?.isPartial).toBe(true);
     expect(finalReportNotificationService.notifyResolvedItem).toHaveBeenCalledWith(order.id, firstItem.id);
+  });
+
+  it('no cambia el equipo si el reemplazo de garantía todavía no puede cerrarse', async () => {
+    warrantiesService.confirmDeliveredReplacementForResolution.mockRejectedValue(
+      new BadRequestException('Reemplazo pendiente'),
+    );
+
+    await expect(
+      service.changeTechnicalStatus(
+        order.id,
+        firstItem.id,
+        ServiceOrderTechnicalStatus.RESUELTA,
+        7,
+      ),
+    ).rejects.toThrow('Reemplazo pendiente');
+
+    expect(itemRepository.save).not.toHaveBeenCalled();
+    expect(eventRepository.save).not.toHaveBeenCalled();
   });
 
   it('deja una garantía rechazada lista para entrega sin tratarla como servicio resuelto', async () => {

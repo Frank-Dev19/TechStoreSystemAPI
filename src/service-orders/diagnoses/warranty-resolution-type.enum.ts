@@ -1,0 +1,5 @@
+export enum WarrantyResolutionType {
+  CONFIGURATION = 'CONFIGURATION',
+  REPAIR = 'REPAIR',
+  FACTORY_REPLACEMENT = 'FACTORY_REPLACEMENT',
+}

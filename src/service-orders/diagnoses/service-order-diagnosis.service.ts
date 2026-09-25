@@ -24,6 +24,7 @@ import { ServiceOrderDiagnosis } from './entities/service-order-diagnosis.entity
 import { ServiceOrderDiagnosisOutcome } from './service-order-diagnosis-outcome.enum';
 import { ServiceOrderDiagnosisStatus } from './service-order-diagnosis-status.enum';
 import { WarrantiesService } from '../../warranties/warranties.service';
+import { WarrantyResolutionType } from './warranty-resolution-type.enum';
 
 type FindDiagnosisQuery = {
   page?: number | string;
@@ -142,6 +143,7 @@ export class ServiceOrderDiagnosisService {
           item,
           dto.outcome ?? ServiceOrderDiagnosisOutcome.REPAIRABLE,
         );
+        this.ensureWarrantyResolution(dto, order.serviceType);
 
         const repository = manager.getRepository(ServiceOrderDiagnosis);
         const previousCurrentDiagnosis = await repository.findOne({
@@ -177,6 +179,7 @@ export class ServiceOrderDiagnosisService {
             details: dto.details ?? null,
             outcomeReason: dto.outcomeReason ?? null,
             recommendedAction: dto.recommendedAction ?? null,
+            warrantyResolutionType: dto.warrantyResolutionType ?? null,
           }),
         );
 
@@ -523,6 +526,25 @@ export class ServiceOrderDiagnosisService {
       return ServiceOrderTechnicalStatus.GARANTIA_RECHAZADA;
     }
     return null;
+  }
+
+  private ensureWarrantyResolution(
+    dto: CreateServiceOrderDiagnosisDto,
+    serviceType: ServiceType,
+  ): void {
+    if (
+      serviceType === ServiceType.WARRANTY_SERVICE &&
+      dto.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES &&
+      !dto.warrantyResolutionType
+    ) {
+      throw new BadRequestException('Selecciona el tipo de solución de la garantía');
+    }
+    if (
+      dto.warrantyResolutionType === WarrantyResolutionType.FACTORY_REPLACEMENT &&
+      dto.outcome !== ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES
+    ) {
+      throw new BadRequestException('El reemplazo solo aplica a una garantía aceptada');
+    }
   }
 
   private resolveCommercialStatusFromOutcome(

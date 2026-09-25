@@ -1,0 +1,31 @@
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
+
+export class CreateInternalSupplyRequestDto {
+  @IsInt() @Min(1) productId: number;
+  @IsNumber({ maxDecimalPlaces: 4 }) @Min(0.0001) quantity: number;
+  @IsString() @MaxLength(1000) reason: string;
+}
+
+export class FulfillDispatchRequestDto {
+  @IsUUID() requestKey: string;
+  @IsOptional() @IsInt() @Min(1) lotId?: number;
+  @IsOptional() @IsArray() @ArrayUnique() @ArrayMaxSize(200)
+  @Type(() => Number) @IsInt({ each: true }) @Min(1, { each: true }) serialIds?: number[];
+  @IsOptional() @IsString() @MaxLength(1000) note?: string;
+}
+
+export class RejectDispatchRequestDto {
+  @IsString() @MaxLength(1000) reason: string;
+}
