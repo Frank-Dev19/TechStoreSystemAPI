@@ -620,6 +620,7 @@ export class BootstrapService implements OnModuleInit {
     add('navigation', 'inventory-manage', 'Acceder a la gestion completa de inventario');
     add('navigation', 'internal-deliveries', 'Acceder a gestión de despachos');
     add('navigation', 'reception', 'Acceder al panel de recepcion');
+    add('navigation', 'supervisor', 'Acceder al panel de supervision');
     add('navigation', 'technician', 'Acceder al panel tecnico');
     add('navigation', 'inbox', 'Acceder a mensajeria');
     add('navigation', 'warranties', 'Acceder a garantias');
@@ -985,7 +986,7 @@ export class BootstrapService implements OnModuleInit {
           'app.home', 'profile.manage-own', 'navigation.clients',
           'navigation.document-types', 'navigation.suppliers', 'navigation.sales',
           'navigation.inventory-manage', 'navigation.internal-deliveries',
-          'navigation.reception', 'navigation.inbox',
+          'navigation.reception', 'navigation.supervisor', 'navigation.inbox',
           'navigation.warranties',
           'document-type.create', 'document-type.read', 'document-type.update',
           'suppliers.create', 'suppliers.read', 'suppliers.update',

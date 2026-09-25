@@ -1,4 +1,5 @@
 import {
+  assertMaterialDeliveryStage,
   assertMaterialMatch,
   assertReconciliationStage,
   assertUsableSerial,
@@ -6,6 +7,12 @@ import {
 } from './material-policy';
 
 describe('internal material policy', () => {
+  it('allows material delivery only while the equipment is in service', () => {
+    expect(() => assertMaterialDeliveryStage('EN_EJECUCION')).not.toThrow();
+    expect(() => assertMaterialDeliveryStage('AUTORIZADA_PARA_EJECUCION')).toThrow(
+      'entregar materiales',
+    );
+  });
   it('allows confirming material use only while the equipment is in service', () => {
     expect(() => assertReconciliationStage('EN_EJECUCION')).not.toThrow();
     expect(() =>

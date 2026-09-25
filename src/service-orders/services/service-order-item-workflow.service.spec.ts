@@ -11,12 +11,17 @@ import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-tr
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
 import { ServiceOrderItemWorkflowService } from './service-order-item-workflow.service';
 import { ServiceOrderFinalReportNotificationService } from './service-order-final-report-notification.service';
+import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
+import { MaterialDeliveryLine, MaterialReconciliation } from '../materials/material.entity';
 
 describe('ServiceOrderItemWorkflowService', () => {
   let service: ServiceOrderItemWorkflowService;
   let orderRepository: any;
   let itemRepository: any;
   let eventRepository: any;
+  let versionRepository: any;
+  let deliveryLineRepository: any;
+  let reconciliationRepository: any;
   let manager: any;
   let transitionPolicy: jest.Mocked<ServiceOrderTransitionPolicy>;
   let projectionService: jest.Mocked<ServiceOrderAggregateProjectionService>;
@@ -40,12 +45,18 @@ describe('ServiceOrderItemWorkflowService', () => {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => value),
     };
+    versionRepository = { findOne: jest.fn().mockResolvedValue(null) };
+    deliveryLineRepository = { find: jest.fn().mockResolvedValue([]) };
+    reconciliationRepository = { findOneBy: jest.fn().mockResolvedValue(null) };
     manager = {
       transaction: jest.fn(async (callback) => callback(manager)),
       getRepository: jest.fn((entity) => {
         if (entity === ServiceOrder) return orderRepository;
         if (entity === ServiceOrderItem) return itemRepository;
         if (entity === ServiceOrderEvent) return eventRepository;
+        if (entity === ServiceOrderItemCommercialVersion) return versionRepository;
+        if (entity === MaterialDeliveryLine) return deliveryLineRepository;
+        if (entity === MaterialReconciliation) return reconciliationRepository;
         throw new Error(`Unexpected repository ${entity?.name}`);
       }),
     };
@@ -121,6 +132,28 @@ describe('ServiceOrderItemWorkflowService', () => {
 
     expect(itemRepository.save).not.toHaveBeenCalled();
     expect(eventRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('no permite finalizar si hay productos autorizados sin conciliación confirmada', async () => {
+    versionRepository.findOne.mockResolvedValue({
+      id: 91,
+      lines: [{ type: 'PRODUCT', productId: 4, quantity: 2 }],
+    });
+    deliveryLineRepository.find.mockResolvedValue([
+      { productId: 4, quantity: 2, returnedQuantity: 0 },
+    ]);
+
+    await expect(
+      service.changeTechnicalStatus(
+        order.id,
+        firstItem.id,
+        ServiceOrderTechnicalStatus.RESUELTA,
+        7,
+      ),
+    ).rejects.toThrow('Confirma la entrega y los materiales utilizados');
+
+    expect(warrantiesService.confirmDeliveredReplacementForResolution).not.toHaveBeenCalled();
+    expect(itemRepository.save).not.toHaveBeenCalled();
   });
 
   it('deja una garantía rechazada lista para entrega sin tratarla como servicio resuelto', async () => {

@@ -30,6 +30,7 @@ export class ManualDeliveryLineDto {
 export class CreateManualDeliveryDto {
   @IsUUID() requestKey: string;
   @IsInt() @Min(1) technicianId: number;
+  @IsOptional() @IsInt() @Min(1) serviceOrderId?: number;
   @IsOptional() @IsString() @MaxLength(1000) notes?: string;
   @IsArray()
   @ArrayMinSize(1)

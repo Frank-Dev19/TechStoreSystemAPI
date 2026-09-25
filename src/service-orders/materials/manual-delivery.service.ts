@@ -14,6 +14,7 @@ import { Serial } from '../../inventory/entities/serial.entity';
 import { Stock } from '../../inventory/entities/stock.entity';
 import { MovementsService } from '../../inventory/services/movements.service';
 import { User } from '../../users/entities/user.entity';
+import { ServiceOrder } from '../entities/service-order.entity';
 import { CreateManualDeliveryDto } from './manual-delivery.dto';
 import {
   MaterialDelivery,
@@ -106,11 +107,24 @@ export class ManualDeliveryService {
       )
         throw new BadRequestException('Selecciona un técnico activo');
 
+      const serviceOrder = dto.serviceOrderId
+        ? await em.findOneBy(ServiceOrder, { id: dto.serviceOrderId })
+        : null;
+      if (dto.serviceOrderId && !serviceOrder)
+        throw new BadRequestException('La orden de servicio seleccionada no existe');
+      if (
+        serviceOrder?.assignedToTechnicianId &&
+        Number(serviceOrder.assignedToTechnicianId) !== Number(technician.id)
+      )
+        throw new BadRequestException(
+          'La orden está asignada a un técnico distinto del receptor',
+        );
+
       const delivery = await em.save(
         MaterialDelivery,
         em.create(MaterialDelivery, {
           type: 'MANUAL',
-          serviceOrderId: null,
+          serviceOrderId: serviceOrder?.id ?? null,
           itemId: null,
           versionId: null,
           technicianId: technician.id,

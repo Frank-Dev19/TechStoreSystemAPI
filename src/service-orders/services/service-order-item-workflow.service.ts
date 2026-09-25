@@ -14,6 +14,11 @@ import { ServiceOrderTransitionPolicy } from '../state-machines/service-order-tr
 import { ServiceOrderAggregateProjectionService } from './service-order-aggregate-projection.service';
 import { ServiceOrderFinalReportNotificationService } from './service-order-final-report-notification.service';
 import { WarrantiesService } from '../../warranties/warranties.service';
+import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
+import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/service-order-item-commercial-version-status.enum';
+import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
+import { MaterialDeliveryLine, MaterialReconciliation } from '../materials/material.entity';
+import { assertMaterialMatch } from '../materials/material-policy';
 
 type ServiceOrderViewer = Pick<JwtPayload, 'sub' | 'roles'> | undefined;
 
@@ -59,6 +64,7 @@ export class ServiceOrderItemWorkflowService {
         await this.assertGlobalCommercialGate(manager, serviceOrderId);
       }
       if (nextStatus === ServiceOrderTechnicalStatus.RESUELTA) {
+        await this.assertMaterialsConfirmed(manager, itemId);
         await this.warrantiesService.confirmDeliveredReplacementForResolution(
           manager,
           serviceOrderId,
@@ -104,6 +110,36 @@ export class ServiceOrderItemWorkflowService {
         `No se puede iniciar la ejecución mientras el equipo ${blockedItem.code} tenga una definición comercial pendiente`,
       );
     }
+  }
+
+  private async assertMaterialsConfirmed(manager: EntityManager, itemId: number): Promise<void> {
+    const version = await manager.getRepository(ServiceOrderItemCommercialVersion).findOne({
+      where: {
+        serviceOrderItemId: itemId,
+        status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
+      },
+      order: { versionNumber: 'DESC' },
+      relations: ['lines'],
+    });
+    const expected = (version?.lines ?? []).filter(
+      (line) => line.type === ServiceOrderCommercialLineType.PRODUCT,
+    );
+    if (!expected.length) return;
+
+    const deliveries = await manager.getRepository(MaterialDeliveryLine).find({ where: { itemId } });
+    const outstanding = deliveries
+      .map((line) => ({
+        productId: line.productId,
+        quantity: Number(line.quantity) - Number(line.returnedQuantity),
+      }))
+      .filter((line) => line.quantity > 0);
+    const reconciliation = await manager.getRepository(MaterialReconciliation).findOneBy({ itemId });
+    if (!version || !reconciliation?.valid || Number(reconciliation.versionId) !== Number(version.id)) {
+      throw new BadRequestException(
+        'Confirma la entrega y los materiales utilizados antes de finalizar el servicio',
+      );
+    }
+    assertMaterialMatch(expected, outstanding);
   }
 
   private assertItemOperativelyActionable(item: ServiceOrderItem): void {

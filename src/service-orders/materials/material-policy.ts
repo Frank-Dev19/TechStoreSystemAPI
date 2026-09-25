@@ -23,6 +23,14 @@ export function assertReconciliationStage(technicalStatus: string) {
   }
 }
 
+export function assertMaterialDeliveryStage(technicalStatus: string) {
+  if (technicalStatus !== 'EN_EJECUCION') {
+    throw new BadRequestException(
+      'El equipo debe estar En servicio para entregar materiales.',
+    );
+  }
+}
+
 export function assertMaterialMatch(
   expected: { productId: number | null; quantity: number }[],
   used: { productId: number | null; quantity: number }[],

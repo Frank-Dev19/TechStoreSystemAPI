@@ -36,6 +36,7 @@ import {
 } from './material.dto';
 import {
   assertMaterialMatch,
+  assertMaterialDeliveryStage,
   assertReconciliationStage,
   assertReviewRole,
   assertUsableSerial,
@@ -229,6 +230,7 @@ export class MaterialsService {
         async () => {
           if (item.deliveredAt || item.cancelledAt)
             throw new BadRequestException('El equipo no admite entregas');
+          assertMaterialDeliveryStage(item.technicalStatus);
           if (!order.assignedToTechnicianId)
             throw new BadRequestException(
               'Asigne un técnico antes de entregar',

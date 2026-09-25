@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
+import { ServiceOrder } from '../entities/service-order.entity';
 import {
   MaterialAllocation,
   MaterialDelivery,
@@ -128,7 +129,7 @@ export class DeliveryListService {
       .getRepository(MaterialDelivery)
       .createQueryBuilder('delivery')
       .leftJoin('delivery.item', 'item')
-      .leftJoin('item.serviceOrder', 'serviceOrder')
+      .leftJoin(ServiceOrder, 'serviceOrder', 'serviceOrder.id = delivery.serviceOrderId')
       .leftJoin(User, 'technician', 'technician.id = delivery.technicianId')
       .leftJoin(User, 'issuer', 'issuer.id = delivery.actorId');
     if (query.technicianId)

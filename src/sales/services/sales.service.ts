@@ -1023,7 +1023,11 @@ export class SalesService {
       (sum: number, payment: { amount?: number }) => sum + Number(payment.amount ?? 0),
       0,
     );
-    if (Math.abs(totalPayments - totalAmount) > 0.01) {
+    const cashRoundedTotal = Number((Math.round((totalAmount + Number.EPSILON) * 10) / 10).toFixed(2));
+    const validCashRounding = dto.payments?.length === 1 &&
+      dto.payments[0].method === PaymentMethod.CASH &&
+      Math.abs(totalPayments - cashRoundedTotal) < 0.001;
+    if (Math.abs(totalPayments - totalAmount) > 0.01 && !validCashRounding) {
       throw new BadRequestException(
         `El total de pagos (${totalPayments}) no coincide con el total de la cotización (${totalAmount})`,
       );
@@ -1339,7 +1343,11 @@ export class SalesService {
     const totalPayments = Number(
       (dto.payments ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0).toFixed(2),
     );
-    if (Math.abs(totalPayments - groupedTotal) > 0.01) {
+    const cashRoundedTotal = Number((Math.round((groupedTotal + Number.EPSILON) * 10) / 10).toFixed(2));
+    const validCashRounding = dto.payments?.length === 1 &&
+      dto.payments[0].method === PaymentMethod.CASH &&
+      Math.abs(totalPayments - cashRoundedTotal) < 0.001;
+    if (Math.abs(totalPayments - groupedTotal) > 0.01 && !validCashRounding) {
       throw new BadRequestException(
         `El total de pagos (${totalPayments}) no coincide con el total de las cotizaciones seleccionadas (${groupedTotal})`,
       );
@@ -1638,14 +1646,14 @@ export class SalesService {
     }
 
     if (dateFrom) {
-      query.andWhere('DATE(s.createdAt) >= DATE(:dateFrom)', { dateFrom });
+      query.andWhere('s.issueDate >= :dateFrom', { dateFrom });
     }
 
     if (dateTo) {
       const dateToPlusOne = new Date(dateTo);
       dateToPlusOne.setDate(dateToPlusOne.getDate() + 1);
       const dateToStr = dateToPlusOne.toISOString().split('T')[0];
-      query.andWhere('DATE(s.createdAt) < DATE(:dateTo)', { dateTo: dateToStr });
+      query.andWhere('s.issueDate < :dateTo', { dateTo: dateToStr });
     }
 
     if (search) {

@@ -13,6 +13,7 @@ import { Serial } from '../../inventory/entities/serial.entity';
 import { MovementsService } from '../../inventory/services/movements.service';
 import { User } from '../../users/entities/user.entity';
 import { WarrantiesService } from '../../warranties/warranties.service';
+import { ServiceOrder } from '../entities/service-order.entity';
 import {
   CreateInternalSupplyRequestDto,
   FulfillDispatchRequestDto,
@@ -52,12 +53,24 @@ export class DispatchRequestService {
   async createInternal(dto: CreateInternalSupplyRequestDto, technicianId: number) {
     const reason = dto.reason.trim();
     if (reason.length < 5) throw new BadRequestException('Explica el motivo de la solicitud');
-    const [technician, product] = await Promise.all([
+    const [technician, product, serviceOrder] = await Promise.all([
       this.ds.manager.findOne(User, { where: { id: technicianId, isActive: true } }),
       this.ds.manager.findOne(Product, { where: { id: dto.productId } }),
+      dto.serviceOrderId
+        ? this.ds.manager.findOne(ServiceOrder, { where: { id: dto.serviceOrderId } })
+        : Promise.resolve(null),
     ]);
     if (!technician) throw new ForbiddenException('Técnico no identificado');
     if (!product) throw new NotFoundException('Producto no encontrado');
+    if (dto.serviceOrderId && !serviceOrder) {
+      throw new NotFoundException('Orden de servicio no encontrada');
+    }
+    if (
+      serviceOrder &&
+      Number(serviceOrder.assignedToTechnicianId) !== Number(technicianId)
+    ) {
+      throw new ForbiddenException('La orden de servicio está asignada a otro técnico');
+    }
     return this.ds.manager.save(
       DispatchRequest,
       this.ds.manager.create(DispatchRequest, {
@@ -68,7 +81,7 @@ export class DispatchRequestService {
         productId: product.id,
         quantity: dto.quantity,
         reason,
-        serviceOrderId: null,
+        serviceOrderId: serviceOrder?.id ?? null,
         serviceOrderItemId: null,
         warrantyClaimId: null,
         originalSerialId: null,

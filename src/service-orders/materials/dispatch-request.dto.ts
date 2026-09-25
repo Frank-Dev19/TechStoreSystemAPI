@@ -14,6 +14,7 @@ import {
 
 export class CreateInternalSupplyRequestDto {
   @IsInt() @Min(1) productId: number;
+  @IsOptional() @IsInt() @Min(1) serviceOrderId?: number;
   @IsNumber({ maxDecimalPlaces: 4 }) @Min(0.0001) quantity: number;
   @IsString() @MaxLength(1000) reason: string;
 }
