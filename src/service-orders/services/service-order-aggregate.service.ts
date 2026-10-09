@@ -1,10 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { ClientContact } from '../../clients/entities/client-contact.entity';
 import { ClientKind } from '../../clients/entities/client-kind.enum';
 import { Client } from '../../clients/entities/client.entity';
 import { User } from '../../users/entities/user.entity';
-import { CreateServiceOrderAggregateDto, CreateServiceOrderItemDto } from '../dto/create-service-order-aggregate.dto';
+import {
+  CreateServiceOrderAggregateDto,
+  CreateServiceOrderItemDto,
+} from '../dto/create-service-order-aggregate.dto';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrder } from '../entities/service-order.entity';
 import {
@@ -33,14 +40,19 @@ export class ServiceOrderAggregateService {
     private readonly intakeNotificationService: ServiceOrderIntakeNotificationService,
   ) {}
 
-  async create(dto: CreateServiceOrderAggregateDto, creatorId: number): Promise<ServiceOrder> {
+  async create(
+    dto: CreateServiceOrderAggregateDto,
+    creatorId: number,
+  ): Promise<ServiceOrder> {
     if (dto.serviceType === ServiceType.WARRANTY_SERVICE) {
       throw new BadRequestException(
         'Las órdenes de garantía deben crearse desde una cobertura vigente',
       );
     }
     if (!dto.items?.length) {
-      throw new BadRequestException('At least one service-order item is required');
+      throw new BadRequestException(
+        'At least one service-order item is required',
+      );
     }
     const serviceOrder = await this.dataSource.transaction(async (manager) =>
       this.createInTransaction(manager, dto, creatorId),
@@ -60,19 +72,36 @@ export class ServiceOrderAggregateService {
   ): Promise<ServiceOrder> {
     const orderRepository = manager.getRepository(ServiceOrder);
     const itemRepository = manager.getRepository(ServiceOrderItem);
-    const creator = await manager.getRepository(User).findOne({ where: { id: creatorId } });
+    const creator = await manager
+      .getRepository(User)
+      .findOne({ where: { id: creatorId } });
     if (!creator || creator.deletedAt) {
-      throw new NotFoundException(`User with id ${creatorId} not found or inactive`);
+      throw new NotFoundException(
+        `User with id ${creatorId} not found or inactive`,
+      );
     }
 
-    await this.workflowService.ensureTechnicianAvailable(dto.assignedToTechnicianId);
+    await this.workflowService.ensureTechnicianAvailable(
+      dto.assignedToTechnicianId,
+    );
     const requestOrigin = dto.requestOrigin ?? RequestOrigin.CLIENT;
-    const client = await this.resolveClient(manager, dto.clientId, requestOrigin);
-    const contact = await this.resolveContact(manager, client, dto.clientContactId);
+    const client = await this.resolveClient(
+      manager,
+      dto.clientId,
+      requestOrigin,
+    );
+    const contact = await this.resolveContact(
+      manager,
+      client,
+      dto.clientContactId,
+    );
     const codes = await this.codeService.allocate(manager, dto.items.length);
     const now = new Date();
     const firstItem = dto.items[0];
-    const isDirectService = [ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(dto.serviceType);
+    const isDirectService = [
+      ServiceType.STANDARD_SERVICE,
+      ServiceType.ASSEMBLY,
+    ].includes(dto.serviceType);
     const technicalStatus = isDirectService
       ? ServiceOrderTechnicalStatus.AUTORIZADA_PARA_EJECUCION
       : ServiceOrderTechnicalStatus.ASIGNADA;
@@ -90,9 +119,10 @@ export class ServiceOrderAggregateService {
       operativeStatus: ServiceOrderOperativeStatus.ABIERTA,
       technicalStatus,
       commercialStatus,
-      economicStatus: dto.serviceType === ServiceType.WARRANTY_SERVICE
-        ? ServiceOrderEconomicStatus.EXONERADO
-        : ServiceOrderEconomicStatus.NO_APLICA,
+      economicStatus:
+        dto.serviceType === ServiceType.WARRANTY_SERVICE
+          ? ServiceOrderEconomicStatus.EXONERADO
+          : ServiceOrderEconomicStatus.NO_APLICA,
       montoComprometidoVigente: 0,
       montoReconciliado: 0,
       receivedAt: now,
@@ -106,7 +136,9 @@ export class ServiceOrderAggregateService {
       accessories: firstItem.accessories ?? null,
       initialIssue: firstItem.initialIssue,
       estimatedRepairHours: firstItem.estimatedRepairHours ?? null,
-      estimatedDeliveryDate: firstItem.estimatedDeliveryDate ? new Date(firstItem.estimatedDeliveryDate) : null,
+      estimatedDeliveryDate: firstItem.estimatedDeliveryDate
+        ? new Date(firstItem.estimatedDeliveryDate)
+        : null,
     });
     this.applyClientSnapshot(order, client, contact, dto);
     const savedOrder = await orderRepository.save(order);
@@ -123,6 +155,7 @@ export class ServiceOrderAggregateService {
         serialNumber: item.serialNumber ?? null,
         serialNumberNormalized: this.normalizeSerial(item.serialNumber),
         accessories: item.accessories ?? null,
+        receivedCondition: item.receivedCondition ?? null,
         initialIssue: item.initialIssue,
         notes: item.notes ?? null,
         priority: item.priority ?? ServiceOrderPriority.LOW,
@@ -130,7 +163,9 @@ export class ServiceOrderAggregateService {
         technicalStatus,
         commercialStatus,
         estimatedRepairHours: item.estimatedRepairHours ?? null,
-        estimatedDeliveryDate: item.estimatedDeliveryDate ? new Date(item.estimatedDeliveryDate) : null,
+        estimatedDeliveryDate: item.estimatedDeliveryDate
+          ? new Date(item.estimatedDeliveryDate)
+          : null,
         reviewStartedAt: null,
         serviceStartedAt: null,
         serviceCompletedAt: null,
@@ -144,16 +179,28 @@ export class ServiceOrderAggregateService {
     );
     const savedItems = await itemRepository.save(items);
     if (isDirectService) {
-      await this.initialCommercialService.createForDirectService(manager, savedOrder, savedItems, dto.items, creatorId);
+      await this.initialCommercialService.createForDirectService(
+        manager,
+        savedOrder,
+        savedItems,
+        dto.items,
+        creatorId,
+      );
     }
-    await this.workflowService.registerInitialAssignment(savedOrder, creatorId, manager);
+    await this.workflowService.registerInitialAssignment(
+      savedOrder,
+      creatorId,
+      manager,
+    );
 
     const reloaded = await orderRepository.findOne({
       where: { id: savedOrder.id },
       relations: ['assignedTechnician', 'client', 'items'],
     });
     if (!reloaded) {
-      throw new NotFoundException(`ServiceOrder with id ${savedOrder.id} not found after creation`);
+      throw new NotFoundException(
+        `ServiceOrder with id ${savedOrder.id} not found after creation`,
+      );
     }
     reloaded.itemProgress = buildServiceOrderItemProgress(reloaded.items ?? []);
     return reloaded;
@@ -165,12 +212,16 @@ export class ServiceOrderAggregateService {
     requestOrigin: RequestOrigin,
   ): Promise<Client | null> {
     if (requestOrigin === RequestOrigin.INTERNAL) return null;
-    if (!clientId) throw new BadRequestException('clientId is required for client-origin service orders');
+    if (!clientId)
+      throw new BadRequestException(
+        'clientId is required for client-origin service orders',
+      );
     const client = await manager.getRepository(Client).findOne({
       where: { id: clientId },
       relations: { documentType: true },
     });
-    if (!client) throw new NotFoundException(`Client with id ${clientId} not found`);
+    if (!client)
+      throw new NotFoundException(`Client with id ${clientId} not found`);
     return client;
   }
 
@@ -182,13 +233,23 @@ export class ServiceOrderAggregateService {
     if (!client || client.kind !== ClientKind.COMPANY) return null;
     const repository = manager.getRepository(ClientContact);
     if (clientContactId) {
-      const contact = await repository.findOne({ where: { id: clientContactId, clientId: client.id } });
-      if (!contact) throw new BadRequestException('clientContactId does not belong to the selected client');
+      const contact = await repository.findOne({
+        where: { id: clientContactId, clientId: client.id },
+      });
+      if (!contact)
+        throw new BadRequestException(
+          'clientContactId does not belong to the selected client',
+        );
       return contact;
     }
     return (
-      (await repository.findOne({ where: { clientId: client.id, isPrimary: true, isActive: true } })) ??
-      (await repository.findOne({ where: { clientId: client.id, isActive: true }, order: { id: 'ASC' } }))
+      (await repository.findOne({
+        where: { clientId: client.id, isPrimary: true, isActive: true },
+      })) ??
+      (await repository.findOne({
+        where: { clientId: client.id, isActive: true },
+        order: { id: 'ASC' },
+      }))
     );
   }
 
@@ -198,21 +259,32 @@ export class ServiceOrderAggregateService {
     contact: ClientContact | null,
     dto: CreateServiceOrderAggregateDto,
   ): void {
-    order.clientSnapshotName = dto.contactName ?? contact?.name ?? client?.name ?? null;
+    order.clientSnapshotName =
+      dto.contactName ?? contact?.name ?? client?.name ?? null;
     order.clientSnapshotDocumentTypeName = client?.documentType?.name ?? null;
     order.clientSnapshotDocumentNumber = client?.documentNumber ?? null;
-    order.clientSnapshotPhone = dto.contactPhone ?? contact?.phone ?? client?.phone ?? null;
-    order.clientSnapshotEmail = dto.contactEmail ?? contact?.email ?? client?.email ?? null;
+    order.clientSnapshotPhone =
+      dto.contactPhone ?? contact?.phone ?? client?.phone ?? null;
+    order.clientSnapshotEmail =
+      dto.contactEmail ?? contact?.email ?? client?.email ?? null;
   }
 
-  private getInitialCommercialStatus(serviceType: ServiceType): ServiceOrderCommercialStatus {
-    return [ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(serviceType)
+  private getInitialCommercialStatus(
+    serviceType: ServiceType,
+  ): ServiceOrderCommercialStatus {
+    return [ServiceType.STANDARD_SERVICE, ServiceType.ASSEMBLY].includes(
+      serviceType,
+    )
       ? ServiceOrderCommercialStatus.AUTORIZADA
       : ServiceOrderCommercialStatus.NO_REQUIERE;
   }
 
-  private resolveEquipmentTypeOther(item: CreateServiceOrderItemDto): string | null {
-    return item.equipmentType === EquipmentType.OTHER ? item.equipmentTypeOther?.trim() ?? null : null;
+  private resolveEquipmentTypeOther(
+    item: CreateServiceOrderItemDto,
+  ): string | null {
+    return item.equipmentType === EquipmentType.OTHER
+      ? (item.equipmentTypeOther?.trim() ?? null)
+      : null;
   }
 
   private normalizeSerial(value: string | undefined): string | null {

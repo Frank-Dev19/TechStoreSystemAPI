@@ -26,7 +26,11 @@ import { RolesGuard } from '../../rbac/guards/roles.guard';
 import { PermissionsGuard } from '../../rbac/guards/permissions.guard';
 import { Roles as RolesDec } from '../../rbac/decorators/roles.decorator';
 import { Permissions } from '../../rbac/decorators/permissions.decorator';
-import { RECEPTIONIST_ROLE_NAMES, SUPERVISOR_ROLE_NAMES, TECHNICIAN_ROLE_NAMES } from '../../common/constants/role-names';
+import {
+  RECEPTIONIST_ROLE_NAMES,
+  SUPERVISOR_ROLE_NAMES,
+  TECHNICIAN_ROLE_NAMES,
+} from '../../common/constants/role-names';
 import { ServiceOrderWorkflowService } from '../services/service-order-workflow.service';
 import { AssignTechnicianDto } from '../dto/assign-technician.dto';
 import { ServiceOrderTechnicalStatus } from '../enums';
@@ -49,10 +53,16 @@ import { ServiceOrderMessageMatrixService } from '../services/service-order-mess
 import { ServiceOrderSummaryEmailService } from '../services/service-order-summary-email.service';
 import { SendServiceOrderSummaryEmailDto } from '../dto/send-service-order-summary-email.dto';
 import { CreateWarrantyIntakeDto } from '../dto/create-warranty-intake.dto';
+import { CreateExternalWarrantyIntakeDto } from '../dto/create-external-warranty-intake.dto';
 import { ServiceOrderWarrantyIntakeService } from '../services/service-order-warranty-intake.service';
 
 @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-@RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+@RolesDec(
+  'admin',
+  ...RECEPTIONIST_ROLE_NAMES,
+  ...SUPERVISOR_ROLE_NAMES,
+  ...TECHNICIAN_ROLE_NAMES,
+)
 @Controller('service-orders')
 export class ServiceOrderController {
   constructor(
@@ -72,7 +82,10 @@ export class ServiceOrderController {
 
   @Permissions('service-order.create')
   @Post()
-  create(@Body() dto: CreateServiceOrderAggregateDto, @CurrentUser() userId?: number) {
+  create(
+    @Body() dto: CreateServiceOrderAggregateDto,
+    @CurrentUser() userId?: number,
+  ) {
     if (!userId) {
       throw new BadRequestException('Usuario autenticado no encontrado');
     }
@@ -84,6 +97,16 @@ export class ServiceOrderController {
   @Post('warranty-intake')
   createWarrantyIntake(@Body() dto: CreateWarrantyIntakeDto, @Req() req: any) {
     return this.warrantyIntakeService.create(dto, req.user);
+  }
+
+  @Permissions('warranties.create-external')
+  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES)
+  @Post('warranty-intake/external')
+  createExternalWarrantyIntake(
+    @Body() dto: CreateExternalWarrantyIntakeDto,
+    @Req() req: any,
+  ) {
+    return this.warrantyIntakeService.createExternal(dto, req.user);
   }
 
   @Permissions('service-order.read')
@@ -116,8 +139,14 @@ export class ServiceOrderController {
 
   @Permissions('service-order.billing-link')
   @Post('backoffice/billing-links')
-  linkSaleToOrders(@Body() dto: LinkSaleToServiceOrdersDto, @CurrentUser() userId?: number) {
-    return this.saleLinkService.linkSaleToServiceOrders(dto, userId ? String(userId) : undefined);
+  linkSaleToOrders(
+    @Body() dto: LinkSaleToServiceOrdersDto,
+    @CurrentUser() userId?: number,
+  ) {
+    return this.saleLinkService.linkSaleToServiceOrders(
+      dto,
+      userId ? String(userId) : undefined,
+    );
   }
 
   @Permissions('service-order.billing-link')
@@ -136,7 +165,9 @@ export class ServiceOrderController {
   @Permissions('service-order.read')
   @RolesDec('admin', ...SUPERVISOR_ROLE_NAMES)
   @Post('notifications/:notificationId/retry')
-  retryFinalNotification(@Param('notificationId', ParseIntPipe) notificationId: number) {
+  retryFinalNotification(
+    @Param('notificationId', ParseIntPipe) notificationId: number,
+  ) {
     return this.messageMatrixService.retryFinalFailure(notificationId);
   }
 
@@ -153,9 +184,15 @@ export class ServiceOrderController {
     @Req() req: any,
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
-    const result = await this.serviceOrderService.generateSingleOrderSummaryPdf(id, req.user);
+    const result = await this.serviceOrderService.generateSingleOrderSummaryPdf(
+      id,
+      req.user,
+    );
     response.setHeader('Content-Type', result.mimeType);
-    response.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.fileName}"`,
+    );
     return new StreamableFile(result.buffer);
   }
 
@@ -172,18 +209,29 @@ export class ServiceOrderController {
   @Permissions('service-order.read')
   @Get(':id/inbox-thread')
   getInboxThread(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    return this.inboxService.getThreadForServiceOrder(id, this.inboxService.buildViewerContext(req.user));
+    return this.inboxService.getThreadForServiceOrder(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+    );
   }
 
   @Permissions('service-order.edit')
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateServiceOrderDto, @Req() req: any) {
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateServiceOrderDto,
+    @Req() req: any,
+  ) {
     return this.serviceOrderService.update(id, dto, req.user);
   }
 
   @Permissions('service-order.deliver')
   @Patch(':id/deliver')
-  deliver(@Param('id', ParseIntPipe) id: number, @CurrentUser() userId?: number, @Req() req?: any) {
+  deliver(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() userId?: number,
+    @Req() req?: any,
+  ) {
     return this.itemDeliveryService.deliverOnlyItem(id, userId, req?.user);
   }
 
@@ -195,7 +243,12 @@ export class ServiceOrderController {
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.itemDeliveryService.deliverItems(id, dto.itemIds, userId, req?.user);
+    return this.itemDeliveryService.deliverItems(
+      id,
+      dto.itemIds,
+      userId,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.item-deliver')
@@ -234,12 +287,20 @@ export class ServiceOrderController {
   changeItemTechnicalStatus(
     @Param('id', ParseIntPipe) id: number,
     @Param('itemId', ParseIntPipe) itemId: number,
-    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus)) status: ServiceOrderTechnicalStatus,
+    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus))
+    status: ServiceOrderTechnicalStatus,
     @Body() dto?: TransitionServiceOrderTechnicalDto,
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.itemWorkflowService.changeTechnicalStatus(id, itemId, status, userId, dto?.reason, req?.user);
+    return this.itemWorkflowService.changeTechnicalStatus(
+      id,
+      itemId,
+      status,
+      userId,
+      dto?.reason,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.item-cancel')
@@ -250,7 +311,12 @@ export class ServiceOrderController {
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.itemCancellationService.requestCancellations(id, dto, userId, req?.user);
+    return this.itemCancellationService.requestCancellations(
+      id,
+      dto,
+      userId,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.item-cancel')
@@ -262,7 +328,13 @@ export class ServiceOrderController {
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.itemCancellationService.requestCancellation(id, itemId, dto, userId, req?.user);
+    return this.itemCancellationService.requestCancellation(
+      id,
+      itemId,
+      dto,
+      userId,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.item-cancel-after-start')
@@ -275,19 +347,33 @@ export class ServiceOrderController {
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.itemCancellationService.resolveCancellation(id, itemId, requestId, dto, userId, req?.user);
+    return this.itemCancellationService.resolveCancellation(
+      id,
+      itemId,
+      requestId,
+      dto,
+      userId,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.transition')
   @Patch(':id/technical/:status')
   changeTechnicalStatus(
     @Param('id', ParseIntPipe) id: number,
-    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus)) status: ServiceOrderTechnicalStatus,
+    @Param('status', new ParseEnumPipe(ServiceOrderTechnicalStatus))
+    status: ServiceOrderTechnicalStatus,
     @Body() dto?: TransitionServiceOrderTechnicalDto,
     @CurrentUser() userId?: number,
     @Req() req?: any,
   ) {
-    return this.workflowService.changeTechnicalStatus(id, status, userId, dto?.reason, req?.user);
+    return this.workflowService.changeTechnicalStatus(
+      id,
+      status,
+      userId,
+      dto?.reason,
+      req?.user,
+    );
   }
 
   @Permissions('service-order.delete')

@@ -21,9 +21,13 @@ import { User } from '../../users/entities/user.entity';
 import { WarrantyClaim } from './warranty-claim.entity';
 import { WarrantyCoverageStatus } from '../enums/warranty-coverage-status.enum';
 import { WarrantySourceType } from '../enums/warranty-source-type.enum';
+import { WarrantyRegistrationOrigin } from '../enums/warranty-registration-origin.enum';
+import { WarrantyResponsibility } from '../enums/warranty-responsibility.enum';
 
 @Entity('warranty_coverages')
-@Index('UQ_warranty_coverage_source_unit', ['sourceType', 'sourceUnitKey'], { unique: true })
+@Index('UQ_warranty_coverage_source_unit', ['sourceType', 'sourceUnitKey'], {
+  unique: true,
+})
 @Index('IDX_warranty_coverage_customer_status', ['customerId', 'status'])
 export class WarrantyCoverage {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
@@ -31,6 +35,22 @@ export class WarrantyCoverage {
 
   @Column({ name: 'source_type', type: 'enum', enum: WarrantySourceType })
   sourceType: WarrantySourceType;
+
+  @Column({
+    name: 'registration_origin',
+    type: 'enum',
+    enum: WarrantyRegistrationOrigin,
+    default: WarrantyRegistrationOrigin.INTERNAL,
+  })
+  registrationOrigin: WarrantyRegistrationOrigin;
+
+  @Column({
+    name: 'responsibility',
+    type: 'enum',
+    enum: WarrantyResponsibility,
+    default: WarrantyResponsibility.STORE,
+  })
+  responsibility: WarrantyResponsibility;
 
   @Column({ name: 'source_unit_key', type: 'varchar', length: 100 })
   sourceUnitKey: string;
@@ -59,14 +79,24 @@ export class WarrantyCoverage {
   @JoinColumn({ name: 'sale_item_id' })
   saleItem: SaleItem | null;
 
-  @Column({ name: 'service_order_id', type: 'bigint', unsigned: true, nullable: true })
+  @Column({
+    name: 'service_order_id',
+    type: 'bigint',
+    unsigned: true,
+    nullable: true,
+  })
   serviceOrderId: number | null;
 
   @ManyToOne(() => ServiceOrder, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'service_order_id' })
   serviceOrder: ServiceOrder | null;
 
-  @Column({ name: 'service_order_item_id', type: 'bigint', unsigned: true, nullable: true })
+  @Column({
+    name: 'service_order_item_id',
+    type: 'bigint',
+    unsigned: true,
+    nullable: true,
+  })
   serviceOrderItemId: number | null;
 
   @ManyToOne(() => ServiceOrderItem, { nullable: true, onDelete: 'RESTRICT' })
@@ -93,8 +123,62 @@ export class WarrantyCoverage {
   @Column({ name: 'source_name_snapshot', type: 'varchar', length: 255 })
   sourceNameSnapshot: string;
 
-  @Column({ name: 'serial_snapshot', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'serial_snapshot',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   serialSnapshot: string | null;
+
+  @Column({
+    name: 'external_document_type',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  externalDocumentType: string | null;
+
+  @Column({
+    name: 'external_document_series',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  externalDocumentSeries: string | null;
+
+  @Column({
+    name: 'external_document_number',
+    type: 'varchar',
+    length: 30,
+    nullable: true,
+  })
+  externalDocumentNumber: string | null;
+
+  @Column({ name: 'external_document_date', type: 'date', nullable: true })
+  externalDocumentDate: string | null;
+
+  @Column({
+    name: 'external_product_code',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
+  externalProductCode: string | null;
+
+  @Column({
+    name: 'external_evidence_reference',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+  })
+  externalEvidenceReference: string | null;
+
+  @Column({ name: 'verified_by', type: 'int', nullable: true })
+  verifiedBy: number | null;
+
+  @Column({ name: 'verified_at', type: 'datetime', nullable: true })
+  verifiedAt: Date | null;
 
   @Column({ name: 'origin_technician_id', type: 'int', nullable: true })
   originTechnicianId: number | null;
@@ -103,7 +187,12 @@ export class WarrantyCoverage {
   @JoinColumn({ name: 'origin_technician_id' })
   originTechnician: User | null;
 
-  @Column({ name: 'origin_technician_name_snapshot', type: 'varchar', length: 150, nullable: true })
+  @Column({
+    name: 'origin_technician_name_snapshot',
+    type: 'varchar',
+    length: 150,
+    nullable: true,
+  })
   originTechnicianNameSnapshot: string | null;
 
   @Column({ name: 'duration_value', type: 'int', unsigned: true })
@@ -121,7 +210,11 @@ export class WarrantyCoverage {
   @Column({ name: 'coverage_amount', type: 'decimal', precision: 10, scale: 2 })
   coverageAmount: number;
 
-  @Column({ type: 'enum', enum: WarrantyCoverageStatus, default: WarrantyCoverageStatus.ACTIVE })
+  @Column({
+    type: 'enum',
+    enum: WarrantyCoverageStatus,
+    default: WarrantyCoverageStatus.ACTIVE,
+  })
   status: WarrantyCoverageStatus;
 
   @Column({ name: 'consumed_at', type: 'datetime', nullable: true })

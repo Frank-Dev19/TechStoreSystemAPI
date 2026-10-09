@@ -403,7 +403,8 @@ export class BootstrapService implements OnModuleInit {
       {
         moduleKey: 'service-order',
         actionKey: 'item-cancel-after-start',
-        description: 'Resolver cancelaciones solicitadas después de iniciar el trabajo',
+        description:
+          'Resolver cancelaciones solicitadas después de iniciar el trabajo',
         sortOrder: 38,
       },
       {
@@ -588,26 +589,115 @@ export class BootstrapService implements OnModuleInit {
 
     // 3) Sincronizar catalogo (modulos y permisos) SIEMPRE
     MODULES.push(
-      { moduleKey: 'app', label: 'Acceso al sistema', sortOrder: 1, icon: 'fas fa-home' },
-      { moduleKey: 'profile', label: 'Perfil propio', sortOrder: 2, icon: 'fas fa-user' },
-      { moduleKey: 'navigation', label: 'Navegacion', sortOrder: 3, icon: 'fas fa-bars' },
-      { moduleKey: 'sales', label: 'Ventas', sortOrder: 50, icon: 'fas fa-cash-register' },
-      { moduleKey: 'cashflow', label: 'Caja', sortOrder: 51, icon: 'fas fa-wallet' },
-      { moduleKey: 'document-series', label: 'Series de comprobantes', sortOrder: 52, icon: 'fas fa-hashtag' },
-      { moduleKey: 'electronic-billing', label: 'Facturacion electronica', sortOrder: 53, icon: 'fas fa-file-invoice' },
-      { moduleKey: 'mail-settings', label: 'Configuracion de correo', sortOrder: 54, icon: 'fas fa-envelope' },
-      { moduleKey: 'warranties', label: 'Garantias internas', sortOrder: 55, icon: 'fas fa-shield-alt' },
-      { moduleKey: 'inventory-kardex', label: 'Kardex', sortOrder: 60, icon: 'fas fa-book' },
-      { moduleKey: 'inventory-products', label: 'Productos de inventario', sortOrder: 61, icon: 'fas fa-box' },
-      { moduleKey: 'inventory-stock', label: 'Stock', sortOrder: 62, icon: 'fas fa-boxes' },
-      { moduleKey: 'inventory-serials', label: 'Seriales', sortOrder: 63, icon: 'fas fa-barcode' },
-      { moduleKey: 'inventory-manage', label: 'Gestion de inventario', sortOrder: 64, icon: 'fas fa-warehouse' },
-      { moduleKey: 'internal-deliveries', label: 'Gestión de despachos', sortOrder: 65, icon: 'fas fa-dolly' },
-      { moduleKey: 'dispatches', label: 'Despachos de almacén', sortOrder: 66, icon: 'fas fa-truck-loading' },
-      { moduleKey: 'pricing', label: 'Precios', sortOrder: 70, icon: 'fas fa-tags' },
+      {
+        moduleKey: 'app',
+        label: 'Acceso al sistema',
+        sortOrder: 1,
+        icon: 'fas fa-home',
+      },
+      {
+        moduleKey: 'profile',
+        label: 'Perfil propio',
+        sortOrder: 2,
+        icon: 'fas fa-user',
+      },
+      {
+        moduleKey: 'navigation',
+        label: 'Navegacion',
+        sortOrder: 3,
+        icon: 'fas fa-bars',
+      },
+      {
+        moduleKey: 'sales',
+        label: 'Ventas',
+        sortOrder: 50,
+        icon: 'fas fa-cash-register',
+      },
+      {
+        moduleKey: 'cashflow',
+        label: 'Caja',
+        sortOrder: 51,
+        icon: 'fas fa-wallet',
+      },
+      {
+        moduleKey: 'document-series',
+        label: 'Series de comprobantes',
+        sortOrder: 52,
+        icon: 'fas fa-hashtag',
+      },
+      {
+        moduleKey: 'electronic-billing',
+        label: 'Facturacion electronica',
+        sortOrder: 53,
+        icon: 'fas fa-file-invoice',
+      },
+      {
+        moduleKey: 'mail-settings',
+        label: 'Configuracion de correo',
+        sortOrder: 54,
+        icon: 'fas fa-envelope',
+      },
+      {
+        moduleKey: 'warranties',
+        label: 'Garantias internas',
+        sortOrder: 55,
+        icon: 'fas fa-shield-alt',
+      },
+      {
+        moduleKey: 'inventory-kardex',
+        label: 'Kardex',
+        sortOrder: 60,
+        icon: 'fas fa-book',
+      },
+      {
+        moduleKey: 'inventory-products',
+        label: 'Productos de inventario',
+        sortOrder: 61,
+        icon: 'fas fa-box',
+      },
+      {
+        moduleKey: 'inventory-stock',
+        label: 'Stock',
+        sortOrder: 62,
+        icon: 'fas fa-boxes',
+      },
+      {
+        moduleKey: 'inventory-serials',
+        label: 'Seriales',
+        sortOrder: 63,
+        icon: 'fas fa-barcode',
+      },
+      {
+        moduleKey: 'inventory-manage',
+        label: 'Gestion de inventario',
+        sortOrder: 64,
+        icon: 'fas fa-warehouse',
+      },
+      {
+        moduleKey: 'internal-deliveries',
+        label: 'Gestión de despachos',
+        sortOrder: 65,
+        icon: 'fas fa-dolly',
+      },
+      {
+        moduleKey: 'dispatches',
+        label: 'Despachos de almacén',
+        sortOrder: 66,
+        icon: 'fas fa-truck-loading',
+      },
+      {
+        moduleKey: 'pricing',
+        label: 'Precios',
+        sortOrder: 70,
+        icon: 'fas fa-tags',
+      },
     );
-    const add = (moduleKey: string, actionKey: string, description: string, sortOrder = 10) =>
-      PERMS.push({ moduleKey, actionKey, description, sortOrder });
+    const add = (
+      moduleKey: string,
+      actionKey: string,
+      description: string,
+      sortOrder = 10,
+    ) => PERMS.push({ moduleKey, actionKey, description, sortOrder });
     add('app', 'home', 'Acceder al inicio');
     add('profile', 'manage-own', 'Ver y editar el perfil propio');
     add('navigation', 'admin', 'Acceder a administracion');
@@ -617,17 +707,32 @@ export class BootstrapService implements OnModuleInit {
     add('navigation', 'suppliers', 'Acceder a proveedores');
     add('navigation', 'sales', 'Acceder a ventas');
     add('navigation', 'inventory-kardex', 'Acceder unicamente al Kardex');
-    add('navigation', 'inventory-manage', 'Acceder a la gestion completa de inventario');
+    add(
+      'navigation',
+      'inventory-manage',
+      'Acceder a la gestion completa de inventario',
+    );
     add('navigation', 'internal-deliveries', 'Acceder a gestión de despachos');
     add('navigation', 'reception', 'Acceder al panel de recepcion');
     add('navigation', 'supervisor', 'Acceder al panel de supervision');
     add('navigation', 'technician', 'Acceder al panel tecnico');
     add('navigation', 'inbox', 'Acceder a mensajeria');
     add('navigation', 'warranties', 'Acceder a garantias');
-    for (const action of ['read', 'simulate', 'create', 'update', 'cancel']) add('sales', action, `${action} ventas`);
-    for (const action of ['read', 'manage', 'reports']) add('cashflow', action, `${action} caja`);
-    for (const action of ['read', 'manage']) add('document-series', action, `${action} series`);
-    for (const action of ['read', 'send', 'download', 'email', 'cancel', 'refund', 'batch-send']) {
+    for (const action of ['read', 'simulate', 'create', 'update', 'cancel'])
+      add('sales', action, `${action} ventas`);
+    for (const action of ['read', 'manage', 'reports'])
+      add('cashflow', action, `${action} caja`);
+    for (const action of ['read', 'manage'])
+      add('document-series', action, `${action} series`);
+    for (const action of [
+      'read',
+      'send',
+      'download',
+      'email',
+      'cancel',
+      'refund',
+      'batch-send',
+    ]) {
       add('electronic-billing', action, `${action} comprobantes electronicos`);
     }
     add('mail-settings', 'read', 'Ver configuracion de correo', 10);
@@ -635,22 +740,58 @@ export class BootstrapService implements OnModuleInit {
     add('mail-settings', 'test', 'Probar configuracion de correo', 30);
     add('warranties', 'read', 'Consultar coberturas y atenciones', 10);
     add('warranties', 'create', 'Registrar una atencion por garantia', 20);
-    add('warranties', 'cancel', 'Cancelar una atencion antes de la revision', 30);
-    add('warranties', 'report', 'Consultar indicadores de garantias por tecnico', 40);
+    add(
+      'warranties',
+      'create-external',
+      'Registrar una garantía de compra externa',
+      25,
+    );
+    add(
+      'warranties',
+      'cancel',
+      'Cancelar una atencion antes de la revision',
+      30,
+    );
+    add(
+      'warranties',
+      'report',
+      'Consultar indicadores de garantias por tecnico',
+      40,
+    );
     add('inventory-kardex', 'read', 'Consultar Kardex');
-    for (const action of ['read', 'manage']) add('inventory-products', action, `${action} productos`);
+    for (const action of ['read', 'manage'])
+      add('inventory-products', action, `${action} productos`);
     add('inventory-stock', 'read', 'Consultar stock');
-    for (const action of ['read', 'manage']) add('inventory-serials', action, `${action} seriales`);
-    for (const action of ['read', 'manage']) add('inventory-manage', action, `${action} inventario`);
+    for (const action of ['read', 'manage'])
+      add('inventory-serials', action, `${action} seriales`);
+    for (const action of ['read', 'manage'])
+      add('inventory-manage', action, `${action} inventario`);
     add('internal-deliveries', 'read', 'Consultar entregas internas', 10);
     add('internal-deliveries', 'create', 'Registrar entregas internas', 20);
     add('dispatches', 'read', 'Consultar solicitudes de despacho', 10);
     add('dispatches', 'fulfill', 'Confirmar salidas de almacén', 20);
+    add(
+      'dispatches',
+      'fulfill-external',
+      'Registrar reemplazos de garantía externos',
+      25,
+    );
     add('dispatches', 'reject', 'Rechazar solicitudes de insumos', 30);
     add('dispatches', 'request-internal', 'Solicitar insumos internos', 40);
-    add('dispatches', 'confirm-replacement', 'Confirmar reemplazos por garantía', 50);
-    add('dispatches', 'read-own', 'Consultar solicitudes de despacho propias', 60);
-    for (const action of ['read', 'manage']) add('pricing', action, `${action} precios`);
+    add(
+      'dispatches',
+      'confirm-replacement',
+      'Confirmar reemplazos por garantía',
+      50,
+    );
+    add(
+      'dispatches',
+      'read-own',
+      'Consultar solicitudes de despacho propias',
+      60,
+    );
+    for (const action of ['read', 'manage'])
+      add('pricing', action, `${action} precios`);
 
     const allCodes = await this.syncCatalog(MODULES, PERMS);
 
@@ -675,9 +816,12 @@ export class BootstrapService implements OnModuleInit {
   // ---------- helpers ----------
 
   private async ensureDefaultOperationalCatalogs() {
-    const createdSeries = await this.documentSeriesService.ensureDefaultSeries(1);
+    const createdSeries =
+      await this.documentSeriesService.ensureDefaultSeries(1);
     if (createdSeries > 0) {
-      this.log.log(`Series de comprobante predeterminadas creadas: ${createdSeries}.`);
+      this.log.log(
+        `Series de comprobante predeterminadas creadas: ${createdSeries}.`,
+      );
     }
 
     const unitResult = await this.catalogsService.ensureDefaultUnit();
@@ -973,9 +1117,13 @@ export class BootstrapService implements OnModuleInit {
       adminRole = this.rolesRepo.create({ name: 'admin', permissions: [] });
     }
 
-    adminRole.permissions = await this.permsRepo.find({ where: { code: In(allCodes) } });
+    adminRole.permissions = await this.permsRepo.find({
+      where: { code: In(allCodes) },
+    });
     await this.rolesRepo.save(adminRole);
-    this.log.log(`~ rol admin sincronizado con ${adminRole.permissions.length} permisos.`);
+    this.log.log(
+      `~ rol admin sincronizado con ${adminRole.permissions.length} permisos.`,
+    );
   }
 
   private async ensureOperationalRolesAndGrants() {
@@ -983,27 +1131,55 @@ export class BootstrapService implements OnModuleInit {
       {
         name: 'recepcionist',
         permissionCodes: [
-          'app.home', 'profile.manage-own', 'navigation.clients',
-          'navigation.document-types', 'navigation.suppliers', 'navigation.sales',
-          'navigation.inventory-manage', 'navigation.internal-deliveries',
-          'navigation.reception', 'navigation.supervisor', 'navigation.inbox',
+          'app.home',
+          'profile.manage-own',
+          'navigation.clients',
+          'navigation.document-types',
+          'navigation.suppliers',
+          'navigation.sales',
+          'navigation.inventory-manage',
+          'navigation.internal-deliveries',
+          'navigation.reception',
+          'navigation.supervisor',
+          'navigation.inbox',
           'navigation.warranties',
-          'document-type.create', 'document-type.read', 'document-type.update',
-          'suppliers.create', 'suppliers.read', 'suppliers.update',
-          'sales.read', 'sales.simulate', 'sales.create', 'sales.update', 'sales.cancel',
-          'cashflow.read', 'cashflow.manage', 'cashflow.reports',
-          'document-series.read', 'document-series.manage',
-          'electronic-billing.read', 'electronic-billing.send',
-          'electronic-billing.download', 'electronic-billing.email',
-          'electronic-billing.cancel', 'electronic-billing.batch-send',
+          'document-type.create',
+          'document-type.read',
+          'document-type.update',
+          'suppliers.create',
+          'suppliers.read',
+          'suppliers.update',
+          'sales.read',
+          'sales.simulate',
+          'sales.create',
+          'sales.update',
+          'sales.cancel',
+          'cashflow.read',
+          'cashflow.manage',
+          'cashflow.reports',
+          'document-series.read',
+          'document-series.manage',
+          'electronic-billing.read',
+          'electronic-billing.send',
+          'electronic-billing.download',
+          'electronic-billing.email',
+          'electronic-billing.cancel',
+          'electronic-billing.batch-send',
           'electronic-billing.refund',
           'inventory-kardex.read',
-          'inventory-products.read', 'inventory-products.manage',
+          'inventory-products.read',
+          'inventory-products.manage',
           'inventory-stock.read',
-          'inventory-serials.read', 'inventory-serials.manage',
-          'inventory-manage.read', 'inventory-manage.manage',
-          'internal-deliveries.read', 'internal-deliveries.create',
-          'dispatches.read', 'dispatches.fulfill', 'dispatches.reject',
+          'inventory-serials.read',
+          'inventory-serials.manage',
+          'inventory-manage.read',
+          'inventory-manage.manage',
+          'internal-deliveries.read',
+          'internal-deliveries.create',
+          'dispatches.read',
+          'dispatches.fulfill',
+          'dispatches.fulfill-external',
+          'dispatches.reject',
           'pricing.read',
           'service-order.create',
           'service-order.read',
@@ -1037,14 +1213,19 @@ export class BootstrapService implements OnModuleInit {
           'service-order-payment.read',
           'warranties.read',
           'warranties.create',
+          'warranties.create-external',
           'warranties.cancel',
         ],
       },
       {
         name: 'technician',
         permissionCodes: [
-          'app.home', 'profile.manage-own', 'navigation.inventory-kardex',
-          'navigation.technician', 'navigation.inbox', 'inventory-kardex.read',
+          'app.home',
+          'profile.manage-own',
+          'navigation.inventory-kardex',
+          'navigation.technician',
+          'navigation.inbox',
+          'inventory-kardex.read',
           'inventory-products.read',
           'service-order.read',
           'service-order.update',
@@ -1106,14 +1287,18 @@ export class BootstrapService implements OnModuleInit {
       const seededPermissions = await this.permsRepo.find({
         where: { code: In(seed.permissionCodes) },
       });
-      role.permissions = seed.name === 'supervisor'
-        ? [
-            ...(role.permissions ?? []),
-            ...seededPermissions.filter(
-              (permission) => !(role.permissions ?? []).some((current) => current.code === permission.code),
-            ),
-          ]
-        : seededPermissions;
+      role.permissions =
+        seed.name === 'supervisor'
+          ? [
+              ...(role.permissions ?? []),
+              ...seededPermissions.filter(
+                (permission) =>
+                  !(role.permissions ?? []).some(
+                    (current) => current.code === permission.code,
+                  ),
+              ),
+            ]
+          : seededPermissions;
       await this.rolesRepo.save(role);
     }
   }
@@ -1184,10 +1369,7 @@ export class BootstrapService implements OnModuleInit {
 
     for (const seed of userSeeds) {
       const existingUser = await this.usersRepo.findOne({
-        where: [
-          { documentNumber: seed.documentNumber },
-          { email: seed.email },
-        ],
+        where: [{ documentNumber: seed.documentNumber }, { email: seed.email }],
         withDeleted: true,
       });
 

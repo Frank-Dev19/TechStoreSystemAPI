@@ -1,14 +1,22 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { ADMIN_ROLE_NAMES, hasRoleName } from '../../common/constants/role-names';
+import {
+  ADMIN_ROLE_NAMES,
+  hasRoleName,
+} from '../../common/constants/role-names';
 import { JwtPayload } from '../../common/utils/jwt-payload.type';
 import { WarrantiesService } from '../../warranties/warranties.service';
 import { WarrantySourceType } from '../../warranties/enums/warranty-source-type.enum';
 import { resolveWarrantyTechnician } from '../../warranties/warranty-policy';
 import { CreateServiceOrderAggregateDto } from '../dto/create-service-order-aggregate.dto';
 import { CreateWarrantyIntakeDto } from '../dto/create-warranty-intake.dto';
+import { CreateExternalWarrantyIntakeDto } from '../dto/create-external-warranty-intake.dto';
 import { ServiceOrder } from '../entities/service-order.entity';
-import { RequestOrigin, ServiceOrderEconomicStatus, ServiceType } from '../enums';
+import {
+  RequestOrigin,
+  ServiceOrderEconomicStatus,
+  ServiceType,
+} from '../enums';
 import { ServiceOrderAggregateService } from './service-order-aggregate.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
 
@@ -23,9 +31,13 @@ export class ServiceOrderWarrantyIntakeService {
     private readonly workflowService: ServiceOrderWorkflowService,
   ) {}
 
-  async create(dto: CreateWarrantyIntakeDto, viewer: WarrantyIntakeViewer): Promise<ServiceOrder> {
+  async create(
+    dto: CreateWarrantyIntakeDto,
+    viewer: WarrantyIntakeViewer,
+  ): Promise<ServiceOrder> {
     const actorId = Number(viewer.sub);
-    if (!actorId) throw new BadRequestException('Usuario autenticado no encontrado');
+    if (!actorId)
+      throw new BadRequestException('Usuario autenticado no encontrado');
 
     const order = await this.dataSource.transaction(async (manager) => {
       const { coverage, claim } = await this.warrantiesService.reserveCoverage(
@@ -34,9 +46,13 @@ export class ServiceOrderWarrantyIntakeService {
         dto.reportedIssue,
         actorId,
       );
-      const suggestion = coverage.sourceType === WarrantySourceType.PRODUCT
-        ? await this.workflowService.getAssignmentSuggestion(ServiceType.WARRANTY_SERVICE, manager)
-        : null;
+      const suggestion =
+        coverage.sourceType === WarrantySourceType.PRODUCT
+          ? await this.workflowService.getAssignmentSuggestion(
+              ServiceType.WARRANTY_SERVICE,
+              manager,
+            )
+          : null;
       const assignment = resolveWarrantyTechnician({
         sourceType: coverage.sourceType,
         originTechnicianId: coverage.originTechnicianId,
@@ -49,7 +65,9 @@ export class ServiceOrderWarrantyIntakeService {
       const sourceItem = coverage.serviceOrderItem;
       const equipmentType = sourceItem?.equipmentType ?? dto.equipmentType;
       if (!equipmentType) {
-        throw new BadRequestException('Debes indicar el tipo de equipo para la garantía del producto');
+        throw new BadRequestException(
+          'Debes indicar el tipo de equipo para la garantía del producto',
+        );
       }
 
       const aggregateDto: CreateServiceOrderAggregateDto = {
@@ -58,25 +76,44 @@ export class ServiceOrderWarrantyIntakeService {
         assignedToTechnicianId: assignment.technicianId,
         serviceType: ServiceType.WARRANTY_SERVICE,
         notes: dto.notes,
-        items: [{
-          equipmentType,
-          equipmentTypeOther: sourceItem?.equipmentTypeOther ?? dto.equipmentTypeOther,
-          brand: sourceItem?.brand ?? dto.brand ?? coverage.product?.brand ?? undefined,
-          model: sourceItem?.model ?? dto.model ?? coverage.sourceNameSnapshot,
-          serialNumber: sourceItem?.serialNumber ?? dto.serialNumber ?? coverage.serialSnapshot ?? undefined,
-          accessories: sourceItem?.accessories ?? dto.accessories,
-          initialIssue: dto.reportedIssue,
-          priority: dto.priority,
-          notes: dto.notes,
-          warrantySourceItemId: coverage.serviceOrderItemId ?? undefined,
-        }],
+        items: [
+          {
+            equipmentType,
+            equipmentTypeOther:
+              sourceItem?.equipmentTypeOther ?? dto.equipmentTypeOther,
+            brand:
+              sourceItem?.brand ??
+              dto.brand ??
+              coverage.product?.brand ??
+              undefined,
+            model:
+              sourceItem?.model ?? dto.model ?? coverage.sourceNameSnapshot,
+            serialNumber:
+              sourceItem?.serialNumber ??
+              dto.serialNumber ??
+              coverage.serialSnapshot ??
+              undefined,
+            accessories: sourceItem?.accessories ?? dto.accessories,
+            initialIssue: dto.reportedIssue,
+            priority: dto.priority,
+            notes: dto.notes,
+            warrantySourceItemId: coverage.serviceOrderItemId ?? undefined,
+          },
+        ],
       };
-      const created = await this.aggregateService.createInTransaction(manager, aggregateDto, actorId);
+      const created = await this.aggregateService.createInTransaction(
+        manager,
+        aggregateDto,
+        actorId,
+      );
       created.warrantyClaimId = claim.id;
       created.economicStatus = ServiceOrderEconomicStatus.EXONERADO;
       await manager.getRepository(ServiceOrder).save(created);
       const createdItemId = created.items?.[0]?.id;
-      if (!createdItemId) throw new BadRequestException('No se pudo crear el equipo de la garantía');
+      if (!createdItemId)
+        throw new BadRequestException(
+          'No se pudo crear el equipo de la garantía',
+        );
       await this.warrantiesService.linkClaimToOrder(
         manager,
         claim.id,
@@ -84,6 +121,90 @@ export class ServiceOrderWarrantyIntakeService {
         createdItemId,
         assignment.technicianId,
         assignment.overridden ? dto.technicianOverrideReason : undefined,
+      );
+      return created;
+    });
+
+    await this.aggregateService.notifyCreated(order);
+    return order;
+  }
+
+  async createExternal(
+    dto: CreateExternalWarrantyIntakeDto,
+    viewer: WarrantyIntakeViewer,
+  ): Promise<ServiceOrder> {
+    const actorId = Number(viewer.sub);
+    if (!actorId)
+      throw new BadRequestException('Usuario autenticado no encontrado');
+
+    const order = await this.dataSource.transaction(async (manager) => {
+      const coverage =
+        await this.warrantiesService.createExternalProductCoverage(manager, {
+          companyId: dto.companyId,
+          customerId: dto.clientId,
+          documentType: dto.externalDocumentType,
+          documentSeries: dto.externalDocumentSeries,
+          documentNumber: dto.externalDocumentNumber,
+          documentDate: dto.externalDocumentDate,
+          productCode: dto.externalProductCode,
+          productDescription: dto.productDescription,
+          serialNumber: dto.serialNumber,
+          evidenceReference: dto.externalEvidenceReference,
+          responsibility: dto.responsibility,
+          durationValue: dto.durationValue,
+          durationUnit: dto.durationUnit,
+          coverageAmount: dto.coverageAmount,
+          actorId,
+        });
+      const { claim } = await this.warrantiesService.reserveCoverage(
+        manager,
+        coverage.id,
+        dto.reportedIssue,
+        actorId,
+      );
+      const aggregateDto: CreateServiceOrderAggregateDto = {
+        requestOrigin: RequestOrigin.CLIENT,
+        clientId: dto.clientId,
+        assignedToTechnicianId: dto.assignedToTechnicianId,
+        serviceType: ServiceType.WARRANTY_SERVICE,
+        contactPhone: dto.contactPhone,
+        contactEmail: dto.contactEmail,
+        notes: dto.notes,
+        items: [
+          {
+            equipmentType: dto.equipmentType,
+            equipmentTypeOther: dto.equipmentTypeOther,
+            brand: dto.brand,
+            model: dto.model ?? dto.productDescription,
+            serialNumber: dto.serialNumber,
+            accessories: dto.accessories,
+            receivedCondition: dto.receivedCondition,
+            initialIssue: dto.reportedIssue,
+            priority: dto.priority,
+            estimatedDeliveryDate: dto.estimatedDeliveryDate,
+            notes: dto.notes,
+          },
+        ],
+      };
+      const created = await this.aggregateService.createInTransaction(
+        manager,
+        aggregateDto,
+        actorId,
+      );
+      created.warrantyClaimId = claim.id;
+      created.economicStatus = ServiceOrderEconomicStatus.EXONERADO;
+      await manager.getRepository(ServiceOrder).save(created);
+      const createdItemId = created.items?.[0]?.id;
+      if (!createdItemId)
+        throw new BadRequestException(
+          'No se pudo crear el equipo de la garantía',
+        );
+      await this.warrantiesService.linkClaimToOrder(
+        manager,
+        claim.id,
+        created.id,
+        createdItemId,
+        dto.assignedToTechnicianId,
       );
       return created;
     });

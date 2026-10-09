@@ -1,6 +1,12 @@
-import { ServiceOrderEconomicStatus, ServiceType, EquipmentType } from '../enums';
+import {
+  ServiceOrderEconomicStatus,
+  ServiceType,
+  EquipmentType,
+} from '../enums';
 import { WarrantySourceType } from '../../warranties/enums/warranty-source-type.enum';
 import { ServiceOrderWarrantyIntakeService } from './service-order-warranty-intake.service';
+import { WarrantyResponsibility } from '../../warranties/enums/warranty-responsibility.enum';
+import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
 
 describe('ServiceOrderWarrantyIntakeService', () => {
   const manager = {
@@ -10,6 +16,7 @@ describe('ServiceOrderWarrantyIntakeService', () => {
     transaction: jest.fn(async (callback) => callback(manager)),
   } as any;
   const warrantiesService = {
+    createExternalProductCoverage: jest.fn(),
     reserveCoverage: jest.fn(),
     linkClaimToOrder: jest.fn(),
   } as any;
@@ -74,7 +81,12 @@ describe('ServiceOrderWarrantyIntakeService', () => {
       5,
     );
     expect(warrantiesService.linkClaimToOrder).toHaveBeenCalledWith(
-      manager, 40, 80, 801, 12, undefined,
+      manager,
+      40,
+      80,
+      801,
+      12,
+      undefined,
     );
     expect(result.economicStatus).toBe(ServiceOrderEconomicStatus.EXONERADO);
     expect(aggregateService.notifyCreated).toHaveBeenCalledWith(result);
@@ -94,7 +106,9 @@ describe('ServiceOrderWarrantyIntakeService', () => {
         serviceOrderItem: null,
       },
     });
-    workflowService.getAssignmentSuggestion.mockResolvedValue({ suggestedTechnicianId: 16 });
+    workflowService.getAssignmentSuggestion.mockResolvedValue({
+      suggestedTechnicianId: 16,
+    });
 
     await service.create(
       {
@@ -115,5 +129,56 @@ describe('ServiceOrderWarrantyIntakeService', () => {
       expect.objectContaining({ assignedToTechnicianId: 16 }),
       5,
     );
+  });
+
+  it('crea cobertura externa y orden de garantía en la misma transacción', async () => {
+    warrantiesService.createExternalProductCoverage.mockResolvedValue({
+      id: 70,
+    });
+    warrantiesService.reserveCoverage.mockResolvedValue({
+      coverage: { id: 70 },
+      claim: { id: 71 },
+    });
+
+    const result = await service.createExternal(
+      {
+        companyId: 1,
+        clientId: 4,
+        assignedToTechnicianId: 16,
+        externalDocumentType: 'BOLETA',
+        externalDocumentSeries: 'B001',
+        externalDocumentNumber: '100',
+        externalDocumentDate: '2026-09-30',
+        productDescription: 'Mouse Logitech',
+        responsibility: WarrantyResponsibility.STORE,
+        durationValue: 30,
+        durationUnit: WarrantyDurationUnit.DAY,
+        coverageAmount: 50,
+        equipmentType: EquipmentType.OTHER,
+        reportedIssue: 'No funciona el clic derecho',
+      },
+      { sub: 5, roles: [{ id: 2, name: 'recepcionist' }] },
+    );
+
+    expect(
+      warrantiesService.createExternalProductCoverage,
+    ).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({ documentSeries: 'B001', actorId: 5 }),
+    );
+    expect(warrantiesService.reserveCoverage).toHaveBeenCalledWith(
+      manager,
+      70,
+      'No funciona el clic derecho',
+      5,
+    );
+    expect(warrantiesService.linkClaimToOrder).toHaveBeenCalledWith(
+      manager,
+      71,
+      80,
+      801,
+      16,
+    );
+    expect(result.economicStatus).toBe(ServiceOrderEconomicStatus.EXONERADO);
   });
 });

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   Brackets,
@@ -28,6 +29,7 @@ import {
   MaterialDeliveryLine,
 } from '../service-orders/materials/material.entity';
 import {
+  DispatchFulfillmentSource,
   DispatchRequestStatus,
   DispatchRequestType,
 } from '../service-orders/materials/dispatch-request.policy';
@@ -56,6 +58,8 @@ import { WarrantyClaimStatus } from './enums/warranty-claim-status.enum';
 import { WarrantyCoverageStatus } from './enums/warranty-coverage-status.enum';
 import { WarrantyMovementType } from './enums/warranty-movement-type.enum';
 import { WarrantySourceType } from './enums/warranty-source-type.enum';
+import { WarrantyRegistrationOrigin } from './enums/warranty-registration-origin.enum';
+import { WarrantyResponsibility } from './enums/warranty-responsibility.enum';
 import {
   DEFAULT_SERVICE_WARRANTY_DURATION,
   WARRANTY_COVERAGE_AMOUNT,
@@ -78,6 +82,7 @@ type CoverageGroupRaw = {
   sourceType: WarrantySourceType;
   saleId: string | number | null;
   serviceOrderId: string | number | null;
+  externalCoverageId: string | number | null;
   latestCreatedAt: Date | string;
   unitCount: string | number;
 };
@@ -141,7 +146,10 @@ export class WarrantiesService {
       const serialQueue = item.materialSources
         ? item.materialSources
             .filter((source) => source.serialId != null)
-            .map((source) => ({ id: Number(source.serialId), serialCode: source.serialCode }))
+            .map((source) => ({
+              id: Number(source.serialId),
+              serialCode: source.serialCode,
+            }))
         : (serialsByProduct.get(Number(product.id)) ?? []);
 
       for (let unit = 1; unit <= quantity; unit += 1) {
@@ -281,6 +289,109 @@ export class WarrantiesService {
       if (coverage) issued.push(coverage);
     }
     return issued;
+  }
+
+  async createExternalProductCoverage(
+    manager: EntityManager,
+    input: {
+      companyId: number;
+      customerId: number;
+      documentType: string;
+      documentSeries: string;
+      documentNumber: string;
+      documentDate: string;
+      productCode?: string;
+      productDescription: string;
+      serialNumber?: string;
+      evidenceReference?: string;
+      responsibility: WarrantyResponsibility;
+      durationValue: number;
+      durationUnit: WarrantyDurationUnit;
+      coverageAmount: number;
+      actorId: number;
+      actorName?: string | null;
+    },
+  ): Promise<WarrantyCoverage> {
+    const normalize = (value: string) => value.trim().toUpperCase();
+    const documentType = normalize(input.documentType);
+    const documentSeries = normalize(input.documentSeries);
+    const documentNumber = normalize(input.documentNumber);
+    const serialNumber = input.serialNumber?.trim().toUpperCase() || null;
+    const externalIdentity = [
+      'external',
+      input.companyId,
+      documentType,
+      documentSeries,
+      documentNumber,
+      serialNumber || normalize(input.productDescription),
+    ].join(':');
+    const sourceUnitKey = `external:${createHash('sha256').update(externalIdentity).digest('hex')}`;
+    const repository = manager.getRepository(WarrantyCoverage);
+    const existing = await repository.findOne({
+      where: { sourceType: WarrantySourceType.PRODUCT, sourceUnitKey },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'El comprobante y la serie ya tienen una cobertura registrada',
+      );
+    }
+    const startsAt = new Date(`${input.documentDate}T00:00:00-05:00`);
+    const coverage = await repository.save(
+      repository.create({
+        sourceType: WarrantySourceType.PRODUCT,
+        sourceUnitKey,
+        registrationOrigin: WarrantyRegistrationOrigin.EXTERNAL,
+        responsibility: input.responsibility,
+        companyId: input.companyId,
+        customerId: input.customerId,
+        saleId: null,
+        saleItemId: null,
+        serviceOrderId: null,
+        serviceOrderItemId: null,
+        productId: null,
+        serialId: null,
+        sourceCodeSnapshot:
+          input.productCode?.trim() || `${documentSeries}-${documentNumber}`,
+        sourceNameSnapshot: input.productDescription.trim(),
+        serialSnapshot: serialNumber,
+        externalDocumentType: documentType,
+        externalDocumentSeries: documentSeries,
+        externalDocumentNumber: documentNumber,
+        externalDocumentDate: input.documentDate,
+        externalProductCode: input.productCode?.trim() || null,
+        externalEvidenceReference: input.evidenceReference?.trim() || null,
+        verifiedBy: input.actorId,
+        verifiedAt: new Date(),
+        originTechnicianId: null,
+        originTechnicianNameSnapshot: null,
+        durationValue: input.durationValue,
+        durationUnit: input.durationUnit,
+        startsAt,
+        expiresAt: addWarrantyDuration(
+          startsAt,
+          input.durationValue,
+          input.durationUnit,
+        ),
+        coverageAmount: input.coverageAmount,
+        status: WarrantyCoverageStatus.ACTIVE,
+        consumedAt: null,
+        revokedAt: null,
+      }),
+    );
+    await this.recordMovement(
+      manager,
+      coverage,
+      WarrantyMovementType.ISSUED,
+      input.actorId,
+      'Cobertura externa verificada',
+      null,
+      {
+        registrationOrigin: WarrantyRegistrationOrigin.EXTERNAL,
+        document: `${documentType} ${documentSeries}-${documentNumber}`,
+      },
+      input.actorName,
+    );
+    return coverage;
   }
 
   async reserveCoverage(
@@ -479,9 +590,12 @@ export class WarrantiesService {
 
     if (
       diagnosis.outcome === ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES &&
-      diagnosis.warrantyResolutionType === WarrantyResolutionType.FACTORY_REPLACEMENT
+      diagnosis.warrantyResolutionType ===
+        WarrantyResolutionType.FACTORY_REPLACEMENT
     ) {
-      if (!coverage.productId) {
+      const externalReplacement =
+        coverage.registrationOrigin === WarrantyRegistrationOrigin.EXTERNAL;
+      if (!externalReplacement && !coverage.productId) {
         throw new BadRequestException(
           'La cobertura no identifica un producto reemplazable',
         );
@@ -505,14 +619,27 @@ export class WarrantiesService {
             technicianId: replacementTechnicianId,
             requestedBy: replacementTechnicianId,
             productId: coverage.productId,
+            fulfillmentSource: externalReplacement
+              ? DispatchFulfillmentSource.EXTERNAL
+              : DispatchFulfillmentSource.INTERNAL,
+            requestedProductNameSnapshot: coverage.sourceNameSnapshot,
+            requestedProductCodeSnapshot: coverage.sourceCodeSnapshot,
             quantity: 1,
             reason: diagnosis.details || diagnosis.summary,
             serviceOrderId,
             serviceOrderItemId: claim.serviceOrderItemId,
             warrantyClaimId: claim.id,
             originalSerialId: coverage.serialId,
+            originalSerialSnapshot: coverage.serialSnapshot,
             originalUnitCondition: 'UNDER_REVIEW',
             deliveryId: null,
+            replacementProductName: null,
+            replacementProductCode: null,
+            replacementBrand: null,
+            replacementModel: null,
+            replacementSerialCode: null,
+            externalReference: null,
+            externalFulfilledAt: null,
             resolvedBy: null,
             resolutionNote: null,
             deliveredAt: null,
@@ -522,7 +649,9 @@ export class WarrantiesService {
         );
       }
       if (coverage.serialId) {
-        const serial = await manager.findOneBy(Serial, { id: coverage.serialId });
+        const serial = await manager.findOneBy(Serial, {
+          id: coverage.serialId,
+        });
         if (serial && serial.condition !== 'UNDER_REVIEW') {
           await manager.save(
             SerialConditionEvent,
@@ -583,7 +712,8 @@ export class WarrantiesService {
       where: { id: claimId },
       lock: { mode: 'pessimistic_write' },
     });
-    if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+    if (!claim)
+      throw new NotFoundException('Reclamo de garantía no encontrado');
     if (claim.status !== WarrantyClaimStatus.WAITING_REPLACEMENT) {
       throw new BadRequestException('El reclamo no espera un reemplazo');
     }
@@ -601,7 +731,8 @@ export class WarrantiesService {
       where: { id: claimId },
       lock: { mode: 'pessimistic_write' },
     });
-    if (!claim) throw new NotFoundException('Reclamo de garantía no encontrado');
+    if (!claim)
+      throw new NotFoundException('Reclamo de garantía no encontrado');
     if (claim.status === WarrantyClaimStatus.RESOLVED_REPLACED) return;
     if (claim.status !== WarrantyClaimStatus.REPLACEMENT_DELIVERED) {
       throw new BadRequestException('El reemplazo todavía no fue entregado');
@@ -612,7 +743,9 @@ export class WarrantiesService {
     });
     if (!coverage) throw new NotFoundException('Cobertura no encontrada');
     if (coverage.status !== WarrantyCoverageStatus.RESERVED) {
-      throw new BadRequestException(`La cobertura está en estado ${coverage.status}`);
+      throw new BadRequestException(
+        `La cobertura está en estado ${coverage.status}`,
+      );
     }
     const now = new Date();
     coverage.status = WarrantyCoverageStatus.CONSUMED;
@@ -642,7 +775,11 @@ export class WarrantiesService {
       where: { serviceOrderId },
       lock: { mode: 'pessimistic_write' },
     });
-    if (!claim || (claim.serviceOrderItemId && Number(claim.serviceOrderItemId) !== serviceOrderItemId)) {
+    if (
+      !claim ||
+      (claim.serviceOrderItemId &&
+        Number(claim.serviceOrderItemId) !== serviceOrderItemId)
+    ) {
       return;
     }
     if (
@@ -670,7 +807,9 @@ export class WarrantiesService {
         'El reemplazo de garantía no está disponible para confirmación',
       );
     }
-    const confirmedBy = Number(actorId ?? claim.attendingTechnicianId ?? request.technicianId);
+    const confirmedBy = Number(
+      actorId ?? claim.attendingTechnicianId ?? request.technicianId,
+    );
     await this.confirmReplacement(manager, claim.id, confirmedBy);
     request.status = DispatchRequestStatus.CONFIRMED;
     request.confirmedAt = request.confirmedAt ?? new Date();
@@ -791,11 +930,18 @@ export class WarrantiesService {
       .select('coverage.sourceType', 'sourceType')
       .addSelect('coverage.saleId', 'saleId')
       .addSelect('coverage.serviceOrderId', 'serviceOrderId')
+      .addSelect(
+        "CASE WHEN coverage.registrationOrigin = 'EXTERNAL' THEN coverage.id ELSE NULL END",
+        'externalCoverageId',
+      )
       .addSelect('MAX(coverage.createdAt)', 'latestCreatedAt')
       .addSelect('COUNT(coverage.id)', 'unitCount')
       .groupBy('coverage.sourceType')
       .addGroupBy('coverage.saleId')
       .addGroupBy('coverage.serviceOrderId')
+      .addGroupBy(
+        "CASE WHEN coverage.registrationOrigin = 'EXTERNAL' THEN coverage.id ELSE NULL END",
+      )
       .orderBy('latestCreatedAt', 'DESC')
       .getRawMany<CoverageGroupRaw>();
 
@@ -815,13 +961,21 @@ export class WarrantiesService {
         new Brackets((where) => {
           selectedGroups.forEach((group, index) => {
             if (group.sourceType === WarrantySourceType.PRODUCT) {
-              where.orWhere(
-                `(coverage.sourceType = :groupType${index} AND coverage.saleId = :groupSaleId${index})`,
-                {
-                  [`groupType${index}`]: group.sourceType,
-                  [`groupSaleId${index}`]: Number(group.saleId),
-                },
-              );
+              if (group.externalCoverageId != null) {
+                where.orWhere(`coverage.id = :externalCoverageId${index}`, {
+                  [`externalCoverageId${index}`]: Number(
+                    group.externalCoverageId,
+                  ),
+                });
+              } else {
+                where.orWhere(
+                  `(coverage.sourceType = :groupType${index} AND coverage.saleId = :groupSaleId${index})`,
+                  {
+                    [`groupType${index}`]: group.sourceType,
+                    [`groupSaleId${index}`]: Number(group.saleId),
+                  },
+                );
+              }
             } else {
               where.orWhere(
                 `(coverage.sourceType = :groupType${index} AND coverage.serviceOrderId = :groupOrderId${index})`,
@@ -914,10 +1068,22 @@ export class WarrantiesService {
 
     const rows = await this.claimRepository.manager
       .createQueryBuilder(DispatchRequest, 'request')
-      .leftJoin(MaterialDelivery, 'delivery', 'delivery.id = request.deliveryId')
+      .leftJoin(
+        MaterialDelivery,
+        'delivery',
+        'delivery.id = request.deliveryId',
+      )
       .leftJoin(MaterialDeliveryLine, 'line', 'line.deliveryId = delivery.id')
-      .leftJoin(Product, 'replacementProduct', 'replacementProduct.id = line.productId')
-      .leftJoin(Serial, 'originalSerial', 'originalSerial.id = request.originalSerialId')
+      .leftJoin(
+        Product,
+        'replacementProduct',
+        'replacementProduct.id = line.productId',
+      )
+      .leftJoin(
+        Serial,
+        'originalSerial',
+        'originalSerial.id = request.originalSerialId',
+      )
       .leftJoin(User, 'resolvedBy', 'resolvedBy.id = request.resolvedBy')
       .select([
         'request.id AS requestId',
@@ -929,7 +1095,13 @@ export class WarrantiesService {
         'request.deliveredAt AS deliveredAt',
         'request.confirmedAt AS confirmedAt',
         'request.originalSerialId AS originalSerialId',
+        'request.originalSerialSnapshot AS originalSerialSnapshot',
         'request.originalUnitCondition AS originalUnitCondition',
+        'request.fulfillmentSource AS fulfillmentSource',
+        'request.replacementProductName AS externalReplacementProductName',
+        'request.replacementProductCode AS externalReplacementProductCode',
+        'request.replacementSerialCode AS externalReplacementSerialCode',
+        'request.externalReference AS externalReference',
         'originalSerial.serialCode AS originalSerialCode',
         'originalSerial.condition AS originalSerialCondition',
         'delivery.id AS deliveryId',
@@ -960,11 +1132,17 @@ export class WarrantiesService {
           requestedAt: row.requestedAt,
           deliveredAt: row.deliveredAt,
           confirmedAt: row.confirmedAt,
-          originalSerialId: row.originalSerialId ? Number(row.originalSerialId) : null,
-          originalSerialCode: row.originalSerialCode ?? null,
-          originalSerialCondition: row.originalSerialCondition ?? row.originalUnitCondition ?? null,
+          originalSerialId: row.originalSerialId
+            ? Number(row.originalSerialId)
+            : null,
+          originalSerialCode:
+            row.originalSerialCode ?? row.originalSerialSnapshot ?? null,
+          originalSerialCondition:
+            row.originalSerialCondition ?? row.originalUnitCondition ?? null,
           deliveryId: row.deliveryId ? Number(row.deliveryId) : null,
-          deliveryCode: row.deliveryId ? `DP-${row.deliveryId}` : null,
+          deliveryCode: row.deliveryId
+            ? `DP-${row.deliveryId}`
+            : (row.externalReference ?? null),
           resolvedBy: row.resolvedById
             ? { id: Number(row.resolvedById), name: row.resolvedByName }
             : null,
@@ -978,14 +1156,31 @@ export class WarrantiesService {
           productId: Number(row.replacementProductId),
           productName: row.replacementProductName,
           productSku: row.replacementProductSku,
-          serialId: row.replacementSerialId ? Number(row.replacementSerialId) : null,
+          serialId: row.replacementSerialId
+            ? Number(row.replacementSerialId)
+            : null,
           serialCode: row.replacementSerialCode ?? null,
           quantity: Number(row.replacementQuantity),
+        });
+      } else if (
+        row.externalReplacementProductName &&
+        replacement.lines.length === 0
+      ) {
+        replacement.lines.push({
+          id: -Number(row.requestId),
+          productId: null,
+          productName: row.externalReplacementProductName,
+          productSku: row.externalReplacementProductCode ?? null,
+          serialId: null,
+          serialCode: row.externalReplacementSerialCode ?? null,
+          quantity: 1,
         });
       }
     }
     return claims.map((claim) =>
-      Object.assign(claim, { replacement: byClaim.get(Number(claim.id)) ?? null }),
+      Object.assign(claim, {
+        replacement: byClaim.get(Number(claim.id)) ?? null,
+      }),
     );
   }
 
@@ -1045,7 +1240,9 @@ export class WarrantiesService {
     const groupCoverages = coverages.filter((coverage) =>
       group.sourceType === WarrantySourceType.PRODUCT
         ? coverage.sourceType === group.sourceType &&
-          Number(coverage.saleId) === saleId
+          (group.externalCoverageId != null
+            ? Number(coverage.id) === Number(group.externalCoverageId)
+            : Number(coverage.saleId) === saleId)
         : coverage.sourceType === group.sourceType &&
           Number(coverage.serviceOrderId) === serviceOrderId,
     );
@@ -1079,7 +1276,9 @@ export class WarrantiesService {
     return {
       key:
         group.sourceType === WarrantySourceType.PRODUCT
-          ? `sale:${saleId}`
+          ? group.externalCoverageId != null
+            ? `external:${group.externalCoverageId}`
+            : `sale:${saleId}`
           : `service:${serviceOrderId}`,
       sourceType: group.sourceType,
       referenceCode:
@@ -1101,7 +1300,9 @@ export class WarrantiesService {
     for (const row of rows) {
       const key =
         row.sourceType === WarrantySourceType.PRODUCT
-          ? `sale:${row.saleId}`
+          ? row.externalCoverageId != null
+            ? `external:${row.externalCoverageId}`
+            : `sale:${row.saleId}`
           : `service:${row.serviceOrderId}`;
       const current = groups.get(key);
       if (!current) {
@@ -1241,6 +1442,16 @@ export class WarrantiesService {
       | 'status'
       | 'expiresAt'
       | 'coverageAmount'
+      | 'registrationOrigin'
+      | 'responsibility'
+      | 'externalDocumentType'
+      | 'externalDocumentSeries'
+      | 'externalDocumentNumber'
+      | 'externalDocumentDate'
+      | 'externalProductCode'
+      | 'externalEvidenceReference'
+      | 'verifiedBy'
+      | 'verifiedAt'
       | 'consumedAt'
       | 'revokedAt'
       | 'createdAt'
@@ -1259,6 +1470,16 @@ export class WarrantiesService {
     const coverage = await repository.save(
       repository.create({
         ...values,
+        registrationOrigin: WarrantyRegistrationOrigin.INTERNAL,
+        responsibility: WarrantyResponsibility.STORE,
+        externalDocumentType: null,
+        externalDocumentSeries: null,
+        externalDocumentNumber: null,
+        externalDocumentDate: null,
+        externalProductCode: null,
+        externalEvidenceReference: null,
+        verifiedBy: null,
+        verifiedAt: null,
         expiresAt: addWarrantyDuration(
           input.startsAt,
           input.durationValue,

@@ -18,8 +18,16 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { E164_PHONE_REGEX, normalizePhoneInputForValidation } from '../../common/utils/phone.util';
-import { EquipmentType, RequestOrigin, ServiceOrderPriority, ServiceType } from '../enums';
+import {
+  E164_PHONE_REGEX,
+  normalizePhoneInputForValidation,
+} from '../../common/utils/phone.util';
+import {
+  EquipmentType,
+  RequestOrigin,
+  ServiceOrderPriority,
+  ServiceType,
+} from '../enums';
 import { ServiceOrderCommercialLineType } from '../service-agreements/service-order-commercial-line-type.enum';
 import { WarrantyDurationUnit } from '../../common/enums/warranty-duration-unit.enum';
 
@@ -36,7 +44,10 @@ export class CreateServiceOrderInitialCommercialLineDto {
   @IsEnum(ServiceOrderCommercialLineType)
   type: ServiceOrderCommercialLineType;
 
-  @ValidateIf((dto: CreateServiceOrderInitialCommercialLineDto) => dto.type === ServiceOrderCommercialLineType.PRODUCT)
+  @ValidateIf(
+    (dto: CreateServiceOrderInitialCommercialLineDto) =>
+      dto.type === ServiceOrderCommercialLineType.PRODUCT,
+  )
   @IsNumber()
   @IsPositive()
   productId?: number;
@@ -81,7 +92,10 @@ export class CreateServiceOrderItemDto {
   @IsEnum(EquipmentType)
   equipmentType: EquipmentType;
 
-  @ValidateIf((dto: CreateServiceOrderItemDto) => dto.equipmentType === EquipmentType.OTHER)
+  @ValidateIf(
+    (dto: CreateServiceOrderItemDto) =>
+      dto.equipmentType === EquipmentType.OTHER,
+  )
   @Transform(trimOptionalText)
   @IsString()
   @MaxLength(120)
@@ -114,6 +128,12 @@ export class CreateServiceOrderItemDto {
   @IsString()
   @IsOptional()
   accessories?: string;
+
+  @Transform(trimOptionalText)
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  receivedCondition?: string;
 
   @IsEnum(ServiceOrderPriority)
   @IsOptional()
@@ -198,7 +218,9 @@ export class CreateServiceOrderAggregateDto {
   })
   @IsString()
   @MaxLength(16)
-  @Matches(E164_PHONE_REGEX, { message: 'contactPhone must be a valid E.164 phone number' })
+  @Matches(E164_PHONE_REGEX, {
+    message: 'contactPhone must be a valid E.164 phone number',
+  })
   @IsOptional()
   contactPhone?: string;
 

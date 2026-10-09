@@ -34,7 +34,10 @@ export class ServiceOrderItem {
   @Column({ name: 'service_order_id', type: 'bigint', unsigned: true })
   serviceOrderId: number;
 
-  @ManyToOne(() => ServiceOrder, (order) => order.items, { nullable: false, onDelete: 'CASCADE' })
+  @ManyToOne(() => ServiceOrder, (order) => order.items, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'service_order_id' })
   serviceOrder: ServiceOrder;
 
@@ -47,7 +50,12 @@ export class ServiceOrderItem {
   @Column({ name: 'equipment_type', type: 'enum', enum: EquipmentType })
   equipmentType: EquipmentType;
 
-  @Column({ name: 'equipment_type_other', type: 'varchar', length: 120, nullable: true })
+  @Column({
+    name: 'equipment_type_other',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
   equipmentTypeOther: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
@@ -56,15 +64,28 @@ export class ServiceOrderItem {
   @Column({ type: 'varchar', length: 150, nullable: true })
   model: string | null;
 
-  @Column({ name: 'serial_number', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'serial_number',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   serialNumber: string | null;
 
   @Index('IDX_service_order_item_serial_normalized')
-  @Column({ name: 'serial_number_normalized', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'serial_number_normalized',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   serialNumberNormalized: string | null;
 
   @Column({ type: 'text', nullable: true })
   accessories: string | null;
+
+  @Column({ name: 'received_condition', type: 'text', nullable: true })
+  receivedCondition: string | null;
 
   @Column({ name: 'initial_issue', type: 'text' })
   initialIssue: string;
@@ -72,19 +93,41 @@ export class ServiceOrderItem {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
-  @Column({ type: 'enum', enum: ServiceOrderPriority, default: ServiceOrderPriority.LOW })
+  @Column({
+    type: 'enum',
+    enum: ServiceOrderPriority,
+    default: ServiceOrderPriority.LOW,
+  })
   priority: ServiceOrderPriority;
 
-  @Column({ name: 'operative_status', type: 'enum', enum: ServiceOrderOperativeStatus })
+  @Column({
+    name: 'operative_status',
+    type: 'enum',
+    enum: ServiceOrderOperativeStatus,
+  })
   operativeStatus: ServiceOrderOperativeStatus;
 
-  @Column({ name: 'technical_status', type: 'enum', enum: ServiceOrderTechnicalStatus })
+  @Column({
+    name: 'technical_status',
+    type: 'enum',
+    enum: ServiceOrderTechnicalStatus,
+  })
   technicalStatus: ServiceOrderTechnicalStatus;
 
-  @Column({ name: 'commercial_status', type: 'enum', enum: ServiceOrderCommercialStatus })
+  @Column({
+    name: 'commercial_status',
+    type: 'enum',
+    enum: ServiceOrderCommercialStatus,
+  })
   commercialStatus: ServiceOrderCommercialStatus;
 
-  @Column({ name: 'estimated_repair_hours', type: 'decimal', precision: 5, scale: 2, nullable: true })
+  @Column({
+    name: 'estimated_repair_hours',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
   estimatedRepairHours: number | null;
 
   @Column({ name: 'estimated_delivery_date', type: 'datetime', nullable: true })
@@ -114,17 +157,28 @@ export class ServiceOrderItem {
   @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
   cancellationReason: string | null;
 
-  @Column({ name: 'warranty_source_item_id', type: 'bigint', unsigned: true, nullable: true })
+  @Column({
+    name: 'warranty_source_item_id',
+    type: 'bigint',
+    unsigned: true,
+    nullable: true,
+  })
   warrantySourceItemId: number | null;
 
   @ManyToOne(() => ServiceOrderItem, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'warranty_source_item_id' })
   warrantySourceItem: ServiceOrderItem | null;
 
-  @OneToMany(() => ServiceOrderItemCommercialVersion, (version) => version.serviceOrderItem)
+  @OneToMany(
+    () => ServiceOrderItemCommercialVersion,
+    (version) => version.serviceOrderItem,
+  )
   commercialVersions: ServiceOrderItemCommercialVersion[];
 
-  @OneToMany(() => ServiceOrderItemCancellationRequest, (request) => request.serviceOrderItem)
+  @OneToMany(
+    () => ServiceOrderItemCancellationRequest,
+    (request) => request.serviceOrderItem,
+  )
   cancellationRequests?: ServiceOrderItemCancellationRequest[];
 
   @CreateDateColumn({ name: 'created_at' })

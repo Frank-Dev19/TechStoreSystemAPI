@@ -13,13 +13,22 @@ export enum DispatchRequestStatus {
   CANCELLED = 'CANCELLED',
 }
 
-export function assertDispatchCanBeFulfilled(status: DispatchRequestStatus): void {
+export enum DispatchFulfillmentSource {
+  INTERNAL = 'INTERNAL',
+  EXTERNAL = 'EXTERNAL',
+}
+
+export function assertDispatchCanBeFulfilled(
+  status: DispatchRequestStatus,
+): void {
   if (status !== DispatchRequestStatus.PENDING) {
     throw new BadRequestException('La solicitud ya fue atendida');
   }
 }
 
-export function statusAfterFulfillment(type: DispatchRequestType): DispatchRequestStatus {
+export function statusAfterFulfillment(
+  type: DispatchRequestType,
+): DispatchRequestStatus {
   return type === DispatchRequestType.WARRANTY_REPLACEMENT
     ? DispatchRequestStatus.DELIVERED
     : DispatchRequestStatus.CONFIRMED;
@@ -33,6 +42,8 @@ export function assertDispatchCanBeConfirmed(
     type !== DispatchRequestType.WARRANTY_REPLACEMENT ||
     status !== DispatchRequestStatus.DELIVERED
   ) {
-    throw new BadRequestException('El reemplazo no está pendiente de confirmación');
+    throw new BadRequestException(
+      'El reemplazo no está pendiente de confirmación',
+    );
   }
 }

@@ -10,10 +10,13 @@ import { WarrantyMovementType } from './enums/warranty-movement-type.enum';
 import { WarrantySourceType } from './enums/warranty-source-type.enum';
 import { DispatchRequest } from '../service-orders/materials/dispatch-request.entity';
 import {
+  DispatchFulfillmentSource,
   DispatchRequestStatus,
   DispatchRequestType,
 } from '../service-orders/materials/dispatch-request.policy';
 import { WarrantiesService } from './warranties.service';
+import { WarrantyRegistrationOrigin } from './enums/warranty-registration-origin.enum';
+import { WarrantyResolutionType } from '../service-orders/diagnoses/warranty-resolution-type.enum';
 
 const repository = () => ({
   findOne: jest.fn(),
@@ -42,18 +45,36 @@ describe('WarrantiesService', () => {
       createdAt: new Date('2026-09-01T12:00:00-05:00'),
     };
     const coverages = [
-      { ...baseCoverage, id: 1, serialSnapshot: 'RM01', status: WarrantyCoverageStatus.ACTIVE },
-      { ...baseCoverage, id: 2, serialSnapshot: 'RM02', status: WarrantyCoverageStatus.CONSUMED },
-      { ...baseCoverage, id: 3, serialSnapshot: 'RM03', status: WarrantyCoverageStatus.ACTIVE },
+      {
+        ...baseCoverage,
+        id: 1,
+        serialSnapshot: 'RM01',
+        status: WarrantyCoverageStatus.ACTIVE,
+      },
+      {
+        ...baseCoverage,
+        id: 2,
+        serialSnapshot: 'RM02',
+        status: WarrantyCoverageStatus.CONSUMED,
+      },
+      {
+        ...baseCoverage,
+        id: 3,
+        serialSnapshot: 'RM03',
+        status: WarrantyCoverageStatus.ACTIVE,
+      },
     ] as WarrantyCoverage[];
 
-    const group = (service as any).buildCoverageGroup({
-      sourceType: WarrantySourceType.PRODUCT,
-      saleId: 21,
-      serviceOrderId: null,
-      latestCreatedAt: baseCoverage.createdAt,
-      unitCount: 3,
-    }, coverages);
+    const group = (service as any).buildCoverageGroup(
+      {
+        sourceType: WarrantySourceType.PRODUCT,
+        saleId: 21,
+        serviceOrderId: null,
+        latestCreatedAt: baseCoverage.createdAt,
+        unitCount: 3,
+      },
+      coverages,
+    );
 
     expect(group.referenceCode).toBe('B001-00000025');
     expect(group.unitCount).toBe(3);
@@ -64,55 +85,126 @@ describe('WarrantiesService', () => {
   });
 
   it.each([
-    [ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES, WarrantyClaimStatus.RESOLVED_APPLIES],
-    [ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED, WarrantyClaimStatus.RESOLVED_REJECTED],
-  ])('consume los S/50 completos cuando el diagnóstico termina en %s', async (outcome, expectedStatus) => {
-    const claimRepository = repository();
-    const coverageRepository = repository();
-    const movementRepository = repository();
+    [
+      ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
+      WarrantyClaimStatus.RESOLVED_APPLIES,
+    ],
+    [
+      ServiceOrderDiagnosisOutcome.WARRANTY_REJECTED,
+      WarrantyClaimStatus.RESOLVED_REJECTED,
+    ],
+  ])(
+    'consume los S/50 completos cuando el diagnóstico termina en %s',
+    async (outcome, expectedStatus) => {
+      const claimRepository = repository();
+      const coverageRepository = repository();
+      const movementRepository = repository();
+      const claim = {
+        id: 4,
+        coverageId: 8,
+        status: WarrantyClaimStatus.IN_REVIEW,
+        reviewStartedAt: new Date(),
+        attendingTechnicianId: 9,
+      } as WarrantyClaim;
+      const coverage = {
+        id: 8,
+        status: WarrantyCoverageStatus.RESERVED,
+        coverageAmount: 50,
+      } as WarrantyCoverage;
+      claimRepository.findOne.mockResolvedValue(claim);
+      coverageRepository.findOne.mockResolvedValue(coverage);
+      const manager = {
+        getRepository: jest.fn((entity) => {
+          if (entity === WarrantyClaim) return claimRepository;
+          if (entity === WarrantyCoverage) return coverageRepository;
+          if (entity === WarrantyMovement) return movementRepository;
+          throw new Error(`Repositorio inesperado: ${entity?.name}`);
+        }),
+      } as any;
+      const service = new WarrantiesService(
+        coverageRepository as any,
+        claimRepository as any,
+        movementRepository as any,
+      );
+      const diagnosis = { id: 20, outcome } as ServiceOrderDiagnosis;
+
+      await service.consumeForDiagnosis(manager, 30, diagnosis, 9);
+
+      expect(coverage.status).toBe(WarrantyCoverageStatus.CONSUMED);
+      expect(claim.status).toBe(expectedStatus);
+      expect(movementRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: WarrantyMovementType.CONSUMED,
+          amount: 50,
+          claimId: 4,
+        }),
+      );
+    },
+  );
+});
+
+describe('Warranty and material guide integration', () => {
+  it('genera un reemplazo externo sin exigir producto ni serie del inventario local', async () => {
     const claim = {
-      id: 4,
+      id: 17,
       coverageId: 8,
       status: WarrantyClaimStatus.IN_REVIEW,
-      reviewStartedAt: new Date(),
       attendingTechnicianId: 9,
     } as WarrantyClaim;
     const coverage = {
       id: 8,
       status: WarrantyCoverageStatus.RESERVED,
-      coverageAmount: 50,
+      registrationOrigin: WarrantyRegistrationOrigin.EXTERNAL,
+      productId: null,
+      serialId: null,
+      sourceNameSnapshot: 'Mouse externo',
+      sourceCodeSnapshot: 'EXT-MOUSE',
+      serialSnapshot: 'OLD-01',
     } as WarrantyCoverage;
-    claimRepository.findOne.mockResolvedValue(claim);
-    coverageRepository.findOne.mockResolvedValue(coverage);
+    const requests: DispatchRequest[] = [];
     const manager = {
       getRepository: jest.fn((entity) => {
-        if (entity === WarrantyClaim) return claimRepository;
-        if (entity === WarrantyCoverage) return coverageRepository;
-        if (entity === WarrantyMovement) return movementRepository;
+        if (entity === WarrantyClaim)
+          return {
+            findOne: jest.fn().mockResolvedValue(claim),
+            save: jest.fn(async (value) => value),
+          };
+        if (entity === WarrantyCoverage)
+          return { findOne: jest.fn().mockResolvedValue(coverage) };
         throw new Error(`Repositorio inesperado: ${entity?.name}`);
+      }),
+      findOneBy: jest.fn().mockResolvedValue(null),
+      create: jest.fn((_entity, value) => value),
+      save: jest.fn(async (_entity, value) => {
+        requests.push(value);
+        return value;
       }),
     } as any;
     const service = new WarrantiesService(
-      coverageRepository as any,
-      claimRepository as any,
-      movementRepository as any,
+      repository() as any,
+      repository() as any,
+      repository() as any,
     );
-    const diagnosis = { id: 20, outcome } as ServiceOrderDiagnosis;
+    const diagnosis = {
+      id: 20,
+      outcome: ServiceOrderDiagnosisOutcome.WARRANTY_APPLIES,
+      warrantyResolutionType: WarrantyResolutionType.FACTORY_REPLACEMENT,
+      summary: 'Falla de fábrica',
+      details: 'Componente ausente',
+    } as ServiceOrderDiagnosis;
 
     await service.consumeForDiagnosis(manager, 30, diagnosis, 9);
 
-    expect(coverage.status).toBe(WarrantyCoverageStatus.CONSUMED);
-    expect(claim.status).toBe(expectedStatus);
-    expect(movementRepository.save).toHaveBeenCalledWith(expect.objectContaining({
-      type: WarrantyMovementType.CONSUMED,
-      amount: 50,
-      claimId: 4,
-    }));
+    expect(requests[0]).toEqual(
+      expect.objectContaining({
+        productId: null,
+        fulfillmentSource: DispatchFulfillmentSource.EXTERNAL,
+        originalSerialSnapshot: 'OLD-01',
+      }),
+    );
+    expect(claim.status).toBe(WarrantyClaimStatus.WAITING_REPLACEMENT);
   });
-});
 
-
-describe('Warranty and material guide integration', () => {
   it('confirma de forma atómica un reemplazo entregado al resolver el servicio', async () => {
     const claim = {
       id: 17,
@@ -180,7 +272,11 @@ describe('Warranty and material guide integration', () => {
     const manager = {
       findOne: jest.fn().mockResolvedValue(claim),
     } as any;
-    const service = new WarrantiesService(repository() as any, repository() as any, repository() as any);
+    const service = new WarrantiesService(
+      repository() as any,
+      repository() as any,
+      repository() as any,
+    );
 
     await expect(
       service.confirmDeliveredReplacementForResolution(manager, 30, 31, 9),
@@ -188,19 +284,69 @@ describe('Warranty and material guide integration', () => {
   });
 
   it('uses the serial of each sale line even when multiple lines share a product', async () => {
-    const service = new WarrantiesService(repository() as any, repository() as any, repository() as any);
-    const product = { id: 7, isSerialized: true, warrantyDurationValue: 12, name: 'RAM' };
+    const service = new WarrantiesService(
+      repository() as any,
+      repository() as any,
+      repository() as any,
+    );
+    const product = {
+      id: 7,
+      isSerialized: true,
+      warrantyDurationValue: 12,
+      name: 'RAM',
+    };
     const items = [
-      { id: 2, itemType: 'PRODUCT', product, quantity: 1, materialSources: [{ serialId: 11, serialCode: 'RAM-B', quantity: 1 }] },
-      { id: 1, itemType: 'PRODUCT', product, quantity: 1, materialSources: [{ serialId: 10, serialCode: 'RAM-A', quantity: 1 }] },
+      {
+        id: 2,
+        itemType: 'PRODUCT',
+        product,
+        quantity: 1,
+        materialSources: [{ serialId: 11, serialCode: 'RAM-B', quantity: 1 }],
+      },
+      {
+        id: 1,
+        itemType: 'PRODUCT',
+        product,
+        quantity: 1,
+        materialSources: [{ serialId: 10, serialCode: 'RAM-A', quantity: 1 }],
+      },
     ];
-    const manager = { getRepository: (entity: any) => ({
-      findOne: async () => entity.name === 'Sale' ? { id: 1, status: 'CONFIRMED', items, customerId: 1, createdAt: new Date() } : null,
-      find: async () => [],
-    }) };
-    const create = jest.spyOn(service as any, 'createCoverageIfMissing').mockResolvedValue(null);
+    const manager = {
+      getRepository: (entity: any) => ({
+        findOne: async () =>
+          entity.name === 'Sale'
+            ? {
+                id: 1,
+                status: 'CONFIRMED',
+                items,
+                customerId: 1,
+                createdAt: new Date(),
+              }
+            : null,
+        find: async () => [],
+      }),
+    };
+    const create = jest
+      .spyOn(service as any, 'createCoverageIfMissing')
+      .mockResolvedValue(null);
     await service.issueProductCoveragesForSale(manager as any, 1);
-    expect(create).toHaveBeenNthCalledWith(1, manager, expect.objectContaining({ saleItemId: 1, serialId: 10, serialSnapshot: 'RAM-A' }));
-    expect(create).toHaveBeenNthCalledWith(2, manager, expect.objectContaining({ saleItemId: 2, serialId: 11, serialSnapshot: 'RAM-B' }));
+    expect(create).toHaveBeenNthCalledWith(
+      1,
+      manager,
+      expect.objectContaining({
+        saleItemId: 1,
+        serialId: 10,
+        serialSnapshot: 'RAM-A',
+      }),
+    );
+    expect(create).toHaveBeenNthCalledWith(
+      2,
+      manager,
+      expect.objectContaining({
+        saleItemId: 2,
+        serialId: 11,
+        serialSnapshot: 'RAM-B',
+      }),
+    );
   });
 });
