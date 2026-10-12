@@ -30,7 +30,7 @@ describe('ServiceOrderWhatsAppTemplateService', () => {
         '1 equipo',
         'S/ 200.00',
       ],
-      quickReplyPayloads: ['CONSULTA'],
+      quickReplyPayloads: [],
       documentUrl: 'https://api.example.com/orden-express.pdf',
       documentFileName: 'orden-express.pdf',
     });

@@ -115,7 +115,9 @@ export class ServiceOrderWhatsAppTemplateService {
         input.equipmentCount,
         input.totalAmount,
       ],
-      input.quickReplyPayloads,
+      // The approved Express template contains a PDF and four body variables,
+      // but no buttons. Intake/diagnosis templates keep their own buttons.
+      [],
       input.documentUrl,
       input.documentFileName,
     );
