@@ -201,7 +201,7 @@ describe('ServiceOrderController', () => {
 
     const result = await controller.downloadSummaryPdf(7, { user: { sub: 22 } }, { setHeader } as any);
 
-    expect(serviceOrderService.generateSingleOrderSummaryPdf).toHaveBeenCalledWith(7, expect.objectContaining({ sub: 22 }));
+    expect(serviceOrderService.generateSingleOrderSummaryPdf).toHaveBeenCalledWith(7, expect.objectContaining({ sub: 22 }), 'A5');
     expect(setHeader).toHaveBeenCalledWith('Content-Type', 'application/pdf');
     expect(setHeader).toHaveBeenCalledWith('Content-Disposition', 'attachment; filename="SO20260520-resumen.pdf"');
     expect(result).toBeDefined();

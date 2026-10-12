@@ -45,6 +45,8 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+/tmp/
+/output/
 
 # Runtime-generated private files (PDFs, attachments and temporary documents)
 /storage/

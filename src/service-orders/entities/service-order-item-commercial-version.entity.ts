@@ -57,6 +57,9 @@ export class ServiceOrderItemCommercialVersion {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ name: 'customer_summary', type: 'text', nullable: true })
+  customerSummary: string | null;
+
   @Column({ name: 'created_by_user_id', type: 'bigint', unsigned: true })
   createdByUserId: number;
 

@@ -369,6 +369,7 @@ describe('ServiceOrderCommercialDecisionService', () => {
         : ServiceOrderCommercialStatus.PENDIENTE_RESPUESTA_CLIENTE,
     } as ServiceOrderItem;
     const version = {
+      customerSummary: 'Reparación del equipo',
       id: 801,
       serviceOrderItemId: item.id,
       serviceOrderItem: item,

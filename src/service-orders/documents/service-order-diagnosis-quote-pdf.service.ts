@@ -16,6 +16,7 @@ export type DiagnosisQuotePdfInput = {
   versionNumber: number;
   issuedAt: Date;
   notes: string | null;
+  customerSummary?: string | null;
   lines: Array<{
     type: string;
     name: string;
@@ -86,41 +87,30 @@ export class ServiceOrderDiagnosisQuotePdfService {
     y += 108;
     y = this.drawSection(document, 'Diagnóstico', input.diagnosisSummary, input.diagnosisDetails, left, y, width);
     y += 18;
+    const cols = [width - 110, 110];
+    const summary = input.customerSummary?.trim() || `Servicio técnico de ${input.equipmentLabel}`;
+    document.font('Helvetica').fontSize(10);
+    const rowHeight = Math.max(48, document.heightOfString(summary, { width: cols[0] - 20, lineGap: 3 }) + 24);
+    if (y + 51 + rowHeight > document.page.height - 92) {
+      document.addPage();
+      y = 54;
+    }
     document.fillColor('#17211B').font('Helvetica-Bold').fontSize(13).text('Detalle de la cotización', left, y);
     y += 26;
     document.rect(left, y, width, 25).fill('#17211B');
-    const cols = [250, 55, 75, width - 380];
-    const headers = ['CONCEPTO', 'CANT.', 'P. UNIT.', 'IMPORTE'];
+    const headers = ['SERVICIO COTIZADO', 'TOTAL FINAL'];
     let x = left;
     headers.forEach((header, index) => {
-      document.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(header, x + 8, y + 9, { width: cols[index] - 16, align: index > 1 ? 'right' : 'left' });
+      document.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(header, x + 8, y + 9, { width: cols[index] - 16, align: index > 0 ? 'right' : 'left' });
       x += cols[index];
     });
     y += 25;
-    input.lines.forEach((line, index) => {
-      const rowHeight = 34;
-      if (y + rowHeight > document.page.height - 92) {
-        document.addPage();
-        y = 54;
-      }
-      if (index % 2) document.rect(left, y, width, rowHeight).fill('#F7F8F6');
-      x = left;
-      const values = [
-        line.name,
-        line.type === 'SERVICE' ? '-' : this.number(line.quantity),
-        this.money(line.unitPrice),
-        this.money(line.netAmount),
-      ];
-      values.forEach((value, column) => {
-        document.fillColor('#17211B').font(column === 0 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5)
-          .text(value, x + 8, y + 11, { width: cols[column] - 16, align: column > 1 ? 'right' : 'left' });
-        x += cols[column];
-      });
-      y += rowHeight;
-    });
-    y += 14;
-    document.fillColor('#657068').font('Helvetica').fontSize(8.5).text('TOTAL', left + width - 190, y + 5, { width: 80, align: 'right' });
-    document.fillColor('#0E5A3C').font('Helvetica-Bold').fontSize(15).text(this.money(input.totalAmount), left + width - 100, y, { width: 100, align: 'right' });
+    document.rect(left, y, width, rowHeight).fill('#F7F8F6');
+    document.fillColor('#17211B').font('Helvetica').fontSize(10)
+      .text(summary, left + 10, y + 12, { width: cols[0] - 20, lineGap: 3 });
+    document.fillColor('#0E5A3C').font('Helvetica-Bold').fontSize(12)
+      .text(this.money(input.totalAmount), left + cols[0] + 8, y + 12, { width: cols[1] - 16, align: 'right' });
+    y += rowHeight + 14;
     if (input.notes?.trim()) {
       y += 38;
       document.fillColor('#657068').font('Helvetica-Bold').fontSize(7).text('OBSERVACIONES', left, y, { characterSpacing: 0.6 });
@@ -167,6 +157,5 @@ export class ServiceOrderDiagnosisQuotePdfService {
   }
 
   private money(value: number): string { return `S/ ${Number(value || 0).toFixed(2)}`; }
-  private number(value: number): string { return Number(value || 0).toFixed(Number.isInteger(Number(value)) ? 0 : 2); }
   private formatDate(value: Date): string { return new Intl.DateTimeFormat('es-PE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Lima' }).format(value); }
 }

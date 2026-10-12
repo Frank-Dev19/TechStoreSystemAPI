@@ -187,6 +187,7 @@ export class ServiceOrderController {
     const result = await this.serviceOrderService.generateSingleOrderSummaryPdf(
       id,
       req.user,
+      'A5',
     );
     response.setHeader('Content-Type', result.mimeType);
     response.setHeader(

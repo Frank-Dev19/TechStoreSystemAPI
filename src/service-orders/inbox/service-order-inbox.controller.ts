@@ -32,7 +32,10 @@ import {
 } from '../../common/constants/role-names';
 import { ServiceOrderInboxChannelService } from './service-order-inbox-channel.service';
 import { ServiceOrderInboxService } from './service-order-inbox.service';
-import { ServiceOrderInboxQueryDto } from './dto/service-order-inbox-query.dto';
+import {
+  ServiceOrderInboxMessagesQueryDto,
+  ServiceOrderInboxQueryDto,
+} from './dto/service-order-inbox-query.dto';
 import { SendServiceOrderInboxMessageDto } from './dto/send-service-order-inbox-message.dto';
 import { ServiceOrderInboxEventsService } from './service-order-inbox-events.service';
 import { ModuleRef } from '@nestjs/core';
@@ -50,47 +53,97 @@ export class ServiceOrderInboxController {
   ) {}
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Sse('events')
-  streamEvents() {
-    return this.eventsService.stream();
+  streamEvents(@Req() req: any) {
+    const viewer = this.inboxService.buildViewerContext(req.user);
+    return this.eventsService.stream((id) =>
+      this.inboxService.canReadThread(id, viewer),
+    );
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Get('threads')
   listThreads(@Query() query: ServiceOrderInboxQueryDto, @Req() req: any) {
-    return this.inboxService.listThreads(query, this.inboxService.buildViewerContext(req.user));
+    return this.inboxService.listThreads(
+      query,
+      this.inboxService.buildViewerContext(req.user),
+    );
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Get('threads/:id/messages')
-  getMessages(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    return this.inboxService.getMessages(id, this.inboxService.buildViewerContext(req.user));
+  getMessages(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+    @Query() query: ServiceOrderInboxMessagesQueryDto,
+  ) {
+    return this.inboxService.getMessages(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+      query,
+    );
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Get('threads/:id/orders')
   getThreadOrders(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    return this.inboxService.listThreadOrders(id, this.inboxService.buildViewerContext(req.user));
+    return this.inboxService.listThreadOrders(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+    );
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Post('threads/:id/read')
   markRead(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    return this.inboxService.markThreadAsRead(id, this.inboxService.buildViewerContext(req.user));
+    return this.inboxService.markThreadAsRead(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+    );
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.send')
   @Post('threads/:id/messages')
   @UseInterceptors(FilesInterceptor('attachments', 5))
@@ -103,15 +156,25 @@ export class ServiceOrderInboxController {
     const message = await this.inboxService.sendMessage(
       id,
       dto,
-      (files ?? []) as Array<{ originalname: string; mimetype: string; size: number; buffer: Buffer }>,
+      (files ?? []) as Array<{
+        originalname: string;
+        mimetype: string;
+        size: number;
+        buffer: Buffer;
+      }>,
       this.inboxService.buildViewerContext(req.user),
     );
-    this.eventsService.publishChanged();
+    this.eventsService.publishChanged(id);
     return message;
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.read')
   @Get('attachments/:id/download')
   async downloadAttachment(
@@ -119,11 +182,44 @@ export class ServiceOrderInboxController {
     @Req() req: any,
     @Res() res: Response,
   ) {
-    const file = await this.inboxService.downloadAttachment(id, this.inboxService.buildViewerContext(req.user));
+    const file = await this.inboxService.downloadAttachment(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+    );
     res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.fileName)}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(file.fileName)}"`,
+    );
 
     return res.sendFile(file.absolutePath);
+  }
+
+  @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+  @Permissions('service-order-inbox.read')
+  @Get('threads/:id')
+  getThreadSummary(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.inboxService.getThreadSummary(
+      id,
+      this.inboxService.buildViewerContext(req.user),
+    );
+  }
+
+  @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
+  @Permissions('service-order-inbox.send')
+  @Post('threads/:id/orders/:orderId')
+  async linkThreadOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('orderId', ParseIntPipe) orderId: number,
+    @Req() req: any,
+  ) {
+    const result = await this.inboxService.linkThreadOrder(
+      id,
+      orderId,
+      this.inboxService.buildViewerContext(req.user),
+    );
+    this.eventsService.publishChanged(id);
+    return result;
   }
 
   @Get('webhook')
@@ -133,7 +229,15 @@ export class ServiceOrderInboxController {
     @Query('hub.challenge') challenge: string | undefined,
     @Res() res: Response,
   ) {
-    return res.status(200).send(this.channelService.verifyWebhookChallenge(mode, verifyToken, challenge));
+    return res
+      .status(200)
+      .send(
+        this.channelService.verifyWebhookChallenge(
+          mode,
+          verifyToken,
+          challenge,
+        ),
+      );
   }
 
   @Post('webhook')
@@ -143,15 +247,19 @@ export class ServiceOrderInboxController {
     @Headers('x-hub-signature-256') signature: string | undefined,
     @Req() req: any,
   ) {
-    this.channelService.assertWebhookSignature(req.rawBody as Buffer | undefined, signature);
-    const normalizedPayload = this.channelService.normalizeWebhookPayload(payload);
+    this.channelService.assertWebhookSignature(
+      req.rawBody as Buffer | undefined,
+      signature,
+    );
+    const normalizedPayload =
+      this.channelService.normalizeWebhookPayload(payload);
     let firstMessageError: unknown = null;
 
     for (const message of normalizedPayload.messages) {
       try {
-        await this.inboxService.receiveInboundMessage(message);
+        const received = await this.inboxService.receiveInboundMessage(message);
         await this.processCommercialQuickReply(message.quickReplyPayload);
-        this.eventsService.publishChanged();
+        this.eventsService.publishChanged(received?.threadId);
       } catch (error) {
         firstMessageError ??= error;
         this.logger.warn(
@@ -163,7 +271,7 @@ export class ServiceOrderInboxController {
     for (const status of normalizedPayload.statuses) {
       const result = await this.inboxService.updateDeliveryStatus(status);
       if (result.ok) {
-        this.eventsService.publishChanged();
+        this.eventsService.publishChanged(result.threadId);
       }
     }
 
@@ -195,7 +303,12 @@ export class ServiceOrderInboxController {
   }
 
   @UseGuards(JwtAccessGuard, RolesGuard, PermissionsGuard)
-  @RolesDec('admin', ...RECEPTIONIST_ROLE_NAMES, ...SUPERVISOR_ROLE_NAMES, ...TECHNICIAN_ROLE_NAMES)
+  @RolesDec(
+    'admin',
+    ...RECEPTIONIST_ROLE_NAMES,
+    ...SUPERVISOR_ROLE_NAMES,
+    ...TECHNICIAN_ROLE_NAMES,
+  )
   @Permissions('service-order-inbox.send')
   @Put('messages/:id/orders')
   replaceMessageOrders(

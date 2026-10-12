@@ -2,7 +2,18 @@
 
 The production database schema is managed only through versioned TypeORM migrations. Application startup never synchronizes the schema and never runs migrations automatically.
 
-## Configuration
+## Release order
+
+Publish releases in this order: **GitHub → Docker Hub → VPS**.
+
+1. Run the required checks and commit the API and APP changes. Push both commits to their respective upstream branches before publishing images.
+2. Build from those exact commits. Local compilation is allowed; runtime images may copy the resulting Linux-compatible JavaScript and static assets. Do not copy Windows `node_modules` into the API image. Reusing an existing runtime base requires unchanged dependency manifests and a pinned base digest.
+3. Publish images with immutable release identifiers, recording the API and APP commit SHAs and image digests together. A dirty working tree must not be represented by a commit-only image tag.
+4. Back up production data and configuration, pull the published images, run migrations as a separate job, and recreate backend before frontend. Pin deployed images by digest and verify health and the served frontend bundle.
+
+Temporary build contexts, PDFs, screenshots and private environment files are not release source and must not be committed.
+
+## Environment configuration
 
 Set `NODE_ENV=production` and provide `DATABASE_URL` using a MySQL URL. Keep secrets in the deployment environment; do not commit an `.env` file. `DB_SSL=true` enables the compatibility SSL mode currently supported by the application. It uses `rejectUnauthorized: false`; replace it with a verified CA configuration when the database provider supplies one.
 

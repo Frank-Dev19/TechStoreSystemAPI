@@ -1,4 +1,5 @@
 import { prepareLaborWaiver } from '../service-agreements/labor-waiver';
+import { buildAutomaticCustomerSummary } from '../service-agreements/customer-summary';
 import { User } from '../../users/entities/user.entity';
 import { ServiceOrderLineDiscount } from '../service-agreements/entities/service-order-line-discount.entity';
 import {
@@ -138,6 +139,7 @@ export class ServiceOrderInitialCommercialService {
           warrantyDurationUnit:
             input.warrantyDurationUnit ?? WarrantyDurationUnit.DAY,
           notes: commercial.notes ?? input.notes ?? null,
+          customerSummary: buildAutomaticCustomerSummary(lines),
           createdByUserId: creatorId,
           acceptedAt,
           acceptedByUserId: creatorId,
@@ -154,6 +156,7 @@ export class ServiceOrderInitialCommercialService {
             .getRepository(ServiceOrderLineDiscount)
             .save({ ...waivers[i], commercialLineId: savedLines[i].id });
       }
+      version.lines = savedLines;
       versions.push(version);
       versionTotals.push(totalAmount);
     }

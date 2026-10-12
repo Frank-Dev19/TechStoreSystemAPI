@@ -106,6 +106,7 @@ describe('ServiceOrderInitialCommercialService', () => {
         equipmentType: EquipmentType.LAPTOP,
         initialIssue: 'No enciende',
         initialCommercial: {
+          customerSummary: 'Instalación de dos memorias RAM con mano de obra',
           lines: [
             {
               type: ServiceOrderCommercialLineType.SERVICE,
@@ -125,6 +126,7 @@ describe('ServiceOrderInitialCommercialService', () => {
         equipmentType: EquipmentType.PRINTER,
         initialIssue: 'Atasca papel',
         initialCommercial: {
+          customerSummary: 'Mantenimiento de impresora',
           lines: [
             {
               type: ServiceOrderCommercialLineType.SERVICE,
@@ -199,6 +201,7 @@ describe('ServiceOrderInitialCommercialService', () => {
           equipmentType: EquipmentType.LAPTOP,
           initialIssue: 'Instalar RAM',
           initialCommercial: {
+            customerSummary: 'Instalación de RAM para servicio interno',
             lines: [
               {
                 type: ServiceOrderCommercialLineType.SERVICE,
@@ -255,5 +258,15 @@ describe('ServiceOrderInitialCommercialService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(versionRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('crea Express sin exigir un resumen manual', async () => {
+    await service.createForDirectService(manager,
+      { id: 100, serviceType: ServiceType.STANDARD_SERVICE } as ServiceOrder,
+      [{ id: 11 }] as ServiceOrderItem[],
+      [{ equipmentType: EquipmentType.LAPTOP, initialIssue: 'Instalar RAM', initialCommercial: {
+        lines: [{ type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 80 }],
+      } }], 5);
+    expect(versionRepo.create).toHaveBeenCalledWith(expect.objectContaining({ customerSummary: 'Servicio técnico', totalAmount: 80 }));
   });
 });

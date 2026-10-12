@@ -49,6 +49,7 @@ describe('ServiceOrderItemCommercialVersionService', () => {
       status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
       totalAmount: 150,
       notes: 'Versión aceptada',
+      customerSummary: 'Servicio técnico',
       lines: [
         {
           type: 'SERVICE',
@@ -83,6 +84,7 @@ describe('ServiceOrderItemCommercialVersionService', () => {
       expect.objectContaining({
         serviceOrderItemId: 102,
         derivedFromVersionId: 41,
+        customerSummary: 'Servicio técnico',
         versionNumber: 5,
         status: ServiceOrderItemCommercialVersionStatus.DRAFT,
       }),
@@ -99,6 +101,7 @@ describe('ServiceOrderItemCommercialVersionService', () => {
       derivedFromVersionId: 41,
       status: ServiceOrderItemCommercialVersionStatus.DRAFT,
       acceptedAt: null,
+      customerSummary: 'Reparación del equipo',
       acceptedByUserId: null,
     };
     const updateQuery = createQueryBuilder();
@@ -125,6 +128,12 @@ describe('ServiceOrderItemCommercialVersionService', () => {
     versionRepository.findOne.mockResolvedValue(null);
 
     await expect(service.createRediagnosisDraft(manager, 102, 9)).rejects.toThrow(NotFoundException);
+  });
+
+  it('acepta un borrador válido sin exigir texto manual', async () => {
+    versionRepository.findOne.mockResolvedValue({ id: 55, serviceOrderItemId: 102, status: 'DRAFT', customerSummary: null });
+    versionRepository.createQueryBuilder.mockReturnValue(createQueryBuilder());
+    await expect(service.acceptDraft(manager, 55, 9)).resolves.toEqual(expect.objectContaining({ status: 'ACCEPTED' }));
   });
 
   it('rechaza aceptar una versión que no es draft ni emitida', async () => {

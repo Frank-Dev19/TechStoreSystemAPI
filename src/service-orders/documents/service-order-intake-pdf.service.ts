@@ -41,6 +41,8 @@ export type GenerateSingleOrderSummaryPdfInput = {
 };
 
 export type GenerateSingleOrderSummaryPdfItem = {
+  customerSummary?: string | null;
+  quotationTotal?: number;
   position: number;
   code: string;
   priority: string;
@@ -171,7 +173,10 @@ export class ServiceOrderIntakePdfService {
     };
   }
 
-  async generateSingleOrderSummaryBuffer(input: GenerateSingleOrderSummaryPdfInput): Promise<Buffer> {
+  async generateSingleOrderSummaryBuffer(input: GenerateSingleOrderSummaryPdfInput, format?: 'A5'): Promise<Buffer> {
+    if (format === 'A5') {
+      return this.createPdfBuffer((document) => this.renderPrintedOrderSummary(document, input), 'A5');
+    }
     return this.createPdfBuffer((document) => {
       this.renderSingleOrderSummaryDocument(document, input);
       this.drawFooters(document);
@@ -194,8 +199,8 @@ export class ServiceOrderIntakePdfService {
     };
   }
 
-  private async createPdfBuffer(render: (document: PdfDocumentInstance) => void): Promise<Buffer> {
-    const document = new PDFDocument({ margin: PAGE_MARGIN, bufferPages: true, autoFirstPage: false });
+  private async createPdfBuffer(render: (document: PdfDocumentInstance) => void, format?: 'A5'): Promise<Buffer> {
+    const document = new PDFDocument({ margin: PAGE_MARGIN, ...(format === 'A5' ? { size: 'A5', layout: 'landscape', margins: { top: 24, left: 26, right: 26, bottom: 42 } } : {}), bufferPages: true, autoFirstPage: false });
     const chunks: Buffer[] = [];
 
     return new Promise<Buffer>((resolve, reject) => {
@@ -212,6 +217,65 @@ export class ServiceOrderIntakePdfService {
         reject(error);
       }
     });
+  }
+
+  private renderPrintedOrderSummary(document: PdfDocumentInstance, input: GenerateSingleOrderSummaryPdfInput): void {
+    document.addPage();
+    const left = 26;
+    const width = document.page.width - left * 2;
+    const paragraph = (text: string, size = 8.5, bold = false) => {
+      document.fillColor('#000000').font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size);
+      document.text(text, left, document.y, { width, lineGap: 0.7 });
+      document.y += 2;
+    };
+    const line = () => {
+      document.moveTo(left, document.y).lineTo(left + width, document.y).strokeColor('#000000').lineWidth(0.4).stroke();
+      document.y += 5;
+    };
+    document.fillColor('#000000').font('Helvetica-Bold').fontSize(12).text('CORPORACIÓN MACROCHIPS', left, 24, { width: width / 2 });
+    document.fontSize(12).text(input.code, left + width / 2, 24, { width: width / 2, align: 'right' });
+    document.font('Helvetica').fontSize(7.5).text(`RUC ${COMPANY_RUC} · ${COMPANY_ADDRESS}`, left, 41, { width: width / 2 });
+    document.text(`${this.formatDateTime(input.createdAt)} · ${this.formatServiceType(input.serviceType)}`, left + width / 2, 41, { width: width / 2, align: 'right' });
+    document.y = 56;
+    line();
+    paragraph(`RESUMEN DE ORDEN DE SERVICIO    |    Cliente: ${input.clientName || 'No especificado'}`, 9, true);
+    paragraph(`Documento: ${input.clientDocument || 'No especificado'}    |    Teléfono: ${input.clientPhone || 'No especificado'}`, 8);
+    this.resolveSingleOrderItems(input).forEach((item, index) => {
+      const title = `${String(index + 1).padStart(2, '0')} · ${[EQUIPMENT_TYPE_LABELS[item.equipmentType] || item.equipmentType, item.brand, item.model].filter(Boolean).join(' ')}`;
+      const rows = [
+        { text: `${item.code} · Serie: ${item.serialNumber || 'No registrada'}`, size: 7.5 },
+        { text: `Problema: ${item.initialIssue || 'Sin detalle'}`, size: 8.5 },
+        ...(item.quotationTotal !== undefined ? [{ text: `Servicio: ${item.customerSummary || 'Servicio técnico'}`, size: 8.5 }] : []),
+        { text: `Accesorios: ${item.accessories?.trim() || 'Sin accesorios'}    |    Observaciones: ${item.notes?.trim() || 'Sin observaciones'}`, size: 8 },
+      ];
+      document.font('Helvetica-Bold').fontSize(9);
+      const titleHeight = document.heightOfString(title, { width: width - 115, lineGap: 0.7 });
+      const height = titleHeight + 7 + rows.reduce((total, row) => {
+        document.font('Helvetica').fontSize(row.size);
+        return total + document.heightOfString(row.text, { width, lineGap: 0.7 }) + 2;
+      }, 0);
+      if (document.y + height > document.page.height - document.page.margins.bottom) {
+        document.addPage();
+        paragraph(`${input.code} · Equipos (continuación)`, 9, true);
+      }
+      line();
+      const titleY = document.y;
+      document.fillColor('#000000').font('Helvetica-Bold').fontSize(9).text(title, left, titleY, { width: width - 115, lineGap: 0.7 });
+      if (item.quotationTotal !== undefined) {
+        document.fontSize(9).text(`Total: S/ ${Number(item.quotationTotal).toFixed(2)}`, left + width - 110, titleY, { width: 110, align: 'right' });
+      }
+      document.y = titleY + titleHeight + 2;
+      rows.forEach(row => paragraph(row.text, row.size));
+    });
+    const range = document.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index++) {
+      document.switchToPage(index);
+      const bottomMargin = document.page.margins.bottom;
+      document.page.margins.bottom = 0;
+      document.moveTo(left, document.page.height - 34).lineTo(left + width, document.page.height - 34).strokeColor('#000000').lineWidth(0.4).stroke();
+      document.fillColor('#000000').font('Helvetica').fontSize(7).text(`MACROCHIPS · ${input.code} · Página ${index - range.start + 1} de ${range.count}`, left, document.page.height - 26, { width, align: 'center', lineBreak: false });
+      document.page.margins.bottom = bottomMargin;
+    }
   }
 
   private renderIntakeDocument(document: PdfDocumentInstance, input: GenerateIntakePdfInput): void {
@@ -397,6 +461,12 @@ export class ServiceOrderIntakePdfService {
     document.fillColor(LABEL_COLOR).font('Helvetica').fontSize(8.3).text(meta, contentX, startY + 34, { width: contentWidth });
     document.fillColor(ACCENT_COLOR).font('Helvetica-Bold').fontSize(7).text('PROBLEMA REPORTADO', contentX, startY + 54, { width: contentWidth, characterSpacing: 0.8 });
     document.fillColor(VALUE_COLOR).font('Helvetica').fontSize(10).text(item.initialIssue || 'Sin detalle', contentX, startY + 67, { width: contentWidth, lineGap: 1.5 });
+    if (item.quotationTotal !== undefined) {
+      const quoteY = startY + 82 + this.measureTextHeight(document, 'Helvetica', 10, item.initialIssue || 'Sin detalle', contentWidth);
+      document.fillColor(ACCENT_COLOR).font('Helvetica-Bold').fontSize(7).text('SERVICIO COTIZADO', contentX, quoteY, { width: contentWidth - 100 });
+      document.fillColor(VALUE_COLOR).font('Helvetica').fontSize(10).text(item.customerSummary || 'Servicio técnico', contentX, quoteY + 13, { width: contentWidth - 110, lineGap: 1.5 });
+      document.fillColor(ACCENT_COLOR).font('Helvetica-Bold').fontSize(11).text(`S/ ${Number(item.quotationTotal).toFixed(2)}`, contentX + contentWidth - 100, quoteY + 13, { width: 100, align: 'right' });
+    }
     const detailsY = startY + rowHeight - 34;
     document.fillColor(LABEL_COLOR).font('Helvetica').fontSize(8.2).text(`Accesorios: ${item.accessories?.trim() || 'Sin accesorios'}`, contentX, detailsY, { width: contentWidth / 2 - 8 });
     document.fillColor(LABEL_COLOR).font('Helvetica').fontSize(8.2).text(`Observaciones: ${item.notes?.trim() || 'Sin observaciones'}`, contentX + contentWidth / 2, detailsY, { width: contentWidth / 2 });
@@ -695,7 +765,10 @@ export class ServiceOrderIntakePdfService {
     const issueHeight = this.measureTextHeight(document, 'Helvetica', 10, item.initialIssue || 'Sin detalle', contentWidth);
     const accessoryHeight = this.measureTextHeight(document, 'Helvetica', 8.2, `Accesorios: ${item.accessories?.trim() || 'Sin accesorios'}`, contentWidth / 2 - 8);
     const notesHeight = this.measureTextHeight(document, 'Helvetica', 8.2, `Observaciones: ${item.notes?.trim() || 'Sin observaciones'}`, contentWidth / 2);
-    return Math.max(116, 94 + issueHeight + Math.max(accessoryHeight, notesHeight));
+    const quoteHeight = item.quotationTotal !== undefined
+      ? 32 + this.measureTextHeight(document, 'Helvetica', 10, item.customerSummary || 'Servicio técnico', contentWidth - 110)
+      : 0;
+    return Math.max(116, 104 + issueHeight + quoteHeight + Math.max(accessoryHeight, notesHeight));
   }
 
   private measureFieldCardHeight(

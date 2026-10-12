@@ -6,6 +6,7 @@ import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceType } from '../enums';
+import { initialCustomerQuotation } from '../documents/initial-customer-quotation';
 
 @Injectable()
 export class ServiceOrderIntakeNotificationService {
@@ -62,6 +63,7 @@ export class ServiceOrderIntakeNotificationService {
             serviceOrder.client?.email ??
             null,
           items: items.map((item) => ({
+            ...initialCustomerQuotation(item, serviceOrder.serviceType),
             position: item.position,
             code: item.code,
             priority: item.priority,

@@ -1,4 +1,5 @@
 import { LaborWaiverReason, prepareLaborWaiver } from './labor-waiver';
+import { buildAutomaticCustomerSummary } from './customer-summary';
 import {
   BadRequestException,
   ForbiddenException,
@@ -276,6 +277,7 @@ export class ServiceOrderCommercialRevisionService {
         warrantyDurationUnit:
           edit.warrantyDurationUnit ?? baseVersion?.warrantyDurationUnit,
         notes: edit.notes?.trim() || null,
+        customerSummary: buildAutomaticCustomerSummary(preparedLines.map((prepared) => prepared.line)),
         createdByUserId: creatorId,
         acceptedAt: null,
         acceptedByUserId: null,

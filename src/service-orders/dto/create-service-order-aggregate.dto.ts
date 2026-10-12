@@ -76,6 +76,11 @@ export class CreateServiceOrderInitialCommercialLineDto {
 }
 
 export class CreateServiceOrderInitialCommercialDto {
+  @IsString()
+  @MaxLength(500)
+  @IsOptional()
+  customerSummary?: string;
+
   @Transform(trimOptionalText)
   @IsString()
   @IsOptional()

@@ -11,6 +11,7 @@ import { ServiceOrderDiagnosisStatus } from '../diagnoses/service-order-diagnosi
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderMessageMatrixService } from '../services/service-order-message-matrix.service';
 import { ServiceOrderItemCommercialVersionStatus } from './service-order-item-commercial-version-status.enum';
+import { buildAutomaticCustomerSummary } from './customer-summary';
 
 @Injectable()
 export class ServiceOrderCommercialIssuanceService {
@@ -39,6 +40,9 @@ export class ServiceOrderCommercialIssuanceService {
   async issue(versionId: number): Promise<{ version: ServiceOrderItemCommercialVersion; deliveryStatus: string }> {
     const context = await this.loadContext(versionId);
     const { version, diagnosis } = context;
+    if (version.status === ServiceOrderItemCommercialVersionStatus.DRAFT) {
+      version.customerSummary = buildAutomaticCustomerSummary(version.lines ?? []);
+    }
     if (![ServiceOrderItemCommercialVersionStatus.DRAFT, ServiceOrderItemCommercialVersionStatus.ISSUED].includes(version.status)) {
       throw new BadRequestException('La cotización ya no está disponible para envío');
     }
@@ -127,6 +131,7 @@ export class ServiceOrderCommercialIssuanceService {
       // Keep retries byte-stable by using the persisted snapshot timestamp.
       issuedAt: version.createdAt,
       notes: version.notes,
+      customerSummary: buildAutomaticCustomerSummary(version.lines ?? []),
       lines: (version.lines ?? []).map((line) => ({
         type: line.type,
         // Older drafts stored generic labels such as "Servicio #1". The

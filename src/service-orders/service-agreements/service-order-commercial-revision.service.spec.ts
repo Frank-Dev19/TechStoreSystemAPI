@@ -71,6 +71,7 @@ const createItem = (
     serialNumber: `SER-${position}`,
     serialNumberNormalized: `SER-${position}`,
     accessories: null,
+    receivedCondition: null,
     initialIssue: 'No enciende',
     notes: null,
     priority: ServiceOrderPriority.LOW,
@@ -208,6 +209,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
     };
     const acceptedTwo = {
       id: 802,
+      customerSummary: 'Servicio autorizado originalmente',
       serviceOrderItemId: itemTwo.id,
       versionNumber: 2,
       status: ServiceOrderItemCommercialVersionStatus.ACCEPTED,
@@ -282,6 +284,7 @@ describe('ServiceOrderCommercialRevisionService', () => {
         derivedFromVersionId: acceptedTwo.id,
         versionNumber: 3,
         totalAmount: 120,
+        customerSummary: 'Servicio técnico',
       }),
     );
     expect(agreementItemRepo.save).toHaveBeenCalledWith([

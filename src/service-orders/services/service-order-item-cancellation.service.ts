@@ -664,6 +664,7 @@ export class ServiceOrderItemCancellationService {
         status: ServiceOrderItemCommercialVersionStatus.DRAFT,
         totalAmount: chargeAmount,
         notes: `Ajuste por cancelación: ${reason.trim()}`,
+        customerSummary: `Cargo por trabajo realizado: ${reason.trim()}`.slice(0, 500),
         createdByUserId: actorId,
         acceptedAt: null,
         acceptedByUserId: null,

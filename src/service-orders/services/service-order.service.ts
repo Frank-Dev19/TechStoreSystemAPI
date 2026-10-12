@@ -42,6 +42,7 @@ import { ServiceOrder } from '../entities/service-order.entity';
 import { ServiceOrderItem } from '../entities/service-order-item.entity';
 import { ServiceOrderMetricsFactory } from './service-order-metrics.factory';
 import { ServiceOrderIntakePdfService } from '../documents/service-order-intake-pdf.service';
+import { initialCustomerQuotation } from '../documents/initial-customer-quotation';
 import { ServiceOrderTempDocumentsService } from '../documents/service-order-temp-documents.service';
 import { ServiceOrderMessageMatrixService } from './service-order-message-matrix.service';
 import { ServiceOrderWorkflowService } from './service-order-workflow.service';
@@ -310,6 +311,7 @@ export class ServiceOrderService {
   async generateSingleOrderSummaryPdf(
     id: number,
     viewer?: ServiceOrderViewer,
+    format?: 'A5',
   ): Promise<{ fileName: string; buffer: Buffer; mimeType: string }> {
     const serviceOrder = await this.findOne(id, false, viewer);
     const buffer = await this.intakePdfService.generateSingleOrderSummaryBuffer({
@@ -325,6 +327,7 @@ export class ServiceOrderService {
       clientPhone: serviceOrder.clientSnapshotPhone ?? serviceOrder.client?.phone ?? null,
       clientEmail: serviceOrder.clientSnapshotEmail ?? serviceOrder.client?.email ?? null,
       items: this.resolveOrderItems(serviceOrder).map((item) => ({
+        ...initialCustomerQuotation(item, serviceOrder.serviceType),
         position: item.position,
         code: item.code,
         priority: item.priority,
@@ -336,7 +339,7 @@ export class ServiceOrderService {
         notes: item.notes ?? null,
         initialIssue: item.initialIssue,
       })),
-    });
+    }, format);
 
     return {
       fileName: `${serviceOrder.code}-resumen.pdf`,
@@ -982,7 +985,7 @@ export class ServiceOrderService {
   ): Promise<ServiceOrderWithMetrics> {
     const serviceOrder = await this.getRepository(ServiceOrder, manager).findOne({
       where: { id },
-      relations: ['assignedTechnician', 'client', 'items', 'items.cancellationRequests'],
+      relations: ['assignedTechnician', 'client', 'items', 'items.cancellationRequests', 'items.commercialVersions', 'items.commercialVersions.lines'],
       withDeleted,
     });
 

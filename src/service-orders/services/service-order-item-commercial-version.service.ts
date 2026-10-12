@@ -3,6 +3,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { ServiceOrderItemCommercialLine } from '../entities/service-order-item-commercial-line.entity';
 import { ServiceOrderItemCommercialVersion } from '../entities/service-order-item-commercial-version.entity';
 import { ServiceOrderItemCommercialVersionStatus } from '../service-agreements/service-order-item-commercial-version-status.enum';
+import { buildAutomaticCustomerSummary } from '../service-agreements/customer-summary';
 
 @Injectable()
 export class ServiceOrderItemCommercialVersionService {
@@ -38,6 +39,7 @@ export class ServiceOrderItemCommercialVersionService {
         warrantyDurationValue: baseVersion.warrantyDurationValue,
         warrantyDurationUnit: baseVersion.warrantyDurationUnit,
         notes: notes?.trim() || baseVersion.notes,
+        customerSummary: buildAutomaticCustomerSummary(baseVersion.lines ?? []),
         createdByUserId,
         acceptedAt: null,
         acceptedByUserId: null,

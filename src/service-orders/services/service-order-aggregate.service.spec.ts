@@ -188,6 +188,7 @@ describe('ServiceOrderAggregateService', () => {
           equipmentType: EquipmentType.LAPTOP,
           initialIssue: 'Mantenimiento preventivo',
           initialCommercial: {
+            customerSummary: 'Servicio Express con repuestos y mano de obra',
             lines: [{ type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 80 }],
           },
         },
@@ -230,6 +231,7 @@ describe('ServiceOrderAggregateService', () => {
               equipmentType: EquipmentType.LAPTOP,
               initialIssue: 'Mantenimiento',
               initialCommercial: {
+                customerSummary: 'Servicio Express del equipo',
                 lines: [{ type: ServiceOrderCommercialLineType.SERVICE, quantity: 1, unitPrice: 80 }],
               },
             },

@@ -69,7 +69,7 @@ export class ElectronicBillingService {
   async buildInvoicePayload(saleId: number): Promise<ApisPeruInvoicePayload> {
     const sale = await this.findSaleForBilling(saleId);
     const company = await this.businessProfileService.getInvoiceCompanyPayload();
-    return mapSaleToApisPeruInvoicePayload(sale, company);
+    return mapSaleToApisPeruInvoicePayload(sale, company, (await this.serviceOrderSaleLinkRepository.find({ where: { saleId: sale.id } })).length > 0);
   }
 
   async sendInvoice(saleId: number): Promise<{
@@ -81,7 +81,7 @@ export class ElectronicBillingService {
   }> {
     const sale = await this.findSaleForBilling(saleId);
     const company = await this.businessProfileService.getInvoiceCompanyPayload();
-    const payload = mapSaleToApisPeruInvoicePayload(sale, company);
+    const payload = mapSaleToApisPeruInvoicePayload(sale, company, (await this.serviceOrderSaleLinkRepository.find({ where: { saleId: sale.id } })).length > 0);
     const document = await this.createPendingDocument(sale, payload);
 
     try {

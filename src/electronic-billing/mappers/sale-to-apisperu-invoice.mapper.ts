@@ -5,6 +5,7 @@ import { DocumentType } from '../../sales/enums/document-type.enum';
 import { mapDocumentTypeToSunatCode } from '../../sales/mappers/sunat-document-type.mapper';
 import { mapClientToApisPeruPayload } from '../../clients/mappers/apisperu-client.mapper';
 import { splitIncludedTax } from '../../sales/utils/included-tax.util';
+import { buildAutomaticCustomerSummary } from '../../service-orders/service-agreements/customer-summary';
 import { ApisPeruCompanyPayload, ApisPeruInvoiceDetailPayload, ApisPeruInvoicePayload } from '../dto/apisperu-invoice.types';
 
 const TAXABLE_IGV_AFFECTATION = '10';
@@ -15,6 +16,7 @@ const DEFAULT_CURRENCY = 'PEN';
 export function mapSaleToApisPeruInvoicePayload(
   sale: Sale,
   company: ApisPeruCompanyPayload,
+  linkedToServiceOrder = false,
 ): ApisPeruInvoicePayload {
   assertSupportedDocumentType(sale.documentType);
   assertCompanyReady(company);
@@ -22,7 +24,9 @@ export function mapSaleToApisPeruInvoicePayload(
   assertSaleReady(sale);
 
   const taxRatePct = round(Number(sale.taxRate || 0) * 100);
-  const details = (sale.items ?? []).map((item) => mapSaleItem(item, taxRatePct));
+  const details = linkedToServiceOrder && sale.documentType === DocumentType.BOLETA
+    ? [mapServiceOrderReceipt(sale, taxRatePct)]
+    : (sale.items ?? []).map((item) => mapSaleItem(item, taxRatePct));
 
   return {
     ublVersion: UBL_VERSION,
@@ -50,6 +54,27 @@ export function mapSaleToApisPeruInvoicePayload(
       },
     ],
     observacion: sale.observations ?? null,
+  };
+}
+
+function mapServiceOrderReceipt(sale: Sale, taxRatePct: number): ApisPeruInvoiceDetailPayload {
+  const description = buildAutomaticCustomerSummary((sale.items ?? []).map(item => ({
+    type: item.itemType,
+    productId: item.productId,
+    quantity: item.quantity,
+    catalogNameSnapshot: item.itemType === 'SERVICE'
+      ? item.serviceNameSnapshot || 'Servicio técnico'
+      : (item.descriptionSnapshot || item.product?.name || 'Producto')
+        .replace(/\s+-\s+SO-\d{2}-\d{2}-\d{4}-\d+(?:-\d+)?$/, ''),
+  })));
+  const taxable = round(Number(sale.subtotal));
+  const tax = round(Number(sale.taxAmount));
+  return {
+    unidad: 'ZZ', cantidad: 1, codProducto: 'TECHNICAL_SERVICE', descripcion: description,
+    mtoValorUnitario: taxable, descuento: 0, igv: tax,
+    tipAfeIgv: TAXABLE_IGV_AFFECTATION, totalImpuestos: tax,
+    mtoPrecioUnitario: round(Number(sale.total)), mtoValorVenta: taxable,
+    mtoBaseIgv: taxable, porcentajeIgv: taxRatePct,
   };
 }
 

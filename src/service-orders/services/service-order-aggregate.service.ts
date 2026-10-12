@@ -195,7 +195,7 @@ export class ServiceOrderAggregateService {
 
     const reloaded = await orderRepository.findOne({
       where: { id: savedOrder.id },
-      relations: ['assignedTechnician', 'client', 'items'],
+      relations: ['assignedTechnician', 'client', 'items', 'items.commercialVersions', 'items.commercialVersions.lines'],
     });
     if (!reloaded) {
       throw new NotFoundException(

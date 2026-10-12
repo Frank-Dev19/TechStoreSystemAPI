@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -14,6 +15,7 @@ import { ServiceOrderInboxMessage } from './service-order-inbox-message.entity';
 import { ServiceOrderInboxThreadOrderLink } from './service-order-inbox-thread-order-link.entity';
 
 @Entity('service_order_inbox_threads')
+@Index('IDX_inbox_threads_last_message', ['lastMessageAt', 'id'])
 export class ServiceOrderInboxThread {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
@@ -21,13 +23,29 @@ export class ServiceOrderInboxThread {
   @Column({ name: 'client_id', type: 'bigint', unsigned: true, nullable: true })
   clientId: number | null;
 
-  @Column({ name: 'client_phone_snapshot', type: 'varchar', length: 50, nullable: true, unique: true })
+  @Column({
+    name: 'client_phone_snapshot',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+    unique: true,
+  })
   clientPhoneSnapshot: string | null;
 
-  @Column({ name: 'client_display_name_snapshot', type: 'varchar', length: 150, nullable: true })
+  @Column({
+    name: 'client_display_name_snapshot',
+    type: 'varchar',
+    length: 150,
+    nullable: true,
+  })
   clientDisplayNameSnapshot: string | null;
 
-  @Column({ name: 'external_thread_key', type: 'varchar', length: 180, unique: true })
+  @Column({
+    name: 'external_thread_key',
+    type: 'varchar',
+    length: 180,
+    unique: true,
+  })
   externalThreadKey: string;
 
   @Column({ name: 'last_message_text', type: 'text', nullable: true })
@@ -36,7 +54,11 @@ export class ServiceOrderInboxThread {
   @Column({ name: 'last_message_at', type: 'datetime', nullable: true })
   lastMessageAt: Date | null;
 
-  @Column({ name: 'last_customer_message_at', type: 'datetime', nullable: true })
+  @Column({
+    name: 'last_customer_message_at',
+    type: 'datetime',
+    nullable: true,
+  })
   lastCustomerMessageAt: Date | null;
 
   @Column({
@@ -55,13 +77,28 @@ export class ServiceOrderInboxThread {
   })
   lastMessageAuthorRole: ServiceOrderInboxAuthorRole | null;
 
-  @Column({ name: 'unread_for_reception', type: 'int', unsigned: true, default: 0 })
+  @Column({
+    name: 'unread_for_reception',
+    type: 'int',
+    unsigned: true,
+    default: 0,
+  })
   unreadForReception: number;
 
-  @Column({ name: 'unread_for_technician', type: 'int', unsigned: true, default: 0 })
+  @Column({
+    name: 'unread_for_technician',
+    type: 'int',
+    unsigned: true,
+    default: 0,
+  })
   unreadForTechnician: number;
 
-  @Column({ name: 'unread_for_supervisor', type: 'int', unsigned: true, default: 0 })
+  @Column({
+    name: 'unread_for_supervisor',
+    type: 'int',
+    unsigned: true,
+    default: 0,
+  })
   unreadForSupervisor: number;
 
   @OneToMany(() => ServiceOrderInboxMessage, (message) => message.thread, {

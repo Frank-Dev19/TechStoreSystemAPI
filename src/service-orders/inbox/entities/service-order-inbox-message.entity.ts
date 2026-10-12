@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -18,6 +19,8 @@ import { ServiceOrderInboxAttachment } from './service-order-inbox-attachment.en
 import { ServiceOrderInboxMessageOrderLink } from './service-order-inbox-message-order-link.entity';
 
 @Entity('service_order_inbox_messages')
+@Index('IDX_inbox_messages_thread_cursor', ['threadId', 'id'])
+@Index('UQ_inbox_messages_external_id', ['externalMessageId'], { unique: true })
 export class ServiceOrderInboxMessage {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number;
@@ -25,7 +28,11 @@ export class ServiceOrderInboxMessage {
   @Column({ name: 'thread_id', type: 'bigint', unsigned: true })
   threadId: number;
 
-  @ManyToOne(() => ServiceOrderInboxThread, { eager: false, nullable: false, onDelete: 'CASCADE' })
+  @ManyToOne(() => ServiceOrderInboxThread, {
+    eager: false,
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'thread_id' })
   thread: ServiceOrderInboxThread;
 
@@ -46,7 +53,12 @@ export class ServiceOrderInboxMessage {
   @Column({ name: 'author_user_id', type: 'int', nullable: true })
   authorUserId: number | null;
 
-  @Column({ name: 'author_display_name', type: 'varchar', length: 150, nullable: true })
+  @Column({
+    name: 'author_display_name',
+    type: 'varchar',
+    length: 150,
+    nullable: true,
+  })
   authorDisplayName: string | null;
 
   @Column({ name: 'text', type: 'text', nullable: true })
@@ -60,15 +72,24 @@ export class ServiceOrderInboxMessage {
   })
   deliveryStatus: ServiceOrderInboxDeliveryStatus;
 
-  @Column({ name: 'external_message_id', type: 'varchar', length: 180, nullable: true })
+  @Column({
+    name: 'external_message_id',
+    type: 'varchar',
+    length: 180,
+    nullable: true,
+  })
   externalMessageId: string | null;
 
   @Column({ name: 'provider_payload', type: 'text', nullable: true })
   providerPayload: string | null;
 
-  @OneToMany(() => ServiceOrderInboxAttachment, (attachment) => attachment.message, {
-    eager: false,
-  })
+  @OneToMany(
+    () => ServiceOrderInboxAttachment,
+    (attachment) => attachment.message,
+    {
+      eager: false,
+    },
+  )
   attachments?: ServiceOrderInboxAttachment[];
 
   @OneToMany(() => ServiceOrderInboxMessageOrderLink, (link) => link.message, {

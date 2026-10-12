@@ -10,8 +10,49 @@ describe('ServiceOrderIntakePdfService', () => {
     service = new ServiceOrderIntakePdfService();
   });
 
+  it('genera la copia impresa en A5 sin cambiar el documento digital', async () => {
+    const input = { code: 'SO-A5', createdAt: new Date(), operativeStatus: 'ABIERTA', serviceType: 'STANDARD_SERVICE', clientName: 'Cliente', clientDocument: 'DNI 12345678', clientPhone: '999999999', items: [{ position: 1, code: 'SO-A5-01', priority: 'LOW', equipmentType: 'LAPTOP', brand: 'Lenovo', model: 'ThinkPad', serialNumber: '123', initialIssue: 'Instalación de memoria', customerSummary: 'Instalación de dos memorias RAM, incluye repuestos y mano de obra.', quotationTotal: 350 }] };
+    const text = jest.spyOn(PDFDocument.prototype, 'text');
+    let printed: Buffer;
+    let digital: Buffer;
+    let printedText: string;
+    let digitalText: string;
+    try {
+      printed = await service.generateSingleOrderSummaryBuffer(input, 'A5');
+      printedText = text.mock.calls.map(call => String(call[0])).join('\n');
+      text.mockClear();
+      digital = await service.generateSingleOrderSummaryBuffer(input);
+      digitalText = text.mock.calls.map(call => String(call[0])).join('\n');
+    } finally {
+      text.mockRestore();
+    }
+    expect(printedText).not.toContain('TÉRMINOS DEL SERVICIO');
+    expect(printedText).not.toContain('Plazo de retiro');
+    expect(digitalText).toContain('Términos del servicio');
+    expect(printed.toString('latin1').match(/\/MediaBox \[[^\]]+\]/g)).toEqual(['\/MediaBox [0 0 595.28 419.53]']);
+    expect(digital.toString('latin1')).not.toMatch(/\/MediaBox \[0 0 595\.28 419\.53\]/);
+  });
+
   it('presenta STANDARD_SERVICE como Servicio express', () => {
     expect((service as any).formatServiceType('STANDARD_SERVICE')).toBe('Servicio express');
+  });
+
+  it('mantiene tres equipos con su detalle completo en una sola media hoja', async () => {
+    const items = Array.from({ length: 3 }, (_, index) => ({ position: index + 1, code: `SO-COMPACTO-0${index + 1}`, priority: 'LOW', equipmentType: 'LAPTOP', brand: 'Lenovo', model: 'ThinkPad', serialNumber: `SERIE-${index + 1}`, initialIssue: 'Instalar memoria y verificar funcionamiento del equipo.', customerSummary: 'Instalación de dos memorias RAM de 8 GB, incluye repuestos, mano de obra y pruebas de funcionamiento.', quotationTotal: 350, accessories: 'Cargador', notes: 'Sin observaciones' }));
+    const text = jest.spyOn(PDFDocument.prototype, 'text');
+    try {
+      const buffer = await service.generateSingleOrderSummaryBuffer({ code: 'SO-COMPACTO', createdAt: new Date(), operativeStatus: 'ABIERTA', serviceType: 'STANDARD_SERVICE', clientName: 'Cliente de varios equipos', clientDocument: 'DNI 12345678', clientPhone: '999999999', items }, 'A5');
+      expect(buffer.toString('latin1').match(/\/MediaBox \[[^\]]+\]/g)).toHaveLength(1);
+      const contents = text.mock.calls.map(call => String(call[0])).join('\n');
+      items.forEach(item => {
+        expect(contents).toContain(item.code);
+        expect(contents).toContain(item.initialIssue);
+        expect(contents).toContain(item.customerSummary);
+        expect(contents).toContain(item.serialNumber);
+      });
+    } finally {
+      text.mockRestore();
+    }
   });
 
   afterEach(async () => {

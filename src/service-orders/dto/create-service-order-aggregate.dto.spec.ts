@@ -66,6 +66,7 @@ describe('CreateServiceOrderAggregateDto', () => {
           ...validPayload.items[0],
           initialCommercial: {
             notes: 'Aprobado en recepción',
+            customerSummary: 'Instalación de dos memorias RAM',
             lines: [
               { type: 'SERVICE', quantity: 1, unitPrice: 80 },
               { type: 'PRODUCT', productId: 12, quantity: 2, unitPrice: 25 },

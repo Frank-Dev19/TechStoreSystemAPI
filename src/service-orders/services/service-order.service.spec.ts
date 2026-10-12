@@ -1205,6 +1205,7 @@ describe('ServiceOrderService', () => {
           expect.objectContaining({ code: 'SO-02-08-2026-0001-02' }),
         ],
       }),
+      undefined,
     );
     expect(serviceOrderRepository.findOne).toHaveBeenCalledWith(
       expect.objectContaining({ relations: expect.arrayContaining(['items']) }),

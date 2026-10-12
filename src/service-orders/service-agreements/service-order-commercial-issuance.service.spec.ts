@@ -13,6 +13,7 @@ describe('ServiceOrderCommercialIssuanceService', () => {
       totalAmount: 280,
       createdAt: new Date('2026-08-24T10:00:00-05:00'),
       notes: null,
+      customerSummary: 'Reparación del equipo, incluye repuestos y mano de obra.',
       lines: [],
       serviceOrderItem: {
         code: 'SO-24-08-2026-0001-01',
@@ -57,6 +58,11 @@ describe('ServiceOrderCommercialIssuanceService', () => {
 
     await service.issue(42);
 
+    expect(pdfService.generateBuffer).toHaveBeenCalledWith(expect.objectContaining({
+      customerSummary: version.customerSummary,
+      totalAmount: 280,
+    }));
+
     expect(messageMatrixService.dispatchDiagnosisQuoteTemplate).toHaveBeenCalledWith(
       expect.objectContaining({
         commercialVersionId: 42,
@@ -64,5 +70,15 @@ describe('ServiceOrderCommercialIssuanceService', () => {
         documentUrl: 'https://api.example.com/service-orders/temp-documents/token-1',
       }),
     );
+  });
+
+  it('genera un concepto automático al previsualizar un borrador sin resumen', async () => {
+    const version = { status: 'DRAFT', lines: [{ type: 'SERVICE', quantity: 1, catalogNameSnapshot: 'Servicio técnico' }, { type: 'PRODUCT', quantity: 2, catalogNameSnapshot: 'RAM', productId: 1 }], serviceOrderItemId: 9, serviceOrderItem: { code: 'SO-1-01', equipmentType: 'LAPTOP', serviceOrder: { code: 'SO-1' } } };
+    const pdf = { generateBuffer: jest.fn().mockResolvedValue(Buffer.from('PDF')) };
+    const service = new ServiceOrderCommercialIssuanceService({ findOne: jest.fn().mockResolvedValue(version) } as any,
+      { findOne: jest.fn().mockResolvedValue({ summary: 'Falla' }) } as any,
+      pdf as any, {} as any, {} as any, {} as any);
+    await service.preview(42);
+    expect(pdf.generateBuffer).toHaveBeenCalledWith(expect.objectContaining({ customerSummary: 'Servicio técnico + 2 RAM' }));
   });
 });

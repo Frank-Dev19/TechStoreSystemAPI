@@ -68,6 +68,11 @@ export class CreateServiceOrderCommercialRevisionLineDto {
 }
 
 export class CreateServiceOrderCommercialRevisionItemDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  customerSummary?: string;
+
   @IsNumber()
   @IsPositive()
   serviceOrderItemId: number;
