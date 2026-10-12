@@ -172,6 +172,13 @@ export class ServiceOrderController {
   }
 
   @Permissions('service-order.read')
+  @RolesDec('admin', ...SUPERVISOR_ROLE_NAMES)
+  @Post('notifications/:notificationId/ignore')
+  ignoreFinalNotification(@Param('notificationId', ParseIntPipe) notificationId: number) {
+    return this.messageMatrixService.ignoreFinalFailure(notificationId);
+  }
+
+  @Permissions('service-order.read')
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     return this.serviceOrderService.findOne(id, false, req.user);

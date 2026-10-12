@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   Logger,
   NotFoundException,
   Optional,
@@ -568,12 +569,39 @@ export class ServiceOrderMessageMatrixService {
     );
   }
 
-  async listFinalFailures(): Promise<NotificationMessage[]> {
-    return this.notificationRepository.find({
+  async listFinalFailures(): Promise<Array<NotificationMessage & { lastAttemptAt: string | null }>> {
+    const notifications = await this.notificationRepository.find({
       where: { status: 'FAILED_FINAL' },
       order: { updatedAt: 'DESC' },
       take: 100,
     });
+    return this.withAttemptTimes(notifications);
+  }
+
+  private async withAttemptTimes(notifications: NotificationMessage[]) {
+    if (!notifications.length) return [];
+    // MySQL-generated attempt timestamps are UTC. Formatting in SQL avoids
+    // applying the driver's -05:00 conversion to an already-UTC wall clock.
+    const attempts = await this.attemptRepository.createQueryBuilder('attempt')
+      .select('attempt.notificationMessageId', 'notificationId')
+      .addSelect("DATE_FORMAT(MAX(attempt.createdAt), '%Y-%m-%dT%H:%i:%sZ')", 'lastAttemptAt')
+      .where('attempt.notificationMessageId IN (:...ids)', { ids: notifications.map(n => n.id) })
+      .groupBy('attempt.notificationMessageId')
+      .getRawMany<{ notificationId: string; lastAttemptAt: string }>();
+    const times = new Map(attempts.map(a => [Number(a.notificationId), a.lastAttemptAt]));
+    return notifications.map(n => Object.assign(n, { lastAttemptAt: times.get(Number(n.id)) ?? null }));
+  }
+
+  async ignoreFinalFailure(id: number): Promise<NotificationMessage> {
+    const notification = await this.notificationRepository.findOne({ where: { id } });
+    if (!notification) throw new NotFoundException('Notificación no encontrada');
+    if (notification.status === 'IGNORED') return notification;
+    if (notification.status !== 'FAILED_FINAL') throw new BadRequestException('Solo puedes ignorar notificaciones pendientes de revisión');
+    const result = await this.notificationRepository.update(
+      { id, status: 'FAILED_FINAL' }, { status: 'IGNORED', nextAttemptAt: null },
+    );
+    if (!result.affected) throw new BadRequestException('La notificación cambió de estado; actualiza el listado');
+    return this.notificationRepository.findOneOrFail({ where: { id } });
   }
 
   async hasNotification(idempotencyKey: string): Promise<boolean> {
@@ -592,9 +620,14 @@ export class ServiceOrderMessageMatrixService {
     notification.status = 'RETRY_SCHEDULED';
     notification.nextAttemptAt = new Date();
     notification.lastError = null;
-    await this.notificationRepository.save(notification);
+    const transition = await this.notificationRepository.update(
+      { id, status: 'FAILED_FINAL' },
+      { status: 'RETRY_SCHEDULED', nextAttemptAt: notification.nextAttemptAt, lastError: null },
+    );
+    if (!transition.affected) throw new BadRequestException('La notificación cambió de estado; actualiza el listado');
     await this.retryNotification(notification);
-    return this.notificationRepository.findOneOrFail({ where: { id } });
+    const result = await this.notificationRepository.findOneOrFail({ where: { id } });
+    return (await this.withAttemptTimes([result]))[0];
   }
 
   @Cron(
