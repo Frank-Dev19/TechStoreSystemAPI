@@ -26,4 +26,19 @@ describe('Service-order receipt concept', () => {
     const factura = { ...sale, documentType: DocumentType.FACTURA, customer: { ...sale.customer, documentNumber: '20123456789', documentType: { sunatCode: '6' } } };
     expect(mapSaleToApisPeruInvoicePayload(factura, company, true).details).toHaveLength(3);
   });
+
+  it('sends exact SUNAT units for services and products after a catalog reset', () => {
+    const details = mapSaleToApisPeruInvoicePayload(sale, company).details;
+    expect(details.map(detail => detail.unidad)).toEqual(['ZZ', 'NIU', 'NIU']);
+    const consolidated = mapSaleToApisPeruInvoicePayload(sale, company, true);
+    expect(consolidated.details[0].unidad).toBe('ZZ');
+  });
+
+  it('normalizes unit aliases and preserves specific product measurement codes', () => {
+    const products = ['UND', 'NIU', 'LTR'].map((abbreviation, index) => ({
+      ...sale.items[1], id: index + 10, product: { name: 'Producto', baseUnit: { abbreviation } },
+    }));
+    const details = mapSaleToApisPeruInvoicePayload({ ...sale, items: products }, company).details;
+    expect(details.map(detail => detail.unidad)).toEqual(['NIU', 'NIU', 'LTR']);
+  });
 });
