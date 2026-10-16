@@ -7,4 +7,5 @@
 - [x] 2.1 Pruebas de envío, errores y selección de transporte; builds.
 - [x] 2.2 Documentar DNS, token, límites y despliegue.
 - [x] 2.3 Verificar dominio y preparar token privado de producción.
-- [ ] 2.4 Desplegar y comprobar entrega real tras activar el transporte.
+- [x] 2.4 Desplegar y confirmar aceptación de prueba real por Mailtrap.
+- [ ] 2.5 Usuario confirma recepción en inbox y prueba comprobantes/recuperación.

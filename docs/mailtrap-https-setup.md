@@ -49,3 +49,15 @@ MAIL_TRANSPORT=SMTP y recrear backend restaura el transporte anterior, pero en D
 
 ## Estado de preparación (2026-10-15)
 El usuario creó la cuenta corporativa y verificó macrochips.com (DNS, sender information y compliance). Token de envío guardado de forma privada en /opt/macrochips/secrets/backend.env, con MAIL_TRANSPORT=MAILTRAP_API. Presencia verificada sin mostrar el valor. Contenedor aún no recreado; integración pendiente de despliegue y prueba real. No confundir preparación del archivo con activación del transporte.
+
+## Despliegue 2026-10-16
+Runtime API a4164a2dd48f391dd4808f42f0d6a9d2423c7c80, APP 4a114e7da68b29a79bf477370b5a50b47d46bc38. Publicación GitHub → Docker Hub → VPS completada. API digest sha256:1078c277b20929ee0714020a78ac2262498b2d3c2ba3eca79ee85f385b44f07c; APP sha256:9ca69a257fd99cc6a45211bc409310ce836ab6564fe09c664e9615e184c4a763. Sin migraciones ni cambios de dependencias. Respaldo database-20261016-mailtrap.sql.gz y configuración con sufijo 20261016-mailtrap en /opt/macrochips/backups. Frontend sirve main-ZJSS2SFI.js; HTTP 200 y readiness status=ok.
+
+Ambos perfiles activos con remitente testeo@macrochips.com y transporte MAILTRAP_API. Un correo real de prueba aceptado por Mailtrap para plataformas@macrochips.com, ID f01404a0-c926-11f1-0040-f19bc97d8f56. Confirmación de llegada a inbox, adjuntos y recuperación pendientes del usuario. No se enviaron comprobantes ni enlaces de recuperación reales durante el despliegue.
+
+### Renovación TLS detectada durante validación
+El certificado público anterior venció el 2026-10-14. Se renovó mediante la instalación existente de Certbot v5.7.0 y webroot, manteniendo validación TLS activa. Nuevo vencimiento 2027-01-14. Se recargó Nginx y se confirmó HTTPS público sin omitir validación.
+
+Script replicable scripts/renew-production-tls.sh instalado en /opt/macrochips/scripts/renew-tls.sh (permisos 700, formato LF), con bloqueo flock y cron del usuario deploy: `17 3,15 * * * /opt/macrochips/scripts/renew-tls.sh >> /opt/macrochips/scripts/renew-tls.log 2>&1`. Horario del servidor UTC, dos comprobaciones diarias. Probado ejecutando el script: certificado no necesita renovación, nginx -t y reload correctos. Requiere Docker accesible para deploy, volúmenes Certbot existentes y ruta ACME HTTP disponible.
+
+Rollback imágenes anteriores: API sha256:37b643decb4afd7c0e6dda45c4bd16d21299de82b635f066d00b88c272742fab; APP sha256:69ae9ce1b587843b6118132edf88e7651bdf4fb32262cb3cba26f66e20d927ab. Volver a SMTP en DigitalOcean restaura el problema de conectividad; no es una solución de correo operativo.
