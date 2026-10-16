@@ -27,6 +27,11 @@ export class MailerService {
     }) {
         const purpose = options.purpose ?? MailPurpose.ELECTRONIC_BILLING;
         const runtime = await this.mailSettings.resolveRuntimeConfig(purpose);
+        if (this.mailSettings.transport === 'MAILTRAP_API') {
+            const info = await this.mailSettings.sendWithMailtrap(runtime, options);
+            this.logger.log(`Email accepted by Mailtrap -> ${info.messageId}`);
+            return info;
+        }
         const transporter = this.getTransporter(runtime);
         const info = await transporter.sendMail({
             from: this.formatAddress(runtime.fromName, runtime.fromEmail),

@@ -8,6 +8,7 @@ import { UpdateMailSettingDto } from './dto/update-mail-setting.dto';
 import { MailSetting } from './entities/mail-setting.entity';
 import { MailEncryption } from './enums/mail-encryption.enum';
 import { MailPurpose } from './enums/mail-purpose.enum';
+import { ApiMailMessage, MailtrapApiService } from './mailtrap-api.service';
 
 export interface ResolvedMailConfig {
   purpose: MailPurpose;
@@ -30,6 +31,7 @@ export class MailSettingsService {
   constructor(
     @InjectRepository(MailSetting) private readonly repo: Repository<MailSetting>,
     private readonly config: ConfigService,
+    private readonly mailtrap: MailtrapApiService,
   ) {}
 
   async findAllForAdmin() {
@@ -48,6 +50,8 @@ export class MailSettingsService {
 
     return {
       purpose,
+      transport: this.transport,
+      hasApiToken: this.transport === 'MAILTRAP_API' && this.mailtrap.isConfigured(),
       host: resolved.host,
       port: resolved.port,
       encryption: resolved.encryption,
@@ -61,7 +65,8 @@ export class MailSettingsService {
       isActive: resolved.isActive,
       hasPassword: passwordSource !== 'NONE',
       passwordSource,
-      isConfigured: !!(
+      isConfigured: this.transport === 'MAILTRAP_API'
+        ? !!(resolved.fromEmail && this.mailtrap.isConfigured()) : !!(
         resolved.host
         && resolved.port
         && resolved.username
@@ -95,7 +100,7 @@ export class MailSettingsService {
 
     if (dto.password) entity.passwordEncrypted = this.encrypt(dto.password);
     const fallbackPassword = this.getEnvironmentFallback(purpose).password;
-    if (!entity.passwordEncrypted && !fallbackPassword) {
+    if (this.transport === 'SMTP' && !entity.passwordEncrypted && !fallbackPassword) {
       throw new BadRequestException('Debe ingresar la contraseña SMTP.');
     }
 
@@ -107,7 +112,7 @@ export class MailSettingsService {
     const entity = await this.findWithSecret(purpose);
     const fallback = this.getEnvironmentFallback(purpose);
     const merged = this.merge(entity, fallback);
-    const password = entity?.passwordEncrypted
+    const password = this.transport === 'MAILTRAP_API' ? '' : entity?.passwordEncrypted
       ? this.decrypt(entity.passwordEncrypted)
       : fallback.password;
     const runtime = { ...merged, purpose, password };
@@ -115,7 +120,10 @@ export class MailSettingsService {
     if (!allowInactive && !runtime.isActive) {
       throw new ServiceUnavailableException('El envío de correos está desactivado para este tipo de mensaje.');
     }
-    if (!this.isComplete(runtime)) {
+    if (this.transport === 'MAILTRAP_API') {
+      if (!this.mailtrap.isConfigured()) throw new ServiceUnavailableException('Falta MAILTRAP_API_TOKEN en el servidor.');
+      if (!runtime.fromEmail) throw new ServiceUnavailableException('Falta configurar el correo remitente.');
+    } else if (!this.isComplete(runtime)) {
       throw new ServiceUnavailableException('La configuración SMTP está incompleta.');
     }
     return runtime;
@@ -123,6 +131,22 @@ export class MailSettingsService {
 
   async test(purpose: MailPurpose, recipient?: string) {
     const runtime = await this.resolveRuntimeConfig(purpose, true);
+    if (this.transport === 'MAILTRAP_API') {
+      if (!recipient) throw new BadRequestException('Indica un destinatario para probar el envío real mediante Mailtrap.');
+      let successful = false;
+      let message = '';
+      try {
+        const info = await this.sendWithMailtrap(runtime, { to: recipient, subject: 'Prueba de configuración de correo - Macrochips', text: 'La configuración de correo de Macrochips funciona correctamente.', html: '<p>La configuración de correo de <strong>Macrochips</strong> funciona correctamente.</p>' });
+        successful = true;
+        message = `Mailtrap aceptó el correo de prueba. ID: ${info.messageId}. Comprueba su recepción y los registros de Mailtrap.`;
+        return { ok: true, message };
+      } catch (error) {
+        message = this.safeError(error);
+        throw error;
+      } finally {
+        await this.saveTestResult(purpose, runtime, successful, message);
+      }
+    }
     const transporter = nodemailer.createTransport(this.transportOptions(runtime));
     let successful = false;
     let message = 'Conexión SMTP verificada correctamente.';
@@ -146,9 +170,19 @@ export class MailSettingsService {
       message = this.safeError(error);
       throw new BadRequestException(`No se pudo validar la configuración SMTP: ${message}`);
     } finally {
-      await this.saveTestResult(purpose, runtime, successful, message);
       transporter.close();
+      await this.saveTestResult(purpose, runtime, successful, message);
     }
+  }
+
+  get transport(): 'SMTP' | 'MAILTRAP_API' {
+    const value = this.config.get<string>('MAIL_TRANSPORT') || 'SMTP';
+    if (value !== 'SMTP' && value !== 'MAILTRAP_API') throw new ServiceUnavailableException('MAIL_TRANSPORT debe ser SMTP o MAILTRAP_API.');
+    return value;
+  }
+
+  sendWithMailtrap(runtime: ResolvedMailConfig, message: ApiMailMessage) {
+    return this.mailtrap.send(runtime, message);
   }
 
   transportOptions(config: ResolvedMailConfig) {
@@ -157,6 +191,9 @@ export class MailSettingsService {
       host: config.host,
       port: config.port,
       secure,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
       requireTLS: config.encryption === MailEncryption.STARTTLS,
       auth: { user: config.username, pass: config.password },
     };
